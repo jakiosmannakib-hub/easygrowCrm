@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: easygrowcrm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: easygrowcrm
+      POSTGRES_PASSWORD: easygrowcrm_dev
+      POSTGRES_DB: easygrowcrm
+    ports:
+      - '5432:5432'
+    volumes:
+      - easygrowcrm_pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U easygrowcrm -d easygrowcrm']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+
+volumes:
+  easygrowcrm_pgdata:
+    name: easygrowcrm_pgdata

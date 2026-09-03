@@ -56,3 +56,6 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Migration check (stub until PUL-101)
+        run: echo "drizzle-kit check stub — no migrations yet"

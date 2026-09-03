@@ -13,6 +13,7 @@
     "db:check": "drizzle-kit check",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
+    "check:mandatory-tests": "tsx scripts/check-mandatory-tests.ts",
     "test:db:reset": "docker exec easygrowcrm-postgres psql -U easygrowcrm -d postgres -c \"DROP DATABASE IF EXISTS easygrowcrm_test WITH (FORCE);\" -c \"CREATE DATABASE easygrowcrm_test;\""
   },
   "dependencies": {
@@ -37,6 +38,7 @@
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "vitest": "^4.1.11"
   },

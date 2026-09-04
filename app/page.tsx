@@ -1,6 +1,8 @@
 // import { Button } from "@base-ui/react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from '@/components/ui/button';
+
+const brokenCheck: number = 'this is not a number';
 
 export default function Home() {
   return (

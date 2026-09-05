@@ -51,11 +51,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ### PUL-001 — Repository scaffold
 **Budget:** M · **Reads:** §12.1–§12.5 · **Depends:** —
-- [ ] 001.1 Init Next.js 16.2 LTS + React 19.2 + TypeScript strict; pnpm workspace
-- [ ] 001.2 Tailwind 4 + shadcn/ui installed; one demo button renders
-- [ ] 001.3 Folder skeleton: `features/`, `lib/`, `components/ui/`, `db/`, `tests/` (vertical-slice layout per §16.1)
-- [ ] 001.4 `pnpm dev`, `pnpm build`, `pnpm test` (vitest, zero tests) all succeed
-- [ ] 001.5 `.editorconfig`, base ESLint + Prettier, `README.md` with the §16.18 reading order
+- [x] 001.1 Init Next.js 16.2 LTS + React 19.2 + TypeScript strict; pnpm workspace
+- [x] 001.2 Tailwind 4 + shadcn/ui installed; one demo button renders
+- [x] 001.3 Folder skeleton: `features/`, `lib/`, `components/ui/`, `db/`, `tests/` (vertical-slice layout per §16.1)
+- [x] 001.4 `pnpm dev`, `pnpm build`, `pnpm test` (vitest, zero tests) all succeed
+- [x] 001.5 `.editorconfig`, base ESLint + Prettier, `README.md` with the §16.18 reading order
 
 **Done when:** a fresh clone runs `pnpm i && pnpm dev` to a rendered page with zero warnings.
 
@@ -63,10 +63,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ### PUL-002 — Local Docker environment
 **Budget:** S · **Reads:** §12.6 · **Depends:** PUL-001
-- [ ] 002.1 `docker-compose.yml`: Postgres 16 with named volume + healthcheck
-- [ ] 002.2 `.env.example` documenting every env var the app will ever read (added to as we go)
-- [ ] 002.3 `pnpm db:up` / `pnpm db:down` scripts
-- [ ] 002.4 Second Postgres schema `easygrowcrm_test` + `pnpm test:db:reset` script
+- [x] 002.1 `docker-compose.yml`: Postgres 16 with named volume + healthcheck
+- [x] 002.2 `.env.example` documenting every env var the app will ever read (added to as we go)
+- [x] 002.3 `pnpm db:up` / `pnpm db:down` scripts
+- [x] 002.4 Second Postgres schema `easygrowcrm_test` + `pnpm test:db:reset` script
 
 **Done when:** `pnpm db:up && pnpm test:db:reset` gives a clean empty test schema in under 10 seconds.
 
@@ -74,10 +74,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ### PUL-003 — CI pipeline skeleton
 **Budget:** M · **Reads:** §15.9 · **Depends:** PUL-001, PUL-002
-- [ ] 003.1 Workflow on push/PR: `tsc --noEmit` → ESLint → `vitest run` (with Postgres service container)
-- [ ] 003.2 `drizzle-kit check` job stub (activates in PUL-101)
-- [ ] 003.3 §15.4 mandatory-file check script (`scripts/check-mandatory-tests.ts`) — reads a manifest, fails if any listed file is missing; manifest starts empty and grows with each phase
-- [ ] 003.4 Branch protection: merge to `main` requires green CI
+- [x] 003.1 Workflow on push/PR: `tsc --noEmit` → ESLint → `vitest run` (with Postgres service container)
+- [x] 003.2 `drizzle-kit check` job stub (activates in PUL-101)
+- [x] 003.3 §15.4 mandatory-file check script (`scripts/check-mandatory-tests.ts`) — reads a manifest, fails if any listed file is missing; manifest starts empty and grows with each phase
+- [x] 003.4 Branch protection: merge to `main` requires green CI — *CI gate verified (deliberately broken PR goes red). Branch protection NOT enforced on free plan / personal account; team relies on manual no-merge-on-red discipline. Enable rulesets if EasyGrow upgrades to a Team org.*
 
 **Done when:** a deliberately broken PR (type error) is blocked; a clean PR merges.
 
@@ -92,6 +92,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 004.5 Uptime ping (any free monitor) on staging URL
 
 **Done when:** merging to `main` auto-deploys to `https://staging.<domain>` and the page loads over SSL.
+
+> **STATUS: DEFERRED** — intentionally parked until after Phase 3 (per §17, 004 can run parallel to Phase 1). Requires paid VPS + domain; revisit when meaningful features exist to test end-to-end.
 
 ---
 

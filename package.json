@@ -15,10 +15,11 @@
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "check:mandatory-tests": "tsx scripts/check-mandatory-tests.ts",
-    "test:db:reset": "docker exec easygrowcrm-postgres psql -U easygrowcrm -d postgres -c \"DROP DATABASE IF EXISTS easygrowcrm_test WITH (FORCE);\" -c \"CREATE DATABASE easygrowcrm_test;\""
+    "test:db:reset": "docker exec easygrowcrm-postgres psql -U easygrowcrm -d postgres -c \"DROP DATABASE IF EXISTS easygrowcrm_test WITH (FORCE);\" -c \"CREATE DATABASE easygrowcrm_test;\" && drizzle-kit migrate --config drizzle-test.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "better-auth": "^1.7.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",

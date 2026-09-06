@@ -143,12 +143,12 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §9.2–§9.3, §14.1.1 · **Depends:** PUL-101
 
-- [ ] 103.1 Better Auth (≥1.6): Google provider only; signup disabled; sessions in Postgres. External OAuth app — team uses personal Gmail (no Google Workspace); each user added as an OAuth test user.
-- [ ] 103.2 `/sign-in` page per §14.1.1: logo + one Google button, nothing else
-- [ ] 103.3 Unknown email → _"This email is not registered with EasyGrowCrm. Contact HR."_; deactivated → _"This account has been deactivated."_ — Company-domain check (§9.3 step 5) **DROPPED**: no shared Workspace domain, so the provisioned `user` row is the sole gate. Re-add if EasyGrow moves to Workspace.
-- [ ] 103.4 Session helper `getSessionUser()` — re-reads role + active from DB every request (never trusts the session payload; §16.5)
-- [ ] 103.5 Test: `features/auth/session-from-google.test.ts` (unknown email, deactivated user) → CI manifest
-- [ ] 103.6 Seed the first `super_admin` by hand (Employees UI is Phase 2) — first sign-in has no other route onto the guest list.
+- [x] 103.1 Better Auth (≥1.6): Google provider only; signup disabled; sessions in Postgres. External OAuth app — team uses personal Gmail (no Google Workspace); each user added as an OAuth test user.
+- [x] 103.2 `/sign-in` page per §14.1.1: logo + one Google button, nothing else
+- [x] 103.3 Unknown email → _"This email is not registered with EasyGrowCrm. Contact HR."_; deactivated → _"This account has been deactivated."_ — Company-domain check (§9.3 step 5) **DROPPED**: no shared Workspace domain, so the provisioned `user` row is the sole gate. Re-add if EasyGrow moves to Workspace.
+- [x] 103.4 Session helper `getSessionUser()` — re-reads role + active from DB every request (never trusts the session payload; §16.5)
+- [x] 103.5 Test: `features/auth/session-from-google.test.ts` (unknown email, deactivated user) → CI manifest
+- [x] 103.6 Seed the first `super_admin` by hand (Employees UI is Phase 2) — first sign-in has no other route onto the guest list.
 
 **Done when:** manual Google sign-in works locally with a hand-seeded super_admin; both rejection paths render their exact copy.
 ---

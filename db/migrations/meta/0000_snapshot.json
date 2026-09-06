@@ -1,0 +1,162 @@
+{
+  "id": "566f843d-4372-421e-8504-c9e22ae72311",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {},
+  "enums": {
+    "public.break_type": {
+      "name": "break_type",
+      "schema": "public",
+      "values": [
+        "lunch",
+        "prayer",
+        "personal",
+        "meeting",
+        "internet_issue",
+        "power_issue",
+        "emergency",
+        "other"
+      ]
+    },
+    "public.daily_task_status": {
+      "name": "daily_task_status",
+      "schema": "public",
+      "values": [
+        "planned",
+        "in_progress",
+        "done",
+        "partially_done",
+        "pending",
+        "blocked"
+      ]
+    },
+    "public.half_selection": {
+      "name": "half_selection",
+      "schema": "public",
+      "values": [
+        "first_half",
+        "second_half"
+      ]
+    },
+    "public.leave_status": {
+      "name": "leave_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "approved",
+        "rejected"
+      ]
+    },
+    "public.leave_type": {
+      "name": "leave_type",
+      "schema": "public",
+      "values": [
+        "sick",
+        "casual",
+        "emergency",
+        "half_day",
+        "wfh",
+        "late_arrival",
+        "early_leave",
+        "overtime"
+      ]
+    },
+    "public.project_status": {
+      "name": "project_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "archived"
+      ]
+    },
+    "public.proof_type": {
+      "name": "proof_type",
+      "schema": "public",
+      "values": [
+        "url",
+        "google_doc",
+        "google_sheet",
+        "screenshot",
+        "file",
+        "loom",
+        "staging_url",
+        "published_url",
+        "report",
+        "other"
+      ]
+    },
+    "public.review_decision": {
+      "name": "review_decision",
+      "schema": "public",
+      "values": [
+        "approved",
+        "revision_requested"
+      ]
+    },
+    "public.signout_type": {
+      "name": "signout_type",
+      "schema": "public",
+      "values": [
+        "normal",
+        "early",
+        "auto_closed",
+        "half_day"
+      ]
+    },
+    "public.task_priority": {
+      "name": "task_priority",
+      "schema": "public",
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ]
+    },
+    "public.task_status": {
+      "name": "task_status",
+      "schema": "public",
+      "values": [
+        "planned",
+        "in_progress",
+        "blocked",
+        "submitted",
+        "revision_required",
+        "approved",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "public.user_role": {
+      "name": "user_role",
+      "schema": "public",
+      "values": [
+        "super_admin",
+        "team_leader",
+        "project_manager",
+        "admin_hr",
+        "employee"
+      ]
+    },
+    "public.work_type": {
+      "name": "work_type",
+      "schema": "public",
+      "values": [
+        "in_office",
+        "remote",
+        "client_site"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

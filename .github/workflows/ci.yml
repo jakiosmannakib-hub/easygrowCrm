@@ -54,13 +54,13 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Test
-        run: pnpm test
-
       - name: Migration check
         run: pnpm exec drizzle-kit check
       - name: Migrations apply cleanly
         run: pnpm exec drizzle-kit migrate
+
+      - name: Test
+        run: pnpm test
 
       - name: Mandatory tests check
         run: pnpm check:mandatory-tests

@@ -42,3 +42,5 @@ next-env.d.ts
 
 # local env files
 .env
+# local dev scratch SQL (root only — never db/migrations/*.sql)
+/*.sql

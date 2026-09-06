@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 
 // Paths are relative to the repo root. Add required test files here per phase.
 const MANDATORY_TEST_FILES: string[] = [
-  // e.g. 'features/attendance/attendance.contract.test.ts',
+  'features/auth/session-from-google.test.ts', // PUL-103.5
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

@@ -129,13 +129,25 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > Ordering: `audit_log.actor_id references "user"(id)`. The `user` table is migration 002
 > (PUL-103), so PUL-103 must land first — matches the §11.9 migration numbering (002 → 003).
 
-- [ ] 102.0 Create least-privilege app role `easygrowcrm_app` via DB bootstrap (init script); app connects as it, migrations run as owner `easygrowcrm`. (Doc note: §11.8 names it `easygrowcrm_app`, §9.7 says `application_role` — standardise on `easygrowcrm_app`.)
-- [ ] 102.1 Migration 003: `audit_log` table per §11 — **before any feature table**
-- [ ] 102.2 `REVOKE UPDATE, DELETE ON audit_log` from `easygrowcrm_app`, in the migration itself
-- [ ] 102.3 `writeAudit(tx, actor, action, resource, resourceId, before, after)` — typed, takes the tx, throws if called without one
-- [ ] 102.4 Tests: `features/audit/audit-immutability.test.ts` (UPDATE raises Postgres permission error) + rollback test (audit row vanishes with the tx) → add both to the CI manifest
+> **Deviation as built — append-only by trigger, not by `REVOKE` (Amendment G).** §11.8 / §9.7
+> enforce append-only by revoking `UPDATE, DELETE` from a least-privilege login. We did not
+> create that login. Instead a `BEFORE UPDATE OR DELETE` trigger (`audit_log_no_update_delete`,
+> calling `audit_log_block_mutation()`) rejects both statements for **every** role, the owner
+> included — a stronger guarantee than the REVOKE, with no second DB user to provision and no
+> special role needed in the immutability test. 102.0 and 102.2 are therefore **superseded**,
+> not skipped. §11.8 and §9.7 should be amended to match.
+>
+> **Migration numbering:** spec calls this "migration 003"; Drizzle numbers 0-based, so the file
+> is `db/migrations/0002_audit_log.sql`. Correct as-is. drizzle-kit does not track triggers, so
+> the hand-appended trigger SQL is absent from the snapshot — `drizzle-kit check` stays green.
 
-**Done when:** both tests pass against the real test DB; no mock anywhere. (Immutability test only bites because the app connects as `easygrowcrm_app`, not the owner.)
+- [x] ~~102.0 Create least-privilege app role `easygrowcrm_app`~~ — **superseded** by the trigger (see note).
+- [x] 102.1 Migration `0002_audit_log.sql`: `audit_log` table per §11.8 — before any feature table. `db/schema/audit.ts`; FK to `"user"(id)`, `audit_resource_idx`, `audit_actor_idx` (`actor_id, created_at DESC`).
+- [x] ~~102.2 `REVOKE UPDATE, DELETE ON audit_log`~~ — **superseded**: `audit_log_no_update_delete` trigger in the same migration.
+- [x] 102.3 `writeAudit(tx, input)` in `features/audit/write-audit.ts` — typed; `Tx` derived from `db.transaction`'s callback arg, so passing the base `db` is a **compile error**; runtime guard for bad casts; never catches, never opens its own tx, never reads the clock (`created_at` is a DB default).
+- [x] 102.4 Tests: `features/audit/audit-immutability.test.ts` (UPDATE + DELETE rejected by the trigger, row survives unchanged) + `features/audit/audit-write.test.ts` (writes in-tx; row vanishes when the tx throws) → both in the CI manifest.
+
+**Done when:** ✅ both tests pass against the real test DB; no mock anywhere. Mutation-checked: dropping the trigger fails the immutability test (3 failed), and swapping `tx.insert` for `db.insert` fails the rollback test — neither is vacuously green. (`vitest.config.ts` now sets `fileParallelism: false`: test files share one real database and TRUNCATE between cases.)
 
 ---
 

@@ -169,12 +169,23 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §9.5, §16.5 · **Depends:** PUL-103
 
-- [ ] 104.1 `can(role, action): boolean` — pure function encoding the entire §9.5 matrix
-- [ ] 104.2 `authorize(action, subject?)` — reads the session via `getSessionUser()`, throws typed `UNAUTHENTICATED` / `DEACTIVATED` / `FORBIDDEN`
-- [ ] 104.3 Test: `features/auth/authorize.test.ts` — **every role × every action** in the §9.5 table, allow and deny cells both asserted → CI manifest
-- [ ] 104.4 JSDoc on both functions pointing at §9.5 as the source of truth
+> **The matrix is §9.6, not §9.5.** This ticket's subtasks say "the §9.5 matrix"; §9.5 is the
+> *rules* (authorize-first, UI hides / API refuses, role re-read every request) and §9.6 is the
+> *table*. Built against §9.6; §9.5 supplies the surrounding rules.
 
-**Done when:** the matrix test is exhaustive (cell count in the test equals cell count in §9.5).
+> **Deviation as built — flat file layout.** §12 sketches `lib/auth/can.ts` + `lib/auth/authorize.ts`.
+> This project is flat (`lib/auth.ts`, `lib/session.ts`, `lib/errors.ts`, `db/` at root), so
+> `can()`, `authorize()`, and the table all live in **`lib/authz.ts`**; no `lib/auth/` folder was
+> created. The actual layout is now recorded in CLAUDE.md §4 "File layout (as built)", which
+> supersedes §12's folder sketch — §12's *rules* (ports in `lib/`, feature slices own their code)
+> still hold.
+
+- [x] 104.1 `can(user, action, resource?): boolean` in `lib/authz.ts` — pure (no DB, no clock, no I/O). The §9.6 table is data: `PERMISSIONS`, 51 actions × 5 roles, cells `allow`/`deny`/`self`/`assignee`/`own`/`scoped`. `as const satisfies Record<string, Record<Role, Cell>>` makes a missing role or an invalid cell a **compile error**, and `Role` derives from the `user_role` DB enum so the two cannot drift. Conditional cells with no resource fail closed.
+- [x] 104.2 `authorize(action, resource?): Promise<User>` — calls `getSessionUser()` (which owns the `UNAUTHENTICATED` / `DEACTIVATED` throws and re-reads role + active from the DB every request, §16.5), throws `AppError('FORBIDDEN')` when `can()` is false, and returns the caller. `getSessionUser`'s row was already assignable to `User` — its `role` is the enum's literal union, not `string` — so no narrowing and no `as` was needed.
+- [x] 104.3 Test: `features/auth/authorize.test.ts` — all 255 cells → CI manifest (4 files now). **The test does not import `PERMISSIONS`**: its expected grid is a second, independent transcription of §9.6, so a typo in either rendering fails. Conditional cells are asserted three ways (match → true, other user → false, no resource → false).
+- [x] 104.4 JSDoc on `can()` and `authorize()` naming §9.6 as the source of truth ("change the table there first") and restating §9.5 rule 2 — the UI hides, the API refuses.
+
+**Done when:** ✅ the matrix test is exhaustive — `expect(cells).toBe(255)` and `expect(actions).toHaveLength(51)` make the cell-count check mechanical, so a §9.6 row added without updating the fixture fails CI. Mutation-checked: flipping `employee.change_role` for `admin_hr` from deny to allow fails on exactly that cell (`employee.change_role × admin_hr should deny`) and nothing else; restored.
 
 ---
 

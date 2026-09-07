@@ -96,6 +96,27 @@ Next.js 16.2 LTS (App Router) · React 19.2 · TypeScript strict · PostgreSQL 1
 - **Ports live in `lib/`:** `clock.ts`, `errors.ts`, `notifications.ts`. Feature code imports these, never the underlying library directly.
 - **Feature slices own everything:** `features/<name>/` holds its actions, queries, components, and colocated tests. No global `services/` or `repositories/`.
 
+### File layout (as built — supersedes the §12 sketch)
+
+§12 sketches nested `lib/auth/` and `lib/db/` folders. We went **flat** instead: one file per
+concern in `lib/`, with `db/` at the repo root. This is the layout to follow; §12's folder sketch
+is superseded (its *rules* — ports in `lib/`, feature slices own their code — still hold).
+
+| Path | Holds |
+|---|---|
+| `lib/auth.ts` | Better Auth server instance + its `databaseHooks` wiring |
+| `lib/auth-guards.ts` | `guardProvisioned` / `guardActive` — the sign-in rejection rules (§9.3) |
+| `lib/auth-client.ts` | Better Auth browser client |
+| `lib/session.ts` | `getSessionUser()` — re-reads role + active from the DB every request (§16.5) |
+| `lib/authz.ts` | The §9.6 permission table as data, `can()`, and `authorize()` |
+| `lib/errors.ts` | `AppError` + the seven §13 codes |
+| `db/index.ts` | The Drizzle client |
+| `db/schema/*.ts` | Table definitions, re-exported from `db/schema/index.ts` |
+| `db/migrations/` | Generated SQL + `meta/` snapshots |
+
+Nothing lives at `lib/auth/can.ts`, `lib/auth/authorize.ts`, or `lib/db/`. Don't create those
+folders — imports across the codebase assume the flat paths above.
+
 ---
 
 ## 5. Common mistakes this project is prone to

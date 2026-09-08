@@ -454,7 +454,13 @@ create index eod_unreviewed_idx on eod_reports(reviewed_at) where reviewed_at is
 
 **No `score` column anywhere** (Amendment H). The prototype's full EOD approve/revise loop is **replaced by lightweight acknowledgment** (owner decision): a manager can mark a report reviewed, optionally flag it ("needs a conversation") and leave a note. The employee's report content itself is immutable after sign-out — the acknowledgment fields are the only writable part, manager-only, and no-self-ack is a DB constraint. Semantics: `reviewed` = read; `flagged` = read and needs follow-up. No revision-resubmission cycle exists; follow-up is a human conversation, not a workflow.
 
-EOD content immutability (§13.5.7, PUL-605) is enforced in the database via column-level grants:
+EOD content immutability (§13.5.7, PUL-605) is enforced in the database via column-level grants.
+
+> **DECIDED (Phase 1) — this block needs rework before PUL-605.** There is no `easygrowcrm_app`
+> role (see §11.8): the app connects as the owning user, so these column grants have nothing to
+> bind to. Follow the audit-log precedent and enforce EOD immutability with a **trigger** that
+> rejects an UPDATE touching any column other than `reviewed_at`, `reviewed_by`, `flagged`,
+> `manager_note`. The *rule* below is unchanged; only its mechanism is.
 
 ```sql
 -- EOD content is immutable; only the acknowledgment columns are ever updatable.
@@ -537,7 +543,7 @@ create table notifications (
 create index notif_inbox_idx on notifications(recipient_id, read_at, created_at desc);
 -- Persistent (fixes prototype's reset-on-refresh). Per-user rows; fanout at write time.
 
-create table webhook_outbox (               -- queued Slack/Discord delivery: never blocks a commit
+create table webhook_outbox (               -- queued Discord + email delivery: never blocks a commit
   id          bigserial primary key,
   payload     jsonb not null,
   attempts    int not null default 0,
@@ -559,7 +565,7 @@ create table settings (                     -- single row, id always 1
   break_allowance_min int not null default 60,
   half_break_allowance_min int not null default 30,
   auto_close_hours   int not null default 10,
-  webhook_url        text
+  webhook_url        text                                   -- the DISCORD webhook URL (DECIDED Phase 1; was "Slack/Discord")
 );
 -- §3.5's hardcoded constants are DELETED; this table is the only source (review §4 fix).
 -- inviteExpiryHours, officeIP: removed (Amendments B, C).
@@ -579,11 +585,29 @@ create table audit_log (
 create index audit_resource_idx on audit_log(resource_type, resource_id);
 create index audit_actor_idx    on audit_log(actor_id, created_at desc);
 
--- Append-only, enforced by the database (Amendment G):
+-- Append-only, enforced by the database (Amendment G).
+-- SUPERSEDED — see the DECIDED note below; the shipped migration uses a trigger, not this REVOKE:
 revoke update, delete on audit_log from easygrowcrm_app;
 -- Read scope: super_admin = all rows; admin_hr = WHERE resource_type IN ('leave_request','employee').
 -- Written inside the same transaction as the mutation it records. Always.
 ```
+
+> **DECIDED (Phase 1) — append-only is enforced by a TRIGGER, and there is no `easygrowcrm_app` login.**
+> The `REVOKE` above was never applied, because it needs a separate least-privilege database user
+> that we did not create. Migration 003 instead ships `audit_log_no_update_delete`, a
+> `BEFORE UPDATE OR DELETE ... FOR EACH ROW` trigger that raises on any attempt:
+>
+> ```sql
+> create trigger audit_log_no_update_delete
+>   before update or delete on audit_log
+>   for each row execute function audit_log_block_mutation();
+> ```
+>
+> This is **stronger** than the REVOKE — it blocks every role including the table owner and a
+> superuser session, where a REVOKE binds only the roles it names — and it needs no second DB user
+> to provision, rotate, or get wrong in an environment. `TRUNCATE` is a different event and is not
+> blocked, which is what lets test fixtures reset (PUL-109); a test asserts the trigger still bites
+> after a truncate. §17's PUL-102.0 and 102.2 are superseded accordingly.
 
 ---
 

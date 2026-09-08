@@ -74,7 +74,7 @@ Sign-out is **locked** until the timer is green (7h net, or 3.5h net with an app
 
 **Atomicity (hard requirement):** attendance close, break close, daily record save, and all project-task status changes are executed in **one database transaction**. All succeed or none do. A partial sign-out (attendance closed but tasks never submitted) must be impossible. On failure, the employee sees an explicit error and retries.
 
-**Outside the transaction:** notifications and webhook posts. A dead Slack webhook must never block a sign-out. These fire after the transaction commits, via a queued job with retry.
+**Outside the transaction:** notifications and webhook posts. A dead Discord webhook (or a bounced email) must never block a sign-out. These fire after the transaction commits, via a queued job with retry.
 
 ---
 

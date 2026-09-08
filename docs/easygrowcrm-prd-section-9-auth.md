@@ -24,13 +24,28 @@
 
 Better Auth generates `user`, `session`, `account`, and `verification` tables via its CLI. We extend `user` with EasyGrowCrm's employee fields using Better Auth's `additionalFields` config, so there is **one row per person, in one table**.
 
+> **DECIDED (Phase 1) — four reconciliations against Better Auth 1.7 as actually built:**
+> 1. **Drizzle adapter, not the raw `Pool` below.** `drizzleAdapter(db, { provider: "pg" })` — so
+>    **drizzle-kit is the single migration runner** and Better Auth's tables live in the same
+>    schema history as everything else. Two migration systems over one database is the failure
+>    mode this avoids.
+> 2. **There is no Better Auth CLI in 1.7.** The auth tables are reconciled against our Drizzle
+>    schema with `getAuthTables()` from `better-auth/db`, not by a generate command.
+> 3. **The "deactivated" rejection lives in `session.create.before`, not `user.create.before`.**
+>    `user.create.before` fires only for an email Better Auth has never seen, so a deactivated
+>    user who had already signed in once would sail straight past it. See §9.3.
+> 4. **`requireUser()` is named `getSessionUser()`** in this codebase (`lib/session.ts`) — the name
+>    `authorize()` calls it by. The behaviour in §9.5 is unchanged.
+
 ```ts
 // lib/auth.ts
 import { betterAuth } from "better-auth";
-import { Pool } from "pg";
+// DECIDED (Phase 1): the Drizzle adapter, NOT a raw pg Pool — see the note above.
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { db } from "@/db";
 
 export const auth = betterAuth({
-  database: new Pool({ connectionString: process.env.DATABASE_URL }),
+  database: drizzleAdapter(db, { provider: "pg" }),
 
   emailAndPassword: { enabled: false },
 
@@ -76,7 +91,11 @@ There is no signup. There is no invitation email, no token, no expiry.
 
 1. `super_admin` or `admin_hr` creates the employee record in Employees, entering their **company Google email**, role, and title. The row is created with `active: true` and no linked OAuth account.
 2. The person visits EasyGrowCrm and clicks **Sign in with Google**.
-3. A Better Auth `before` hook runs:
+3. A Better Auth `before` hook runs. **DECIDED (Phase 1):** the *unknown email* check stays in
+   `user.create.before`, but the ***deactivated*** check moved to **`session.create.before`** —
+   `user.create.before` fires only for an email Better Auth has never seen, so a user deactivated
+   *after* their first sign-in would never hit it. Checking at session creation catches every
+   sign-in. (Both live in `lib/auth-guards.ts` as `guardProvisioned` / `guardActive`.)
 
 ```ts
 // Reject anyone who wasn't pre-provisioned, or who has been deactivated.
@@ -142,12 +161,13 @@ Show these as a checklist in the deactivation modal. **Do not allow deactivation
 
 ## 9.5 Where authorization is enforced
 
-**Not in middleware alone.** Next.js middleware-only session protection has been shown to be bypassable by spoofing internal headers (CVE-2025-29927). Middleware is a *convenience* redirect for unauthenticated visitors. It is **not** the security boundary.
+**Not in middleware alone.** Next.js middleware-only session protection has been shown to be bypassable by spoofing internal headers (CVE-2025-29927). Middleware is a *convenience* redirect for unauthenticated visitors. It is **not** the security boundary. *(DECIDED Phase 1: the file is `proxy.ts` — Next 16.3 renamed the convention. It checks only that a session **cookie is present**, via Better Auth's `getSessionCookie`; it never calls `getSession` and never trusts the cookie's contents. The boundary is `requireRouteAccess` / `authorize()` inside every page and action.)*
 
 **The security boundary is one function, called at the top of every server action and route handler:**
 
 ```ts
 // lib/authz.ts
+// DECIDED (Phase 1): named getSessionUser() in lib/session.ts — behaviour unchanged.
 export async function requireUser() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new AppError("UNAUTHENTICATED");
@@ -342,8 +362,15 @@ create index on audit_log (resource_type, resource_id);
 create index on audit_log (actor_id, created_at desc);
 
 -- Append-only. Enforced by the database, not by convention.
+-- SUPERSEDED — see the DECIDED note below; the shipped migration uses a trigger, not this REVOKE:
 revoke update, delete on audit_log from application_role;
 ```
+
+> **DECIDED (Phase 1) — a trigger, not a role grant.** No `application_role` / `easygrowcrm_app`
+> least-privilege login was created; the app connects as the owning user. Migration 003 enforces
+> append-only with `audit_log_no_update_delete` (`BEFORE UPDATE OR DELETE ... FOR EACH ROW`),
+> which blocks **every** role including the owner — a stronger guarantee than a REVOKE, with no
+> second DB user to provision. The invariant in §9.7 is unchanged; only its mechanism is. See §11.8.
 
 **Log every one of these:** task status changes, submissions, review decisions, meta-ratings, subtask add/toggle/remove, checklist add/toggle/delete, EOD acknowledgments and flags, leave requests, leave decisions and reversals, employee create/update/deactivate/reactivate, role changes, project create/archive/delete, client create/update/archive, template create/delete and every template-hierarchy edit (month/category/task/subtask add/rename/delete), settings changes, **audit-log views themselves** (`audit_log.viewed` — the §14.13 banner "Viewing this log is itself logged" must be literally true), and every failed authorization attempt (`403`). The last one is your intrusion signal. The one documented exception: `personal_task` rows are never audited (§9.6 ¹¹).
 

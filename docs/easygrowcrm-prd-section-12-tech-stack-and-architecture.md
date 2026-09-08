@@ -26,7 +26,7 @@
 | Charts | **Recharts** | current | Kept from prototype. |
 | Excel export | **SheetJS (xlsx)** | current | Server-side only (§12.7). |
 | Queue / cron | **pg-boss** | current | Uses our Render Postgres — no Redis. Handles the webhook outbox, the 10-hour auto-close, and any nightly jobs. Runs in a **dedicated Render Background Worker** (Vercel serverless can't host a long-lived queue), sharing the same repo and DB as the app. |
-| Email (future alerts only) | **Resend** | current | Only if we ever add non-webhook email. Not required at launch. |
+| Email (second notification channel) | **TBD** (Resend / SendGrid / etc.) | current | **DECIDED (Phase 1): email is a real delivery channel, not "future alerts only".** It rides the same `webhook_outbox` + Render worker as the Discord webhook; the adapter is chosen in PUL-801. |
 | Testing | **Vitest** + **Playwright** | current | Vitest for `can()` + business rules; Playwright for the sign-in/sign-out and QC end-to-end flows. |
 | Lint / format | **ESLint** + **Prettier** | current | Standard. Custom rule in §12.5. |
 | Package manager | **pnpm** | current | Fast, disk-efficient. |
@@ -142,6 +142,17 @@ easygrowcrm/
 └── package.json
 ```
 
+> **DECIDED (Phase 1) — the flat layout supersedes the folder sketch above.** The nested
+> `lib/auth/` and `lib/db/` folders were not adopted: `lib/` holds one file per concern and `db/`
+> sits at the repo root. As built: `lib/auth.ts`, `lib/auth-guards.ts`, `lib/auth-client.ts`,
+> `lib/session.ts`, `lib/authz.ts` (the §9.6 table + `can()` + `authorize()`), `lib/errors.ts`,
+> `lib/mutation.ts` (`withTx`), `lib/notifications.ts`, `lib/clock.ts`, `lib/nav.ts`,
+> `lib/route-guard.ts`; `db/index.ts`, `db/schema/*`, `db/migrations/`. Nothing lives at
+> `lib/auth/can.ts`, `lib/auth/authorize.ts`, `lib/db/tx.ts` or `lib/permissions.ts` — imports
+> across the codebase assume the flat paths. **The RULES below are unchanged** (ports in `lib/`,
+> feature slices own their code, only `features/*/actions.ts` writes); only the folder shape is.
+> CLAUDE.md §4 carries the same table.
+
 **Rules:**
 - **`features/*/actions.ts` is where mutations live.** Nothing outside `features/` and `app/api/auth/` may write to the DB.
 - **Server actions are the only mutation endpoint.** No REST endpoints, no tRPC. The one exception is Better Auth's mounted handler.
@@ -155,7 +166,7 @@ easygrowcrm/
 Exactly one function protects every mutation. This is the single most important line of code in EasyGrowCrm.
 
 ```ts
-// lib/auth/authorize.ts
+// lib/authz.ts   (DECIDED Phase 1: flat layout)
 import { requireUser } from "./require-user";
 import { can, type Action, type Resource } from "./can";
 import { AppError } from "@/lib/errors";   // AppError carries the §13 error codes
@@ -189,7 +200,7 @@ export async function requireUser() {
 }
 ```
 
-**Middleware** (`middleware.ts`) does one thing and one thing only: **if there is no session cookie and the path is inside `(app)/`, redirect to `/sign-in`.** It never checks role. It never gates mutations. It is a UX convenience, not a security boundary. This is §9.5, rule 1, in code.
+**Middleware** (`proxy.ts` — *DECIDED Phase 1: Next 16.3 deprecated the `middleware` file convention in favour of `proxy`; same hook, same caveats*) does one thing and one thing only: **if there is no session cookie and the path is inside `(app)/`, redirect to `/sign-in`.** It never checks role. It never gates mutations. It is a UX convenience, not a security boundary. This is §9.5, rule 1, in code.
 
 **`can()` is a pure function.** Every row in the §9.6 permission table is a test case — the whole table becomes a `.test.ts` file. If a permission decision is not covered by a test, it doesn't ship.
 
@@ -201,8 +212,8 @@ export async function requireUser() {
 // features/projects/actions.ts
 "use server";
 import { z } from "zod";
-import { authorize } from "@/lib/auth/authorize";
-import { withTx } from "@/lib/db/tx";
+import { authorize } from "@/lib/authz";   // DECIDED Phase 1: flat layout, not lib/auth/
+import { withTx } from "@/lib/mutation";   // DECIDED Phase 1: flat layout, not lib/db/tx
 import { writeAudit } from "@/lib/audit/write";
 
 const ApproveInput = z.object({
@@ -242,7 +253,7 @@ export async function approveTask(input: z.infer<typeof ApproveInput>) {
     return { review, task: after };
   });
                                                      // 5. NOTIFY (after commit — outside tx)
-                                                     //    ...enqueue Slack + in-app notif
+                                                     //    ...enqueue Discord + email + in-app notif
 }
 ```
 
@@ -271,7 +282,7 @@ Related conventions (code review, not lint):
 ## 12.6 Transactions — the sign-out is why we care
 
 ```ts
-// lib/db/tx.ts
+// lib/mutation.ts   (DECIDED Phase 1: flat layout)
 export async function withTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   return db.transaction(fn, { isolationLevel: "read committed" });
 }
@@ -287,7 +298,7 @@ The atomic sign-out from §10.5 is the load-bearing use of this: attendance clos
 
 **pg-boss** runs jobs in the same Postgres. No Redis. Three jobs at launch:
 
-1. **`webhook.deliver`** — reads `webhook_outbox`, POSTs to Slack/Discord, exponential backoff on failure. Producer: the last step of any server action that fires a notification (enqueue after `withTx` commits) — the action runs on Vercel and only *writes a row* to `webhook_outbox`; the **Render worker** picks it up and delivers it. This is why a dead webhook can never block a commit, and why delivery doesn't need a long-lived process on Vercel's side.
+1. **`webhook.deliver`** — reads `webhook_outbox`, POSTs to **Discord** (and sends the **email** channel), exponential backoff on failure. Producer: the last step of any server action that fires a notification (enqueue after `withTx` commits) — the action runs on Vercel and only *writes a row* to `webhook_outbox`; the **Render worker** picks it up and delivers it. This is why a dead webhook can never block a commit, and why delivery doesn't need a long-lived process on Vercel's side.
 2. **`attendance.auto-close`** — runs every 5 minutes **on the Render worker** (pg-boss scheduled job — not Vercel Cron, not Render Cron: it must share the same queue instance and retry semantics as the outbox). Finds `attendance` rows where `sign_out_at IS NULL` and `now() - sign_in_at ≥ interval '10 hours'`, closes them with `sign_out_type='auto_closed'`, ends any open break, caps `net_minutes` at shift end, writes an audit row. Server-side, per §10.6. **This job is load-bearing: if the worker is down, forgotten sign-outs never close. The worker's liveness is monitored (§12.9 v3).**
 3. **`notifications.fanout`** *(optional, launch-later)* — batches in-app notifications for template instantiation (which can fire 10+ at once).
 
@@ -337,7 +348,7 @@ Recording these here so nobody reopens them in month three.
 - **shadcn over Material UI or Chakra.** Copy-in components mean no vendor lock, and the aesthetic is closer to the prototype's Monday-style look.
 - **Zod over Yup / superstruct / manual validation.** The Zod schema doubles as the TypeScript input type; a validation change is a one-place change.
 - **One VPS over Vercel — re-evaluated at owner's request, decision stands.** The "Vercel is free" premise fails: the Hobby tier's fair-use terms restrict it to non-commercial personal use, and explicitly define commercial as any deployment benefiting anyone paid to build or use it — an internal business tool qualifies on day one, and Vercel enforces this. The real price is Pro ($20/mo + seats + usage) **plus** a hosted Postgres elsewhere (Neon/Supabase — another service, another region) **plus** re-architecting §12.7: pg-boss needs a long-lived process, which serverless doesn't provide. At 20 known users in one timezone with steady daytime load, one machine running everything is cheaper in money *and* in moving parts. Revisit only if the team grows past ~100 users or goes multi-office.
-- **One VPS over Vercel + Neon + Upstash + Resend + Slack.** Every service is a bill, an SLA, an incident channel, and an integration point. At this scale, one machine wins.
+- **One VPS over Vercel + Neon + Upstash + Resend + a chat SaaS.** Every service is a bill, an SLA, an incident channel, and an integration point. At this scale, one machine wins.
 
 ---
 

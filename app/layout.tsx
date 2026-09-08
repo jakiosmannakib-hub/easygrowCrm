@@ -1,3 +1,4 @@
+import { ToastProvider } from '@/components/providers/toast-provider';
 import { cn } from '@/lib/utils';
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono, Noto_Sans, Outfit } from 'next/font/google';
@@ -40,7 +41,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         outfitHeading.variable,
       )}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <ToastProvider />
+      </body>
     </html>
   );
 }

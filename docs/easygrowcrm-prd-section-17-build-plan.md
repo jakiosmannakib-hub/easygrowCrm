@@ -157,6 +157,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 > **DECIDED (Phase 1) — five reconciliations against Better Auth 1.7 as actually built.** §9.2/§9.3
 > have been amended to match; recorded here so the ticket and the spec agree.
+>
 > 1. **Drizzle adapter, not §9.2's raw `Pool`** — `drizzleAdapter(db, { provider: "pg" })`, so
 >    **drizzle-kit is the single migration runner**. Two migration systems over one database is the
 >    failure mode this avoids.
@@ -166,7 +167,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 >    and there is no Workspace domain to check, so the provisioned `user` row is the sole gate.
 >    Re-add if EasyGrow moves to Workspace.
 > 4. **"Deactivated" is rejected in `session.create.before`, not `user.create.before`** — the
->    latter fires only for an email Better Auth has never seen, so someone deactivated *after*
+>    latter fires only for an email Better Auth has never seen, so someone deactivated _after_
 >    their first sign-in would sail past it. Both guards live in `lib/auth-guards.ts`.
 > 5. **`requireUser()` is named `getSessionUser()`** (`lib/session.ts`) — the name `authorize()`
 >    calls it by. Behaviour per §9.5 is unchanged.
@@ -187,14 +188,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 **Budget:** L · **Reads:** §9.5, §16.5 · **Depends:** PUL-103
 
 > **The matrix is §9.6, not §9.5.** This ticket's subtasks say "the §9.5 matrix"; §9.5 is the
-> *rules* (authorize-first, UI hides / API refuses, role re-read every request) and §9.6 is the
-> *table*. Built against §9.6; §9.5 supplies the surrounding rules.
+> _rules_ (authorize-first, UI hides / API refuses, role re-read every request) and §9.6 is the
+> _table_. Built against §9.6; §9.5 supplies the surrounding rules.
 
 > **Deviation as built — flat file layout.** §12 sketches `lib/auth/can.ts` + `lib/auth/authorize.ts`.
 > This project is flat (`lib/auth.ts`, `lib/session.ts`, `lib/errors.ts`, `db/` at root), so
 > `can()`, `authorize()`, and the table all live in **`lib/authz.ts`**; no `lib/auth/` folder was
 > created. The actual layout is now recorded in CLAUDE.md §4 "File layout (as built)", which
-> supersedes §12's folder sketch — §12's *rules* (ports in `lib/`, feature slices own their code)
+> supersedes §12's folder sketch — §12's _rules_ (ports in `lib/`, feature slices own their code)
 > still hold.
 
 - [x] 104.1 `can(user, action, resource?): boolean` in `lib/authz.ts` — pure (no DB, no clock, no I/O). The §9.6 table is data: `PERMISSIONS`, 51 actions × 5 roles, cells `allow`/`deny`/`self`/`assignee`/`own`/`scoped`. `as const satisfies Record<string, Record<Role, Cell>>` makes a missing role or an invalid cell a **compile error**, and `Role` derives from the `user_role` DB enum so the two cannot drift. Conditional cells with no resource fail closed.
@@ -232,7 +233,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [x] 105.3 Custom ESLint rule `easygrowcrm/authorize-first` in `eslint-rules/authorize-first.mjs` — AST-based, no path logic inside the rule (scoping is the config glob). Async functions are tracked on a stack and each `authorize()` / `withTx()` call is attributed by source position to **every** enclosing async function, so `withTx(async (tx) => …)` still counts against the exported action. Two messages: `missingAuthorize`, `authorizeAfterTx`.
 - [x] 105.4 Rule wired into `eslint.config.mjs` as `"error"` for `files: ["features/**/actions.ts"]` (so it runs in the existing CI lint job). Tested by ESLint's `RuleTester` in `eslint-rules/authorize-first.test.ts`, driven through vitest (`RuleTester.describe/it` assigned from vitest — globals are off here) so it runs in `pnpm test`: 3 valid (the `_example` shape; read → authorize → withTx per §12.4; a read-only action) + 3 invalid (`withTx` with no `authorize`; `authorize` after `withTx`; the same in arrow form). **PUL-105 is not on the §15.4 mandatory list**, so `scripts/check-mandatory-tests.ts` is unchanged (still 4 files).
 
-**Done when:** ✅ copying `_example` is the documented way to start any new action — it is lint-clean, type-clean, and passes the rule that guards it. Mutation-checked: moving `authorize()` in the real `_example` to *after* the `withTx` block fails `pnpm lint` with exactly `authorize() must run before withTx() in "exampleAction"` on that file (exit 1); restored. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 5 files / 16 tests · `drizzle-kit check` 0 · mandatory-test manifest 0.
+**Done when:** ✅ copying `_example` is the documented way to start any new action — it is lint-clean, type-clean, and passes the rule that guards it. Mutation-checked: moving `authorize()` in the real `_example` to _after_ the `withTx` block fails `pnpm lint` with exactly `authorize() must run before withTx() in "exampleAction"` on that file (exit 1); restored. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 5 files / 16 tests · `drizzle-kit check` 0 · mandatory-test manifest 0.
 
 ---
 
@@ -276,15 +277,15 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > **Deviation as built — object input, typed against the §13.9 registry.** The ticket sketches
 > `notify(userId, text, meta?)`: positional, with the message text passed in by the caller. Built
 > instead as `notify({ to, type, data? })`, matching how §12.4 step 5 calls it and how §13.9 works —
-> the *template* owns the copy, the caller names a template and supplies its payload. A caller that
+> the _template_ owns the copy, the caller names a template and supplies its payload. A caller that
 > passes prose would put user-facing wording in `features/**`, where the §2 forbidden-words grep
 > and the §13.9 registry can't govern it. `NotificationType` is a union of the 18 §13.9 names, so
 > an invented type is a **compile error** at the call site. The ticket's wording should be amended.
 
 - [x] 107.1 `lib/notifications.ts`: `NotificationType` (the 18 §13.9 template names, no more and no fewer — verified against §13.9), `NotifyInput { to, type, data? }`, `notify(input): Promise<void>`. One recipient per call; loop for several.
 - [x] 107.2 v1-stub adapter: pushes `{ ...input, sentAt }` onto a module-level array and `console.debug`s it. No DB, no webhook — `notifications` + `webhook_outbox` land in PUL-801 and **this interface does not change then** (§16.11). Test-only `__resetNotifications()` (clears; call it in setup) and `__sentNotifications()` (returns a **copy**, so the live array is never handed out). `sentAt` uses `Date.now()` for now — `lib/` is outside the `features/**` clock ban; it moves to `clock.now()` in PUL-108.
-- [x] 107.3 Test helper `expectNotified(to, matcher)` in `tests/notifications.ts`. Object matcher = equal `type` when given plus a **subset** match on `data` (extra payload keys are fine); function matcher = predicate. On no match it throws listing every notification that *was* sent — recipient, type and payload per line — or `(nothing was sent)`, so a failing integration test diagnoses itself.
-- [x] 107.4 Test `tests/notifications.test.ts` (10 cases): notify records; reset clears; the accessor doesn't leak the live array; type / data-subset / predicate matches pass; and four failure paths (wrong type, wrong recipient, differing `data` value, nothing sent), with the wrong-type case asserting the error names what *was* sent. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` is unchanged (still 4 files).
+- [x] 107.3 Test helper `expectNotified(to, matcher)` in `tests/notifications.ts`. Object matcher = equal `type` when given plus a **subset** match on `data` (extra payload keys are fine); function matcher = predicate. On no match it throws listing every notification that _was_ sent — recipient, type and payload per line — or `(nothing was sent)`, so a failing integration test diagnoses itself.
+- [x] 107.4 Test `tests/notifications.test.ts` (10 cases): notify records; reset clears; the accessor doesn't leak the live array; type / data-subset / predicate matches pass; and four failure paths (wrong type, wrong recipient, differing `data` value, nothing sent), with the wrong-type case asserting the error names what _was_ sent. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` is unchanged (still 4 files).
 - [x] 107.5 `features/_example/actions.ts` step 5 updated to a real registry call — `await notify({ to: actor.id, type: 'task_approved', data: { taskId: parsed.resourceId } })`, still commented — so the copy-source can't teach a wrong shape. Two now-stale "port not built yet" notes in that file refreshed.
 
 **Done when:** ✅ any Phase 2+ action can call `notify()` after its `withTx` commits and assert on it with `expectNotified`. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 6 files / 26 tests · mandatory-test manifest 0.
@@ -306,15 +307,15 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 > **Deviation as built — audit timestamps stay on the DB default, so 108.3 and the Done-when
 > needed amending.** The ticket says "all timestamps everywhere (audit included) go through the
-> port", and the Done-when asks for an audit row carrying the *frozen* timestamp. That is the wrong
+> port", and the Done-when asks for an audit row carrying the _frozen_ timestamp. That is the wrong
 > target: `writeAudit` omits `created_at` and Postgres fills it from `now()` (`db/schema/audit.ts`,
 > `.defaultNow().notNull()`), which is deliberate — audit time should be database commit-side time,
 > not an app instant, and it means a frozen test clock cannot skew the append-only log. So the port
-> governs *business* time (late detection, timer unlock, auto-close); the audit clock is the
+> governs _business_ time (late detection, timer unlock, auto-close); the audit clock is the
 > database's. The ticket wording should be amended to say so.
 
 - [x] 108.1 `lib/clock.ts`: `Clock { now(): Date }`; `systemClock` (the production adapter, and the **only** permitted `new Date()` in the codebase); `clock`, the facade every caller imports; `createTestClock(initial?)` → `now()` / `set(d)` / `advance(ms)`, handing out a **copy** each `now()` so a test can't mutate the frozen instant by accident; `setClock` / `resetClock` to swap the source.
-- [x] 108.2 ESLint rule `easygrowcrm/no-direct-date` in `eslint-rules/no-direct-date.mjs`, registered in the **same** local plugin as `authorize-first` and wired as `"error"` for `files: ["features/**"]` — broader than `authorize-first`'s `actions.ts` glob, since any feature code can read a clock. No path logic inside the rule: `lib/clock.ts` is exempt purely by falling outside the glob. **Deliberate narrowing:** only the *zero-argument* `new Date()` is banned — `new Date(row.startedAt)` is parsing a stored value, not asking what time it is. `Date.now()` is banned outright (it has no parsing form). Three `valid` test cases pin this narrowing so it isn't "fixed" later.
+- [x] 108.2 ESLint rule `easygrowcrm/no-direct-date` in `eslint-rules/no-direct-date.mjs`, registered in the **same** local plugin as `authorize-first` and wired as `"error"` for `files: ["features/**"]` — broader than `authorize-first`'s `actions.ts` glob, since any feature code can read a clock. No path logic inside the rule: `lib/clock.ts` is exempt purely by falling outside the glob. **Deliberate narrowing:** only the _zero-argument_ `new Date()` is banned — `new Date(row.startedAt)` is parsing a stored value, not asking what time it is. `Date.now()` is banned outright (it has no parsing form). Three `valid` test cases pin this narrowing so it isn't "fixed" later.
 - [x] 108.3 Audit path confirmed clock-free — see the deviation note above; `writeAudit` is correct as-is and was not touched. A grep of `features/**` finds zero real `new Date()` / `Date.now()`; `_example` references the clock only in comments.
 - [x] 108.4 Tests. `eslint-rules/no-direct-date.test.ts` — RuleTester via vitest (globals are off here): 3 valid (`clock.now()`; `new Date(row.startedAt)`; `someDate.getTime()`) + 3 invalid (`new Date()`; `Date.now()`; both in one file, both reported). `tests/clock.test.ts` — freeze is stable across calls, `advance(1000)` moves 1s, `set(d)` jumps absolute, `now()` hands out a copy, `setClock` makes code holding `clock` (not the test adapter) see the advance, `resetClock` restores real time. **Neither is a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
 
@@ -333,7 +334,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > skeleton that delegates to `seedMinimal` — flow tests don't exist yet, and no Phase 2 data is
 > invented. Both facts are recorded in comments at the top of `tests/seed.ts`.
 
-> **Interpretation — "2 managers" = `team_leader` + `project_manager`.** The two *delivery* manager
+> **Interpretation — "2 managers" = `team_leader` + `project_manager`.** The two _delivery_ manager
 > roles: the pair §9.6 distinguishes for task and project work, and the pair the "≥2 active
 > manager-level users" invariant (§9.7) is about. `admin_hr` is manager-level too but stays out of
 > the minimal cast — its permission set is orthogonal (people-ops), so a test needing HR adds one
@@ -350,7 +351,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [x] 109.3 **Isolation choice, documented: truncate-and-reseed per file, not a rolled-back transaction.** `reset()` runs `TRUNCATE "audit_log", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`, and `seedMinimal()` calls it first, so any file can seed at any point and get the same state. A rolled-back wrapping tx was rejected: the code under test calls `withTx` itself, and nesting real transactions inside a test-owned one turns every rollback assertion into a savepoint question — exactly the behaviour the audit-immutability tests exist to check. `vitest.config.ts` already sets `fileParallelism: false`, so files share one real database without racing. `verification` is truncated too though §17 lists four tables — leaving the fifth would make "every seed starts clean" quietly untrue.
 - [x] 109.4 Guard: `isTestDbName(name)` — pure, `name.includes('test')`, deliberately crude so the rule everything rests on is trivially auditable (a false negative is an inconvenience; a false positive truncates a real database). `assertTestDb()` extracts the name with `new URL()` rather than a regex, so a `?sslmode=require` query string or a `/` in a password can't fool it, and throws `Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')`. Called at the top of **every** seed function — per call, not once at import — since it is the only thing between a stray `pnpm test` and a wiped dev database.
 - [x] 109.5 Test `tests/seed.test.ts` (13 cases): `isTestDbName` accepts `easygrowcrm_test` and rejects `easygrowcrm`/`prod`; `assertTestDb` throws when `DATABASE_URL` is repointed at the dev database; `seedMinimal` yields exactly 6 users with the right role distribution, correct handle ids/roles, and everyone active+verified; a second `seedMinimal()` doesn't duplicate (count stays 6); `reset()` twice in a row succeeds. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
-- [x] 109.6 **TRUNCATE vs the append-only audit trigger — re-confirmed empirically, not by reading the migration.** The trigger is `FOR EACH ROW ... UPDATE OR DELETE` (`db/migrations/0002_audit_log.sql:23`); TRUNCATE fires neither, and **is not blocked**. Two tests pin it: one inserts a real audit row and asserts `reset()` resolves and empties the table; the other asserts a plain `DELETE` on a fresh audit row still rejects *after* a truncate — so TRUNCATE is not a back door that disarms §16.4, and adding a TRUNCATE statement-trigger later fails here rather than in whichever suite happens to seed first.
+- [x] 109.6 **TRUNCATE vs the append-only audit trigger — re-confirmed empirically, not by reading the migration.** The trigger is `FOR EACH ROW ... UPDATE OR DELETE` (`db/migrations/0002_audit_log.sql:23`); TRUNCATE fires neither, and **is not blocked**. Two tests pin it: one inserts a real audit row and asserts `reset()` resolves and empties the table; the other asserts a plain `DELETE` on a fresh audit row still rejects _after_ a truncate — so TRUNCATE is not a back door that disarms §16.4, and adding a TRUNCATE statement-trigger later fails here rather than in whichever suite happens to seed first.
 
 **Done when:** ✅ two test files using `seedMinimal` run in any order with identical results — each seed truncates first, so order cannot matter. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 10 files / 70 tests (existing suite unaffected) · mandatory-test manifest 0.
 
@@ -395,16 +396,24 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-### PUL-201 — Employee table + min-managers trigger (migration 004)
+### PUL-201 — User hardening + min-managers trigger (migration 004)
 
 **Budget:** M · **Reads:** §11 (004), §9.4 inv. 7 · **Depends:** PUL-101
 
-- [ ] 201.1 Migration 004: `employees` per §11 (role, active, title, dept, join date, google email unique)
-- [ ] 201.2 DB trigger: reject any UPDATE that would leave <2 active managers
-- [ ] 201.3 Test: `features/employees/min-two-managers.test.ts` — trigger fires on raw SQL bypassing the app → CI manifest
-- [ ] 201.4 Extend `seedMinimal` with real employee rows
+> **As-built:** the ticket title said "Employee table". There is no `employees` table and never
+> was one — the employee entity is Better Auth's `"user"` (migration 002), extended with
+> `role`/`title`/`department`/`active`/`join_date` via `additionalFields` (§11.1). §11.9 already
+> names this migration "user hardening"; the title now matches. Because there is no schema diff,
+> 0003 is a **journaled `--custom`** migration (`drizzle-kit generate --custom`) holding
+> hand-written SQL only. Functions and triggers sit outside drizzle's snapshot — same as
+> `0002_audit_log` — so `drizzle-kit check` stays green.
 
-**Done when:** the trigger is unbreakable even via `psql`.
+- [x] 201.1 Migration 004 (file 0003_user_hardening.sql): user hardening per §11.9 — NO employees table; the entity is Better Auth's "user" (migration 002). enforce_min_two_managers() + trigger, plus forbid_super_admin_assignee() function def (its pt_no_sa_assignee trigger attaches in 008/PUL-401).
+- [x] 201.2 DB trigger user_min_managers BEFORE UPDATE OF active, role ON "user": rejects any UPDATE that sets active or role and would leave <2 active manager-level users. Narrower than "any UPDATE" by design and complete — count can only drop via an active/role change, and users are never hard-deleted (§9.4/§11), so no other path exists. Verified against the live DB: `pg_get_triggerdef` matches §11.1 verbatim, message `'operation would leave fewer than two active manager-level users'`. `CREATE TRIGGER` has no `OR REPLACE` in PG16, so the file does `DROP TRIGGER IF EXISTS` first — both routines are `CREATE OR REPLACE`, keeping 0003 re-runnable.
+- [x] 201.3 Test: `features/employees/min-two-managers.test.ts` — real test DB, no mocks, every statement raw SQL straight at the table. 3 cases: **block deactivate** (raw-deactivate PM 3→2, allowed — the boundary is legal — then raw-deactivate TL → rejected, TL still active), **block demote** (PM out, then SA `role→'employee'` → rejected, SA still super_admin), **allow ≥2** (raw-promote `seed_e1` to project_manager → succeeds). The third case is load-bearing: it proves the trigger *runs and permits*, so the other two are rejections rather than a trigger that never fired. Registered as the **5th** CI manifest entry. Mutation-proofed for real — dropping `user_min_managers` fails exactly the two block cases.
+- [x] 201.4 ~~Extend `seedMinimal` with real employee rows~~ — **no change needed.** `tests/seed.ts` `seedMinimal()` (PUL-109) is already the §15.5 cast: `seed_sa` / `seed_tl` / `seed_pm` + 3 employees, deterministic ids and `@test.local` emails. Shrinking it to the 2-manager floor was considered and rejected — PUL-102/103/104 tests depend on this fixture, and the below-2 boundary is a test-*arrange* concern, not a seed concern (the test steps down to 2 itself). Client + project seed rows stay deferred to PUL-207 (migration 007), per the scope note in `tests/seed.ts`.
+
+**Done when:** ✅ the trigger is unbreakable even via `psql` — both block paths raise on raw SQL, the pass path succeeds. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings, both custom rules) · `vitest run` 12 files / 87 tests · `drizzle-kit check` clean · manifest 5 files.
 
 ---
 
@@ -1321,7 +1330,7 @@ Mandatory §15.4 test files are attached to: PUL-102, 103, 104, 201, 204, 205, 3
 
 # 17.4 What's explicitly out of scope for v1
 
-Restated so nobody adds them mid-build: native mobile app · client portal · **Slack/Teams** adapters (the port exists and Discord + email ship in PUL-801; *other* chat adapters are v2) · recurring cron-spawned tasks (Amendment E: explicit numbered template tasks instead) · file uploads (proof = link only) · custom roles beyond the five · multi-agency tenancy · real-time collaboration (last-write-wins + `CONFLICT` toasts is v1's story).
+Restated so nobody adds them mid-build: native mobile app · client portal · **Slack/Teams** adapters (the port exists and Discord + email ship in PUL-801; _other_ chat adapters are v2) · recurring cron-spawned tasks (Amendment E: explicit numbered template tasks instead) · file uploads (proof = link only) · custom roles beyond the five · multi-agency tenancy · real-time collaboration (last-write-wins + `CONFLICT` toasts is v1's story).
 
 ---
 

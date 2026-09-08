@@ -193,12 +193,29 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §12.11, §16.2 · **Depends:** PUL-102, PUL-104
 
-- [ ] 105.1 `lib/mutation.ts`: `withTx(fn)` — begins tx, rolls back on throw, commits on return
-- [ ] 105.2 Reference action `features/_example/actions.ts` showing the full 5-step shape (validate → authorize → withTx → writeAudit → notify-after-commit) with comments
-- [ ] 105.3 Custom ESLint rule `easygrowcrm/authorize-first`: in `features/**/actions.ts`, `authorize()` must be the first await after validation
-- [ ] 105.4 Rule wired into CI; fails on a bad fixture, passes on the reference action
+> **Deviation as built — the rule is "authorize before `withTx`", not "first await" (Amendment I).**
+> §12.5 and 105.3 phrase it as "`authorize()` must be the first await after validation". Taken
+> literally that rejects **§12.4's own canonical example**, which awaits a resource fetch
+> (`await getTaskForApproval(...)`) before `authorize(...)` — you often cannot authorize until the
+> subject is loaded. A read decides nothing; mutating before authorizing is the actual hole. So the
+> enforced rule is: an exported async function in `features/**/actions.ts` must call `authorize()`,
+> and that call must precede any `withTx()` call. Reads before `authorize` stay legal; a function
+> that never calls `withTx()` is not policed. §12.5 should be amended to this wording.
 
-**Done when:** copying `_example` is the documented way to start any new action.
+> **Deviation as built — flat layout.** §12 sketches `lib/db/tx.ts`; `withTx` lives in
+> **`lib/mutation.ts`** per the ticket title and CLAUDE.md §4 "File layout (as built)".
+>
+> `writeAudit` (PUL-102) keeps its own local `Tx` type — structurally identical to `withTx`'s, so
+> the handle passes through unchanged. Merged code was not refactored.
+>
+> **New dependency:** `zod@4.5.4` — step 1 of the mutation shape is Zod validation.
+
+- [x] 105.1 `lib/mutation.ts`: `withTx(fn)` — `Tx` derived from `db.transaction`'s callback arg; delegates to `db.transaction(fn, { isolationLevel: 'read committed' })` (§12.6). Drizzle already rolls back on throw / commits on return, so `withTx` pins the isolation level and gives the codebase one named, greppable entry point.
+- [x] 105.2 Reference action `features/_example/actions.ts` — all five steps under numbered comments (validate → authorize → withTx → writeAudit → notify-after-commit), plus the §11.3 optimistic-lock `throw new AppError('CONFLICT')` snippet and the "a read may go here before `authorize`" note. Zero dead imports and no `eslint-disable` comments: everything a copy doesn't need (`AppError`, `notify`) appears only inside commented copy-ready snippets, so a new action inherits none of it.
+- [x] 105.3 Custom ESLint rule `easygrowcrm/authorize-first` in `eslint-rules/authorize-first.mjs` — AST-based, no path logic inside the rule (scoping is the config glob). Async functions are tracked on a stack and each `authorize()` / `withTx()` call is attributed by source position to **every** enclosing async function, so `withTx(async (tx) => …)` still counts against the exported action. Two messages: `missingAuthorize`, `authorizeAfterTx`.
+- [x] 105.4 Rule wired into `eslint.config.mjs` as `"error"` for `files: ["features/**/actions.ts"]` (so it runs in the existing CI lint job). Tested by ESLint's `RuleTester` in `eslint-rules/authorize-first.test.ts`, driven through vitest (`RuleTester.describe/it` assigned from vitest — globals are off here) so it runs in `pnpm test`: 3 valid (the `_example` shape; read → authorize → withTx per §12.4; a read-only action) + 3 invalid (`withTx` with no `authorize`; `authorize` after `withTx`; the same in arrow form). **PUL-105 is not on the §15.4 mandatory list**, so `scripts/check-mandatory-tests.ts` is unchanged (still 4 files).
+
+**Done when:** ✅ copying `_example` is the documented way to start any new action — it is lint-clean, type-clean, and passes the rule that guards it. Mutation-checked: moving `authorize()` in the real `_example` to *after* the `withTx` block fails `pnpm lint` with exactly `authorize() must run before withTx() in "exampleAction"` on that file (exit 1); restored. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 5 files / 16 tests · `drizzle-kit check` 0 · mandatory-test manifest 0.
 
 ---
 
@@ -218,11 +235,21 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §13.9, §16.11 · **Depends:** PUL-001
 
-- [ ] 107.1 `lib/notifications.ts`: `notify(userId, text, meta?)` interface
-- [ ] 107.2 v1-stub adapter: log + in-memory array (real table lands in PUL-801; the interface never changes)
-- [ ] 107.3 Test helper `expectNotified(userId, matcher)` for integration tests
+> **Deviation as built — object input, typed against the §13.9 registry.** The ticket sketches
+> `notify(userId, text, meta?)`: positional, with the message text passed in by the caller. Built
+> instead as `notify({ to, type, data? })`, matching how §12.4 step 5 calls it and how §13.9 works —
+> the *template* owns the copy, the caller names a template and supplies its payload. A caller that
+> passes prose would put user-facing wording in `features/**`, where the §2 forbidden-words grep
+> and the §13.9 registry can't govern it. `NotificationType` is a union of the 18 §13.9 names, so
+> an invented type is a **compile error** at the call site. The ticket's wording should be amended.
 
-**Done when:** any Phase 2+ action can call `notify()` and its test can assert on it.
+- [x] 107.1 `lib/notifications.ts`: `NotificationType` (the 18 §13.9 template names, no more and no fewer — verified against §13.9), `NotifyInput { to, type, data? }`, `notify(input): Promise<void>`. One recipient per call; loop for several.
+- [x] 107.2 v1-stub adapter: pushes `{ ...input, sentAt }` onto a module-level array and `console.debug`s it. No DB, no webhook — `notifications` + `webhook_outbox` land in PUL-801 and **this interface does not change then** (§16.11). Test-only `__resetNotifications()` (clears; call it in setup) and `__sentNotifications()` (returns a **copy**, so the live array is never handed out). `sentAt` uses `Date.now()` for now — `lib/` is outside the `features/**` clock ban; it moves to `clock.now()` in PUL-108.
+- [x] 107.3 Test helper `expectNotified(to, matcher)` in `tests/notifications.ts`. Object matcher = equal `type` when given plus a **subset** match on `data` (extra payload keys are fine); function matcher = predicate. On no match it throws listing every notification that *was* sent — recipient, type and payload per line — or `(nothing was sent)`, so a failing integration test diagnoses itself.
+- [x] 107.4 Test `tests/notifications.test.ts` (10 cases): notify records; reset clears; the accessor doesn't leak the live array; type / data-subset / predicate matches pass; and four failure paths (wrong type, wrong recipient, differing `data` value, nothing sent), with the wrong-type case asserting the error names what *was* sent. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` is unchanged (still 4 files).
+- [x] 107.5 `features/_example/actions.ts` step 5 updated to a real registry call — `await notify({ to: actor.id, type: 'task_approved', data: { taskId: parsed.resourceId } })`, still commented — so the copy-source can't teach a wrong shape. Two now-stale "port not built yet" notes in that file refreshed.
+
+**Done when:** ✅ any Phase 2+ action can call `notify()` after its `withTx` commits and assert on it with `expectNotified`. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 6 files / 26 tests · mandatory-test manifest 0.
 
 ---
 

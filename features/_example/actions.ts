@@ -4,7 +4,8 @@
 //
 // The 5-step shape (validate → authorize → withTx → writeAudit → notify-after-commit) is a
 // code-review rule (§12.4/§16.2) AND enforced by the `easygrowcrm/authorize-first` ESLint
-// rule. notify/clock are commented until PUL-107/108.
+// rule. notify() is a real port (PUL-107); it stays commented here only because this
+// template has nothing to announce. clock stays commented until PUL-108.
 
 'use server';
 
@@ -12,7 +13,7 @@ import { z } from 'zod';
 import { authorize } from '../../lib/authz';
 import { withTx } from '../../lib/mutation';
 import { writeAudit } from '../audit/write-audit';
-// import { notify } from '../../lib/notifications';   // PUL-107 — port not built yet
+// import { notify } from '../../lib/notifications';   // uncomment in your copy — see step 5
 
 const ExampleInput = z.object({ resourceId: z.string() });
 
@@ -58,8 +59,11 @@ export async function exampleAction(input: z.infer<typeof ExampleInput>) {
     return { ok: true };
   });
 
-  // 5. NOTIFY — AFTER commit, OUTSIDE withTx. Real notify() lands in PUL-107:
-  //    notify({ to: actor.id, type: 'example.performed', resourceId: parsed.resourceId });
+  // 5. NOTIFY — AFTER commit, OUTSIDE withTx. Work that rolls back must not notify anyone.
+  //    `type` must be one of the §13.9 template names (the NotificationType union) —
+  //    uncomment the import at the top of this file:
+  //
+  //    await notify({ to: actor.id, type: 'task_approved', data: { taskId: parsed.resourceId } });
 
   return result;
 }

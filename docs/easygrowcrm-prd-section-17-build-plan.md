@@ -257,11 +257,30 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §16.6, §15.5 · **Depends:** PUL-001
 
-- [ ] 108.1 `lib/clock.ts`: `clock.now()` — prod adapter wraps `Date.now()`, test adapter is freezable/advanceable
-- [ ] 108.2 ESLint rule (or extend `easygrowcrm/authorize-first` plugin): ban `new Date()` / `Date.now()` in `features/**`
-- [ ] 108.3 All timestamps everywhere (audit included) go through the port from day one
+> **Deviation as built — a swappable source behind a stable facade, not a reassigned export.**
+> `clock` is an ordinary exported object whose `now()` reads a module-level source; tests call
+> `setClock(testClock)` and `resetClock()` in teardown. The obvious alternative — `export let clock`
+> reassigned by the test — was rejected because feature code does `import { clock }` at module
+> scope, and a live reassigned binding only survives under native ESM; under transpilation or
+> bundling it silently freezes at the original value and the test passes against the **real** clock.
+> Full constructor injection was rejected as a large permanent cost (a clock argument on every
+> action signature) for an ambient value. The facade gives freeze/advance at zero call-site cost.
 
-**Done when:** a test freezes time and an audit row carries the frozen timestamp.
+> **Deviation as built — audit timestamps stay on the DB default, so 108.3 and the Done-when
+> needed amending.** The ticket says "all timestamps everywhere (audit included) go through the
+> port", and the Done-when asks for an audit row carrying the *frozen* timestamp. That is the wrong
+> target: `writeAudit` omits `created_at` and Postgres fills it from `now()` (`db/schema/audit.ts`,
+> `.defaultNow().notNull()`), which is deliberate — audit time should be database commit-side time,
+> not an app instant, and it means a frozen test clock cannot skew the append-only log. So the port
+> governs *business* time (late detection, timer unlock, auto-close); the audit clock is the
+> database's. The ticket wording should be amended to say so.
+
+- [x] 108.1 `lib/clock.ts`: `Clock { now(): Date }`; `systemClock` (the production adapter, and the **only** permitted `new Date()` in the codebase); `clock`, the facade every caller imports; `createTestClock(initial?)` → `now()` / `set(d)` / `advance(ms)`, handing out a **copy** each `now()` so a test can't mutate the frozen instant by accident; `setClock` / `resetClock` to swap the source.
+- [x] 108.2 ESLint rule `easygrowcrm/no-direct-date` in `eslint-rules/no-direct-date.mjs`, registered in the **same** local plugin as `authorize-first` and wired as `"error"` for `files: ["features/**"]` — broader than `authorize-first`'s `actions.ts` glob, since any feature code can read a clock. No path logic inside the rule: `lib/clock.ts` is exempt purely by falling outside the glob. **Deliberate narrowing:** only the *zero-argument* `new Date()` is banned — `new Date(row.startedAt)` is parsing a stored value, not asking what time it is. `Date.now()` is banned outright (it has no parsing form). Three `valid` test cases pin this narrowing so it isn't "fixed" later.
+- [x] 108.3 Audit path confirmed clock-free — see the deviation note above; `writeAudit` is correct as-is and was not touched. A grep of `features/**` finds zero real `new Date()` / `Date.now()`; `_example` references the clock only in comments.
+- [x] 108.4 Tests. `eslint-rules/no-direct-date.test.ts` — RuleTester via vitest (globals are off here): 3 valid (`clock.now()`; `new Date(row.startedAt)`; `someDate.getTime()`) + 3 invalid (`new Date()`; `Date.now()`; both in one file, both reported). `tests/clock.test.ts` — freeze is stable across calls, `advance(1000)` moves 1s, `set(d)` jumps absolute, `now()` hands out a copy, `setClock` makes code holding `clock` (not the test adapter) see the advance, `resetClock` restores real time. **Neither is a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
+
+**Done when:** ✅ a test freezes time and any `features/**` code reading `clock.now()` sees the frozen instant — audit rows keep the database's `now()` by design (see the note above). Mutation-checked: adding `const x = new Date();` to the real `features/_example/actions.ts` fails `pnpm lint` with exit 1 and exactly `Use clock.now() from lib/clock — direct Date access is banned in features/** (§16.6)  easygrowcrm/no-direct-date` on line 23; removed, and `git diff --stat` on that file is empty. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 8 files / 38 tests · `drizzle-kit check` 0 · mandatory-test manifest 0.
 
 ---
 

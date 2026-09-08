@@ -419,14 +419,36 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ### PUL-202 — Add-employee action + modal (§13.1.1)
 
-**Budget:** M · **Reads:** §13.1.1, §14.12 · **Depends:** PUL-105, PUL-201
+**Budget:** M · **Reads:** §13.1.1, §14.12 · **Depends:** PUL-105, PUL-201 _(also PUL-106 toast mapper, PUL-110 route + shell — both already done)_
 
-- [ ] 202.1 Action in the 5-step shape: email, name, role, title, dept, join date; **no email sent**
-- [ ] 202.2 Duplicate email → `CONFLICT`; validation via zod
-- [ ] 202.3 Modal per §14.12 with the copy _"They'll sign in with their company Google account — no invitation email is sent."_
-- [ ] 202.4 Tests: happy path + duplicate + audit row + HR-allowed/EMP-forbidden
+> **Built in two stages:** Stage 1 the action + contract test, Stage 2 the modal. The stage
+> split is a review convenience, not a scope change — both ship in this branch.
 
-**Done when:** SA and HR can add; new employee can immediately Google-sign-in.
+- [x] 202.1 Action in the 5-step shape: email, name, role, title, dept, join date; **no email sent**. `features/employees/actions.ts` → `createEmployee`, copied from `features/_example/actions.ts`. Direct Drizzle insert into `"user"` (`active: true`, `emailVerified: false`, id `usr_<uuid>`); **no** Better Auth create-user call — `guardProvisioned` rejects any email without a pre-existing row, so this row *is* what unlocks the OAuth path, and Better Auth links by email on first sign-in, not by id. Audit `employee.created` in the same tx. Notify: none (§13.1.1).
+- [x] 202.2 Duplicate email → `CONFLICT`; validation via zod. Defended twice: a pre-check `SELECT` inside the tx for the clean error, plus a `23505` unique-violation catch outside `withTx` as the race backstop (reads the pg code off `error.cause`, which is where Drizzle keeps it). Each was disabled in turn to confirm both independently produce `CONFLICT`.
+- [x] 202.3 Modal per §14.12 with the copy _"They'll sign in with their company Google account. No invitation email is sent."_ — shadcn Dialog behind **+ Add Employee** on `/employees`, six fields incl. role ▾ (all 5 `user_role` values). Join date is `<input type="date">`, so it is a `YYYY-MM-DD` string end to end and never a `Date` a timezone could shift across a Dhaka day boundary (§11.0). Inline validation reuses the same zod schema; the action re-parses as the real gate (§9.5 r.2). Success → toast + close; every error → the PUL-106 mapper, so a duplicate shows the `CONFLICT` toast with its Refresh action (§14.15 r.3). Not optimistic — adding a person waits for the server (§14.15 r.5). No automated test (UI); **manual QA per PUL-206.4**. PUL-206 builds the card grid + filters around this button.
+- [x] 202.4 Tests: happy path + duplicate + audit row + HR-allowed/EMP-forbidden — `features/employees/create-employee.test.ts`, 4 cases, real test DB, **6th** CI manifest entry. `authorize()` is NOT mocked (§15.8 forbids it) and neither is the DB; the only stub is `auth.api.getSession`, the HTTP envelope, since a vitest node run has no cookie to read. `getSessionUser()` underneath still re-reads role/active from Postgres (§16.5), so the HR case works by genuinely promoting a seeded row to `admin_hr`. Mutation-proofed: flipping the action to `authorize('employee.read_self')` fails the FORBIDDEN case.
+
+**Done when:** ✅ SA and HR can add; new employee can immediately Google-sign-in. Gates green: `tsc --noEmit` 0 · `eslint .` 0 · `vitest run` 13 files / 91 tests · `drizzle-kit check` clean · manifest 6 files · `next build` compiles.
+
+> **As-built notes (three deviations, all deliberate):**
+> 1. **No company-domain guard.** §13.1.1 requires "email domain = company domain (same check as
+>    the OAuth gate, §9.3)" — but that gate was **dropped in PUL-103**; `lib/auth-guards.ts` has no
+>    domain check to mirror. Provisioning is the gate. §13.1.1 needs the clause struck.
+> 2. **No leave-balance initialization.** §13.1.1 puts PUL-701.2's on-add hook in this tx.
+>    `leave_quotas` is migration 011 (PUL-701), so it lands there instead — **PUL-701.2 must add it
+>    to this action**, not to a second one.
+> 3. **Modal copy is two sentences, no em dash** (owner's call), where §14.12 reads
+>    _"…Google account — no invitation email is sent."_ Docs-update candidate.
+>
+> **Schema location:** the zod input lives in `features/employees/schema.ts`, not `actions.ts` — a
+> `'use server'` file may only export async functions, so a client component importing the schema
+> from `actions.ts` is a build error. Follow this split for every action with a form.
+>
+> **shadcn gotcha:** adding `dialog/input/label/select` made the CLI install a junk npm package
+> named `cn` and import from `"cn"` instead of `@/lib/utils`. Removed and corrected. This project's
+> style is **base-mira (Base UI, not Radix)**: triggers take `render={<Button/>}` not `asChild`, and
+> `Select`'s `onValueChange` yields `string | null`.
 
 ---
 
@@ -1324,7 +1346,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
 | **Total**                              |                     | **80** |
 
-Mandatory §15.4 test files are attached to: PUL-102, 103, 104, 201, 204, 205, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list.
+Mandatory §15.4 test files are attached to: PUL-102, 103, 104, 201, 202, 204, 205, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list.
 
 ---
 

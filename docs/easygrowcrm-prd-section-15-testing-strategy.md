@@ -71,7 +71,7 @@ features/auth/
 features/audit/
   audit-write.test.ts             // writeAudit(tx) inside transaction; rollback on tx failure
   audit-scoping.test.ts           // HR sees only leave/employee rows; SA sees everything
-  audit-immutability.test.ts      // UPDATE/DELETE on audit_log throws (DB REVOKE proof)
+  audit-immutability.test.ts      // UPDATE/DELETE on audit_log throws (DB TRIGGER proof — DECIDED Phase 1, was REVOKE)
 
 features/attendance/
   sign-in.test.ts                 // creates row, sets late flag past grace, logs audit

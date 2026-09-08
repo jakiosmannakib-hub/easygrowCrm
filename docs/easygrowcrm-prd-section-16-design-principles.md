@@ -61,7 +61,7 @@ export async function actionName(input: Input) {
 
 ## 16.4 Append-only audit as a first-class citizen
 
-**Rule:** The audit log is migration 003 — before any feature table. `REVOKE UPDATE, DELETE` at the database level so even the app itself cannot modify it. Every accountability-bearing mutation writes its audit row(s) — usually one; compound actions like deactivation write one per effect (13.1.4), batched instantiation may write one summarizing row (13.3.2) — always inside the same transaction as the work. The single designed carve-out is `personal_task.crud` — a private scratchpad with no accountability value (§9.6 ¹¹ / §14.10); it is defined here, once, and nothing else joins it without an amendment.
+**Rule:** The audit log is migration 003 — before any feature table. Blocked at the database level so even the app itself cannot modify it *(DECIDED Phase 1: by the `audit_log_no_update_delete` trigger rather than `REVOKE UPDATE, DELETE` — no least-privilege login exists, and the trigger binds every role including the owner. §11.8)*. Every accountability-bearing mutation writes its audit row(s) — usually one; compound actions like deactivation write one per effect (13.1.4), batched instantiation may write one summarizing row (13.3.2) — always inside the same transaction as the work. The single designed carve-out is `personal_task.crud` — a private scratchpad with no accountability value (§9.6 ¹¹ / §14.10); it is defined here, once, and nothing else joins it without an amendment.
 
 **Why:** The audit log is the ultimate source of truth for "what happened." Without it, "who deleted this?" has no answer. With it — and with immutability enforced at the DB — the answer is always available and always trusted.
 
@@ -73,7 +73,7 @@ export async function actionName(input: Input) {
 
 ## 16.5 Least privilege, verified at the point of use
 
-**Rule:** `authorize()` runs at the top of every action, not in middleware. Middleware handles login redirects only. Role and active status are read from the DB on every request — never trusted from a JWT or session cookie.
+**Rule:** `authorize()` runs at the top of every action, not in middleware (*DECIDED Phase 1: the file is `proxy.ts` in Next 16.3*). Middleware handles login redirects only. Role and active status are read from the DB on every request — never trusted from a JWT or session cookie.
 
 **Why:** A user who was deactivated 5 seconds ago shouldn't be able to complete an action they started 6 seconds ago. Reading role from the DB every request costs one query; letting a deactivated user delete client data costs the business.
 

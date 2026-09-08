@@ -604,7 +604,7 @@ Simple UI: Add form (title + due + optional client), sorted list (open first, th
 
 - **Company:** name, timezone, office location. (No office-IP gate on sign-in.)
 - **Shift & attendance rules:** work days, shift start, shift end, late grace minutes, break allowance minutes. These values are read from Settings at runtime, never hardcoded (§10.1).
-- **Notifications:** Slack / Discord **webhook URL** — all operational notifications (submissions, approvals, revisions, late alerts) also POST to this endpoint using a Slack+Discord-compatible payload `{text, content}`, fire-and-forget so a dead webhook can never block the UI. (§14.14).
+- **Notifications:** **Discord webhook URL** — all operational notifications (submissions, approvals, revisions, late alerts) also POST to this endpoint, fire-and-forget so a dead webhook can never block the UI. (§14.14). **DECIDED (Phase 1): Discord, not Slack.** The team runs on Discord, so the delivery target is a Discord webhook and the payload is Discord's `{content}`. **Email is a second delivery channel** alongside it (adapter TBD — SendGrid/Resend/etc., PUL-801). The mechanism is unchanged: `webhook_outbox` + the Render worker.
 - Settings also includes a **Holidays** editor (feeds working-day math for leave and due-date shifting, §14.14) and a **Clients** section (create/edit/archive, §9.6 ¹⁰, §14.14).
 
 ### 3.13 Dashboard
@@ -626,7 +626,7 @@ Simple UI: Add form (title + due + optional client), sorted list (open first, th
 - Bell with unread count in the header.
 - In-app notification list: `{id, text, type, time, read}` where type ∈ `report, attendance, leave, project`.
 - Every meaningful action fires a notification: task assigned, task submitted, task approved, revision requested, project started, sign-in late, EOD flagged, leave requested/decided. (A routine ✓ Reviewed doesn't notify; only 🚩 Flagged does — §13.5.7.)
-- Notifications also fire to the configured Slack/Discord webhook (§3.12).
+- Notifications also fire to the configured Discord webhook, and to email (§3.12). *(DECIDED Phase 1: was "Slack/Discord".)*
 - **In-app notifications reset on page refresh (prototype-only).** In production, notifications persist in DB.
 
 ---
@@ -938,7 +938,9 @@ Bangladesh convention. Every "today," "this week," "this month" filter must resp
 
 ### 8.14 Webhook notifications are additive, not replacing
 
-Every in-app notification also fires to the Slack/Discord webhook. Don't route only "urgent" notifications there — the current design is that ops managers work in Slack/Discord and want everything, in-app is redundant for them. If quieting is later needed, add per-user preferences rather than filtering at the source.
+Every in-app notification also fires to the Discord webhook and to email. Don't route only "urgent" notifications there — the current design is that ops managers work in Discord and want everything, in-app is redundant for them. If quieting is later needed, add per-user preferences rather than filtering at the source.
+
+> **DECIDED (Phase 1):** the delivery target is **Discord**, not Slack — the team already works there. **Email joins it as a second channel** (adapter chosen in PUL-801). The rule above is unchanged and now applies to both: everything mirrors to both channels, filtered at render if ever needed, never at the source.
 
 ### 8.15 Deliberate absence of features
 

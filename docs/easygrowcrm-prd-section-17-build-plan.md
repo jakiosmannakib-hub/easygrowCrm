@@ -155,12 +155,29 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §9.2–§9.3, §14.1.1 · **Depends:** PUL-101
 
+> **DECIDED (Phase 1) — five reconciliations against Better Auth 1.7 as actually built.** §9.2/§9.3
+> have been amended to match; recorded here so the ticket and the spec agree.
+> 1. **Drizzle adapter, not §9.2's raw `Pool`** — `drizzleAdapter(db, { provider: "pg" })`, so
+>    **drizzle-kit is the single migration runner**. Two migration systems over one database is the
+>    failure mode this avoids.
+> 2. **No Better Auth CLI exists in 1.7** — the auth tables are reconciled against our Drizzle
+>    schema via `getAuthTables()` from `better-auth/db`, not a generate command.
+> 3. **The company-domain check (§9.3 step 5) is DROPPED** — the team signs in with personal Gmail
+>    and there is no Workspace domain to check, so the provisioned `user` row is the sole gate.
+>    Re-add if EasyGrow moves to Workspace.
+> 4. **"Deactivated" is rejected in `session.create.before`, not `user.create.before`** — the
+>    latter fires only for an email Better Auth has never seen, so someone deactivated *after*
+>    their first sign-in would sail past it. Both guards live in `lib/auth-guards.ts`.
+> 5. **`requireUser()` is named `getSessionUser()`** (`lib/session.ts`) — the name `authorize()`
+>    calls it by. Behaviour per §9.5 is unchanged.
+
 - [x] 103.1 Better Auth (≥1.6): Google provider only; signup disabled; sessions in Postgres. External OAuth app — team uses personal Gmail (no Google Workspace); each user added as an OAuth test user.
 - [x] 103.2 `/sign-in` page per §14.1.1: logo + one Google button, nothing else
 - [x] 103.3 Unknown email → _"This email is not registered with EasyGrowCrm. Contact HR."_; deactivated → _"This account has been deactivated."_ — Company-domain check (§9.3 step 5) **DROPPED**: no shared Workspace domain, so the provisioned `user` row is the sole gate. Re-add if EasyGrow moves to Workspace.
 - [x] 103.4 Session helper `getSessionUser()` — re-reads role + active from DB every request (never trusts the session payload; §16.5)
 - [x] 103.5 Test: `features/auth/session-from-google.test.ts` (unknown email, deactivated user) → CI manifest
 - [x] 103.6 Seed the first `super_admin` by hand (Employees UI is Phase 2) — first sign-in has no other route onto the guest list.
+- [x] 103.7 **`AppError` lands here, not in PUL-106.** `lib/errors.ts` — the class plus the seven §13 codes — was built in this ticket because `getSessionUser()` (103.4) throws `UNAUTHENTICATED`/`DEACTIVATED` and `authorize()` (PUL-104) throws `FORBIDDEN`, both before 106 exists. **PUL-106 adds only the toast mapper on top** (and one `reason` getter); it does not create the class. §17's PUL-106.1 is worded accordingly.
 
 **Done when:** manual Google sign-in works locally with a hand-seeded super_admin; both rejection paths render their exact copy.
 ---
@@ -343,14 +360,30 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.1 · **Depends:** PUL-103, PUL-104
 
-- [ ] 110.1 Sidebar: logo, 13 items (lucide icon + label) per §14.1 route table, active highlight, Logout at bottom — **no user-switcher** (explicitly banned)
-- [ ] 110.2 Nav visibility driven by `can()` per the §14.1 Visible-to column; hidden items don't render at all
-- [ ] 110.3 `PAGE_META` map → header title + subtitle per route
-- [ ] 110.4 Header bell icon + unread badge (panel itself lands in PUL-802; icon renders count 0 until then)
-- [ ] 110.5 Route guards: unauthenticated → `/sign-in`; unauthorized route → 404 (server-enforced regardless — sidebar is cosmetic, §14.1)
-- [ ] 110.6 Placeholder page component per route so every nav item lands somewhere
+> **DECIDED (Phase 1) — nav visibility is the §14.1 list, NOT a live `can()` call.** 110.2 as
+> written derives the sidebar from `can()`; that produces the wrong sidebar in both directions,
+> because §14.1's "Visible to" column is **curated**: Audit Log is `scoped` for HR (a narrowed
+> read — the item still shows), and Review is hidden from employees even though `review.read` is
+> `self` for them. So `NAV_ITEMS` in `lib/nav.ts` carries an explicit `visibleTo: Role[]`
+> transcribed from the §14.1 table. This costs nothing in security: the boundary is the per-page
+> `requireRouteAccess` guard (404 on a forbidden route), exactly as §14.1's "the sidebar is
+> cosmetic" intends.
 
-**Done when:** signing in as each of the 5 roles shows exactly the §14.1 item set; deep-linking a forbidden route 404s.
+> **Deviation as built — `proxy.ts`, not `middleware.ts`.** Next 16.3 deprecated the `middleware`
+> file convention in favour of `proxy` (the build warns on the old name). Same hook, same
+> convenience-only semantics: it checks that a session **cookie is present** via Better Auth's
+> `getSessionCookie`, never calling `getSession` and never trusting the cookie's contents
+> (CVE-2025-29927, §9.5).
+
+- [x] 110.1 Sidebar `components/shell/sidebar.tsx` (client — needs `usePathname` for the active highlight): logo, the 13 items per §14.1, lucide icon + label, active highlight, Logout pinned bottom via `authClient.signOut()` → `/sign-in`. **No user-switcher** — confirmed by sweep: the only match for "switcher" in the whole codebase is the comment recording that it must not ship.
+- [x] 110.2 Nav visibility from the explicit §14.1 `visibleTo` lists (see the note above), hidden items don't render at all. `lib/nav.ts` is pure and stores the icon **name** as a string, not a component, so the server route guard can import it without dragging client code along; `components/shell/nav-icon.tsx` resolves names to lucide components on the client.
+- [x] 110.3 `PAGE_META` (in `lib/nav.ts`) → header title + subtitle per route. The header matches the **longest** route prefix, so a future `/projects/42` keeps its header rather than falling back to the app name.
+- [x] 110.4 Header bell icon + unread badge — hard-coded `0`, no panel and no click behaviour; the Notifications slide-in lands in **PUL-802**, noted in the component.
+- [x] 110.5 Route guards: `lib/route-guard.ts` → `requireRouteAccess(route)` is the **first line of every page**. Unauthenticated/deactivated → `/sign-in`; role not permitted → `notFound()` (404, not 403 — a 403 confirms the page exists and tells an employee which admin surfaces to go looking for). `canAccessRoute` also denies an **unknown** route, so adding a page but forgetting its nav entry fails closed. The `(app)` layout does **authentication** (so the sidebar has a role to render); each page does its own **role** check, since a layout cannot know which route rendered beneath it.
+- [x] 110.6 Route group `app/(app)/` — shell layout + 13 placeholder pages (one per `lib/nav.ts` route), `/sign-in` deliberately outside the group. `/` redirects to `/dashboard`.
+- [x] 110.7 Test `tests/nav.test.ts` (14 cases): the expected route set per role is transcribed from §14.1 **independently** of `lib/nav.ts` (reading `visibleTo` back would only prove the table agrees with itself), and `canAccessRoute` is cross-checked against `visibleNavItems` for all 65 role × route pairs so the cosmetic list and the security predicate cannot drift. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
+
+**Done when:** ✅ each of the 5 roles resolves to exactly the §14.1 item set — mechanical, not eyeballed: super_admin **13**, admin_hr **13**, project_manager **10**, team_leader **10**, employee **6**. Deep-linking a forbidden route 404s via `requireRouteAccess`. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 11 files / 84 tests · `next build` compiles with all 13 routes in the table.
 
 ---
 
@@ -1025,9 +1058,17 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §11 (012), §13.9 · **Depends:** PUL-107
 
+> **DECIDED (Phase 1) — delivery is Discord + email.** The chat target is **Discord**, not Slack (the
+> team already works there), and **email is a second delivery channel** added here; its adapter is
+> still TBD (Resend / SendGrid / etc.). The mechanism is unchanged — `webhook_outbox` + the Render
+> worker, with a Discord webhook URL in place of a Slack one. The `notify()` port built in PUL-107
+> (`notify({ to, type, data? })`, the 18 §13.9 types) is **unchanged** by this: that is the whole
+> point of §16.11, and 801.1's "zero action edits" still holds.
+
 - [ ] 801.1 Migration 012; swap the stub adapter for the DB adapter — **interface unchanged**, zero action edits
-- [ ] 801.2 Webhook adapter stubbed behind the same port (v2)
-- [ ] 801.3 Existing `expectNotified` assertions now hit the real table — full suite still green
+- [ ] 801.2 Discord webhook adapter behind the same port, delivered from `webhook_outbox` by the Render worker
+- [ ] 801.3 **Email adapter** behind the same port (second channel; pick the provider here)
+- [ ] 801.4 Existing `expectNotified` assertions now hit the real table — full suite still green
 
 **Done when:** adapter swap touches zero feature files.
 
@@ -1280,7 +1321,7 @@ Mandatory §15.4 test files are attached to: PUL-102, 103, 104, 201, 204, 205, 3
 
 # 17.4 What's explicitly out of scope for v1
 
-Restated so nobody adds them mid-build: native mobile app · client portal · Slack/Teams adapters (port exists; adapters are v2) · recurring cron-spawned tasks (Amendment E: explicit numbered template tasks instead) · file uploads (proof = link only) · custom roles beyond the five · multi-agency tenancy · real-time collaboration (last-write-wins + `CONFLICT` toasts is v1's story).
+Restated so nobody adds them mid-build: native mobile app · client portal · **Slack/Teams** adapters (the port exists and Discord + email ship in PUL-801; *other* chat adapters are v2) · recurring cron-spawned tasks (Amendment E: explicit numbered template tasks instead) · file uploads (proof = link only) · custom roles beyond the five · multi-agency tenancy · real-time collaboration (last-write-wins + `CONFLICT` toasts is v1's story).
 
 ---
 

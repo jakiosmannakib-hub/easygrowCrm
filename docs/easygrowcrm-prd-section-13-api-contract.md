@@ -298,6 +298,13 @@ Reads go through `queries.ts` per feature; every query calls `requireUser()` and
 
 Every template renders (a) an in-app `notifications` row per recipient and (b) one `webhook_outbox` payload (§8.14 rule: all notifications mirror to the webhook; per-user preferences are a later addition, filtered at render not at source).
 
+> **DECIDED (Phase 1) — delivery is Discord + email, and the `notify()` interface is fixed.**
+> The outbox payload is delivered to a **Discord** webhook (not Slack) and to **email** as a second
+> channel (adapter TBD in PUL-801). Both ride the same `webhook_outbox` + Render worker mechanism.
+> The 18 template names above are the `NotificationType` union in `lib/notifications.ts`, and the
+> port's signature — `notify({ to, type, data? })` — is **unchanged** by the delivery decision: a
+> caller names a template and supplies its payload; the template owns the copy, per channel.
+
 ---
 
 ## 13.10 Coverage check

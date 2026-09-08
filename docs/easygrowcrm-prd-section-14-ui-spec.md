@@ -254,7 +254,7 @@ Card grid: avatar, name, title, dept chip, role badge, Active/Deactivated pill; 
 Filters: actor ▾, resource type ▾, resource id, date range. Table: time · actor · action · resource · before→after (expandable JSON diff). Paginated. HR sees only leave/employee rows — no toggle, silently scoped. Banner: *"Viewing this log is itself logged."*
 
 ## 14.14 Settings `/settings` (SA, HR)
-Company name · timezone (display-only Asia/Dhaka) · work days · shift start/end · grace time · work target · half-day target · break allowances · auto-close hours · webhook URL (with **Send test** button) · **Holidays** editor (date + name rows, 13.7.3) · **Clients** section (the home of client management per §9.6 ¹⁰: list + add / edit / archive, 13.2; archive blocked with `GATE:client_in_use` while live projects exist). *(inviteExpiryHours, officeIP: deleted.)*
+Company name · timezone (display-only Asia/Dhaka) · work days · shift start/end · grace time · work target · half-day target · break allowances · auto-close hours · **Discord webhook URL** (with **Send test** button; DECIDED Phase 1 — was "webhook URL", target is Discord) · **Holidays** editor (date + name rows, 13.7.3) · **Clients** section (the home of client management per §9.6 ¹⁰: list + add / edit / archive, 13.2; archive blocked with `GATE:client_in_use` while live projects exist). *(inviteExpiryHours, officeIP: deleted.)*
 
 ---
 

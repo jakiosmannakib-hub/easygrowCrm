@@ -25,4 +25,16 @@ export class AppError extends Error {
     this.code = code;
     this.meta = meta;
   }
+
+  /**
+   * The machine-readable GATE reason (§13 line 12) — e.g. `checklist_incomplete`.
+   *
+   * It lives in `meta.reason` so the wire shape stays a plain bag, but callers that
+   * switch on it (the toast mapper, gate tests) shouldn't have to cast. Returns
+   * undefined on any non-GATE error, and on a GATE whose reason wasn't set.
+   */
+  get reason(): string | undefined {
+    const value = this.meta?.reason;
+    return typeof value === 'string' ? value : undefined;
+  }
 }

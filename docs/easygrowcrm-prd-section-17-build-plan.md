@@ -223,11 +223,32 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §13 (codes), §14.15 · **Depends:** PUL-001
 
-- [ ] 106.1 `lib/errors.ts`: `AppError` with codes `UNAUTHENTICATED / DEACTIVATED / FORBIDDEN / NOT_FOUND / VALIDATION / GATE / CONFLICT`
-- [ ] 106.2 `<ToastProvider>`; server error → toast, `GATE` shows the field/task detail, `CONFLICT` includes a Refresh action button
-- [ ] 106.3 Dev-only route that throws each code for manual verification
+> **Scope note — the mapper is transport-agnostic; the server-action boundary is deferred.**
+> `errorToToast` takes a structural `ErrorLike { code, reason?, message?, meta? }`, **not** an
+> `AppError` instance. Once an error crosses a server-action boundary it is a plain object, not a
+> class instance, so accepting the shape means the mapper works unchanged on both sides with no
+> re-hydration step — and **how** an `AppError` crosses that boundary is deliberately left to the
+> first Phase 2 action rather than guessed at here. The dev route constructs `AppError`s directly
+> and so does not pre-empt that decision.
 
-**Done when:** each thrown code renders its distinct toast with correct copy.
+> **Deviation as built — four codes ignore the server's message.** `UNAUTHENTICATED`,
+> `DEACTIVATED`, `FORBIDDEN` and `NOT_FOUND` always render their fixed wording: a server message on
+> those is an internal detail (`"user 7f3a lacks project.update on project 91"`) and the fixed line
+> already says everything the user can act on. Only `VALIDATION`, `GATE` and `CONFLICT` prefer
+> `err.message`. A `default` branch does the same for any non-§13 code, so a raw `ECONNREFUSED`
+> string can never reach a user. Both are asserted by tests.
+
+> **New dependency:** `sonner@2.0.8`. Neither sonner nor a shadcn toast was installed (PUL-001 left
+> only `components/ui/button.tsx`), and sonner is what shadcn/ui's own `toast` component wraps
+> today — so this is the shadcn path, not a detour from it.
+
+- [x] 106.1 `lib/errors.ts` **verified, not recreated** — `AppError` already carried the seven §13 codes, an optional `message` and optional `meta` (built in PUL-103). Added one small typed getter: `reason` returns `meta.reason` when it is a string, so the mapper and future gate tests switch on GATE's machine-readable reason (§13 line 12) without casting.
+- [x] 106.2a Pure mapper `lib/error-toast.ts`: `errorToToast(err): { message, refresh }`. Per-code defaults as specified; `refresh: true` for **`CONFLICT` only** (§14.15 r.3), asserted by a test that loops the other six codes. Exported `GATE_REASONS` registry seeded with the eight PRD reasons (`checklist_incomplete`, `proof_required`, `pending_reviews`, `client_in_use`, `last_managers`, `unresolved_assignments`, `sa_has_assignments`, `use_review`), each naming the blocked thing per §14.15 r.3; unknown reason → `err.message` → `"This action is blocked."`. **Feature tickets extend this registry** as they add gates — the file says so in a comment.
+- [x] 106.2b `components/providers/toast-provider.tsx` (client, wraps sonner's `<Toaster position="top-right" richColors closeButton />`) mounted once in `app/layout.tsx`, plus client helper `lib/show-error-toast.tsx` → `showErrorToast(err)`. CONFLICT toasts use `duration: Infinity` — a toast offering an action the user must click shouldn't expire out from under them; every other code auto-dismisses at 6s. Refresh calls `window.location.reload()`, not `router.refresh()`: a CONFLICT means client state disagrees with the server, and only a full reload is guaranteed to discard it.
+- [x] 106.3 Dev-only `app/dev/errors/page.tsx` (client component) — ten buttons: the seven codes, `VALIDATION` both with and without a server message, two known GATE reasons, an unknown GATE reason, and `CONFLICT` so the Refresh action can be eyeballed. **Prod-guarded:** `notFound()` when `process.env.NODE_ENV === "production"`, before anything renders.
+- [x] 106.4 Test `tests/error-toast.test.ts` (19 cases): every code maps to its message; the four fixed-wording codes ignore a leaky server message; an unrecognised code yields the generic line; GATE resolves from the registry via top-level `reason`, via `meta.reason`, and off a real `AppError` getter; unknown reason falls back both with and without a message; every seeded reason is asserted to be specific rather than the generic fallback (so §14.15 r.3 can't rot as the registry grows); `CONFLICT` sets `refresh` and no other code does. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
+
+**Done when:** ✅ each thrown code renders its distinct toast with correct copy — eyeballable at `/dev/errors`, and the wording is pinned by unit test rather than by looking at it. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 9 files / 57 tests · `next build` compiles clean with `/dev/errors` in the route table · mandatory-test manifest 0.
 
 ---
 

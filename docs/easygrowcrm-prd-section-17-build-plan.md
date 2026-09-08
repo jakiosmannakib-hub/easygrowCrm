@@ -309,12 +309,33 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §15.5 · **Depends:** PUL-101
 
-- [ ] 109.1 `tests/fixtures/seedMinimal.ts` — 1 SA, 2 managers, 3 employees, 1 client, 1 project, 0 tasks (grows as tables land; keeps compiling at every phase)
-- [ ] 109.2 `tests/fixtures/seedFull.ts` — realistic org matching the prototype demo data (flow tests only)
-- [ ] 109.3 Per-test isolation: each test file gets a clean schema or wraps in a rolled-back tx — document the choice
-- [ ] 109.4 Guard: fixtures refuse to run if `DATABASE_URL` doesn't contain `test`
+> **Scope deviation — user cast now, client/project when the tables exist (intentional).** §15.5's
+> `seedMinimal` is "1 SA, 2 managers, 3 employees, 1 client, 1 project". The `client` and `project`
+> tables are Phase 2 and do not exist yet, so this ticket builds the **user cast + guard + reset**;
+> client and project rows get appended to `seedMinimal` when those tables land. `seedFull` is a
+> skeleton that delegates to `seedMinimal` — flow tests don't exist yet, and no Phase 2 data is
+> invented. Both facts are recorded in comments at the top of `tests/seed.ts`.
 
-**Done when:** two test files using `seedMinimal` run in any order with identical results.
+> **Interpretation — "2 managers" = `team_leader` + `project_manager`.** The two *delivery* manager
+> roles: the pair §9.6 distinguishes for task and project work, and the pair the "≥2 active
+> manager-level users" invariant (§9.7) is about. `admin_hr` is manager-level too but stays out of
+> the minimal cast — its permission set is orthogonal (people-ops), so a test needing HR adds one
+> explicitly rather than inheriting one by accident and passing for the wrong reason.
+
+> **Deviation as built — one file, not a `tests/fixtures/` folder.** §17 sketches
+> `tests/fixtures/seedMinimal.ts` + `seedFull.ts`; built as a single `tests/seed.ts` exporting
+> `isTestDbName` / `assertTestDb` / `reset` / `seedMinimal` / `seedFull`. The guard and the reset
+> are shared by both seeds, and splitting six short exports across a folder buys nothing. Consistent
+> with the flat layout of CLAUDE.md §4.
+
+- [x] 109.1 `tests/seed.ts` → `seedMinimal()`: 1 `super_admin`, 1 `team_leader`, 1 `project_manager`, 3 `employee` — all active with `email_verified` true, deterministic ids (`seed_sa`/`seed_tl`/`seed_pm`/`seed_e1..e3`) and `@test.local` emails, so a failing test names a recognisable user instead of a random uuid. Returns typed handles `{ superAdmin, teamLeader, projectManager, employees: [e1, e2, e3] }` so tests use real ids. Deactivated/unverified users are what individual tests set up, never the shared fixture.
+- [x] 109.2 `seedFull()` — skeleton delegating to `seedMinimal()`, so callers written against it keep working when it grows into the realistic org (§15.5).
+- [x] 109.3 **Isolation choice, documented: truncate-and-reseed per file, not a rolled-back transaction.** `reset()` runs `TRUNCATE "audit_log", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`, and `seedMinimal()` calls it first, so any file can seed at any point and get the same state. A rolled-back wrapping tx was rejected: the code under test calls `withTx` itself, and nesting real transactions inside a test-owned one turns every rollback assertion into a savepoint question — exactly the behaviour the audit-immutability tests exist to check. `vitest.config.ts` already sets `fileParallelism: false`, so files share one real database without racing. `verification` is truncated too though §17 lists four tables — leaving the fifth would make "every seed starts clean" quietly untrue.
+- [x] 109.4 Guard: `isTestDbName(name)` — pure, `name.includes('test')`, deliberately crude so the rule everything rests on is trivially auditable (a false negative is an inconvenience; a false positive truncates a real database). `assertTestDb()` extracts the name with `new URL()` rather than a regex, so a `?sslmode=require` query string or a `/` in a password can't fool it, and throws `Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')`. Called at the top of **every** seed function — per call, not once at import — since it is the only thing between a stray `pnpm test` and a wiped dev database.
+- [x] 109.5 Test `tests/seed.test.ts` (13 cases): `isTestDbName` accepts `easygrowcrm_test` and rejects `easygrowcrm`/`prod`; `assertTestDb` throws when `DATABASE_URL` is repointed at the dev database; `seedMinimal` yields exactly 6 users with the right role distribution, correct handle ids/roles, and everyone active+verified; a second `seedMinimal()` doesn't duplicate (count stays 6); `reset()` twice in a row succeeds. **Not a §15.4 mandatory test** — `scripts/check-mandatory-tests.ts` unchanged (still 4 files).
+- [x] 109.6 **TRUNCATE vs the append-only audit trigger — re-confirmed empirically, not by reading the migration.** The trigger is `FOR EACH ROW ... UPDATE OR DELETE` (`db/migrations/0002_audit_log.sql:23`); TRUNCATE fires neither, and **is not blocked**. Two tests pin it: one inserts a real audit row and asserts `reset()` resolves and empties the table; the other asserts a plain `DELETE` on a fresh audit row still rejects *after* a truncate — so TRUNCATE is not a back door that disarms §16.4, and adding a TRUNCATE statement-trigger later fails here rather than in whichever suite happens to seed first.
+
+**Done when:** ✅ two test files using `seedMinimal` run in any order with identical results — each seed truncates first, so order cannot matter. Gates green: `tsc --noEmit` 0 · `eslint .` 0 (no warnings) · `vitest run` 10 files / 70 tests (existing suite unaffected) · mandatory-test manifest 0.
 
 ---
 

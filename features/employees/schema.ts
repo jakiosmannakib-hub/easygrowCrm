@@ -58,3 +58,15 @@ export const UpdateEmployeeInput = z
   );
 
 export type UpdateEmployeeInput = z.infer<typeof UpdateEmployeeInput>;
+
+/**
+ * §13.1.3 input. Deliberately just the target and the new role — everything §13.1.3 guards
+ * against (self-demotion, the §9.7-5 manager floor, Amendment E) is a runtime condition the
+ * action checks against live rows, not a shape a parse can express.
+ */
+export const ChangeRoleInput = z.object({
+  userId: z.string().min(1),
+  role: z.enum(userRole.enumValues),
+});
+
+export type ChangeRoleInput = z.infer<typeof ChangeRoleInput>;

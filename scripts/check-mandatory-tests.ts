@@ -14,6 +14,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/employees/min-two-managers.test.ts', // PUL-201.3
   'features/employees/create-employee.test.ts', // PUL-202.4
   'features/employees/update-employee.test.ts', // PUL-203.3
+  'features/employees/role-change.test.ts', // PUL-204.3
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

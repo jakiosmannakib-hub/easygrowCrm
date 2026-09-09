@@ -6,13 +6,19 @@
 'use server';
 
 import { eq } from 'drizzle-orm';
-import { user as userTable } from '../../db/schema';
+import { session as sessionTable, user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { AppError } from '../../lib/errors';
 import { withTx } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { ChangeRoleInput, CreateEmployeeInput, UpdateEmployeeInput } from './schema';
+import { getDeactivationBlockers } from './queries';
+import {
+  ChangeRoleInput,
+  CreateEmployeeInput,
+  DeactivateEmployeeInput,
+  UpdateEmployeeInput,
+} from './schema';
 
 /** Postgres `unique_violation`. */
 const UNIQUE_VIOLATION = '23505';
@@ -297,4 +303,116 @@ export async function changeRole(input: ChangeRoleInput) {
   await notify({ to: parsed.userId, type: 'role_changed', data: { role: parsed.role } });
 
   return result;
+}
+
+/**
+ * §13.1.4 `deactivateEmployee` — SA + HR (`employee.deactivate`).
+ *
+ * Offboarding, not deletion: the row stays, `active` goes false, and every live session is
+ * destroyed so the person is locked out *now* rather than at token expiry (§9.4). Combined
+ * with `guardActive` on sign-in and the role/active re-read in `getSessionUser()` (§9.5 rule
+ * 4), those three together are what makes "cannot log in" true within one request.
+ *
+ * Guards:
+ *   - **target ≠ actor.** Deactivating yourself is always a mistake and can strand the org.
+ *   - **the offboarding checklist.** Every open assignment must be reassigned or cancelled and
+ *     every routed review re-pointed *before* the account closes, else the work is orphaned on
+ *     a person who can no longer sign in (`GATE:unresolved_assignments` / `unresolved_reviews`).
+ *   - **the §9.7-5 manager floor**, enforced by migration 0003's `user_min_managers` trigger
+ *     on this very UPDATE — the same mechanism and the same translation as `changeRole`.
+ *
+ * **Phase-2 scope.** §13.1.4's transaction has five more steps that cannot be written against
+ * tables that don't exist yet. Each is marked below with the ticket that fills it in; the
+ * shape here — including the two (always empty) input arrays and the blocker check — is final,
+ * so those tickets add statements inside this transaction rather than reshaping the action:
+ *   - apply reassignments / cancellations, + one audit row each, + `N:task_reassigned` — PUL-401
+ *   - apply reviewer reroutes, + one audit row each, + `N:review_rerouted`         — PUL-401
+ *   - auto-reject the target's `pending` leave                                     — PUL-701
+ *   - close today's open attendance row and any open break as `auto_closed`        — attendance phase
+ *
+ * Notify: **none in Phase 2.** §13.1.4's only notifications announce reassignments and
+ * reroutes to their new owners — there are none to announce until PUL-401. The target is not
+ * notified of their own deactivation (they are told out of band, and can't sign in to read it).
+ */
+export async function deactivateEmployee(input: DeactivateEmployeeInput) {
+  // 1. VALIDATE
+  const parsed = DeactivateEmployeeInput.parse(input);
+
+  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+  const actor = await authorize('employee.deactivate');
+
+  if (parsed.userId === actor.id) {
+    throw new AppError('GATE', 'You cannot deactivate yourself', {
+      reason: 'self_deactivate',
+    });
+  }
+
+  // 3. TRANSACT — §13.1.4: every guard is checked INSIDE the tx, atomically.
+  return await withTx(async (tx) => {
+    const [current] = await tx
+      .select({ id: userTable.id, active: userTable.active })
+      .from(userTable)
+      .where(eq(userTable.id, parsed.userId))
+      .limit(1);
+
+    if (!current) {
+      throw new AppError('NOT_FOUND', 'Employee not found');
+    }
+
+    // The offboarding checklist. Vacuous until PUL-401 fills the query in — but wired now, so
+    // that ticket changes one function and this gate starts biting with no edit here.
+    const blockers = await getDeactivationBlockers(parsed.userId);
+
+    if (blockers.openAssignments.length > 0) {
+      throw new AppError('GATE', 'Every open task must be reassigned or cancelled first', {
+        reason: 'unresolved_assignments',
+        taskIds: blockers.openAssignments.map((t) => t.taskId),
+      });
+    }
+
+    if (blockers.routedReviews.length > 0) {
+      throw new AppError('GATE', 'Every pending review must be routed to someone else first', {
+        reason: 'unresolved_reviews',
+        taskIds: blockers.routedReviews.map((t) => t.taskId),
+      });
+    }
+
+    let row;
+    try {
+      [row] = await tx
+        .update(userTable)
+        .set({ active: false })
+        .where(eq(userTable.id, parsed.userId))
+        .returning();
+    } catch (error) {
+      // The §9.7-5 floor, enforced by the trigger inside this very statement.
+      if (isMinManagersViolation(error)) {
+        throw new AppError(
+          'GATE',
+          'This would leave fewer than two active managers',
+          { reason: 'last_managers' },
+        );
+      }
+      throw error;
+    }
+
+    // Kill every live session in the same transaction as the flag. `active: false` alone only
+    // stops the *next* request through `getSessionUser()`; deleting the rows also invalidates
+    // the cookie itself, so there is no window where a warm tab still works.
+    await tx.delete(sessionTable).where(eq(sessionTable.userId, parsed.userId));
+
+    // 4. AUDIT — same tx (§9.8 `employee.deactivated`).
+    await writeAudit(tx, {
+      actorId: actor.id,
+      action: 'employee.deactivated',
+      resourceType: 'employee',
+      resourceId: parsed.userId,
+      before: { active: true },
+      after: { active: false },
+    });
+
+    return row;
+  });
+
+  // 5. NOTIFY — none in Phase 2 (see the note above).
 }

@@ -70,3 +70,37 @@ export const ChangeRoleInput = z.object({
 });
 
 export type ChangeRoleInput = z.infer<typeof ChangeRoleInput>;
+
+/**
+ * §13.1.4 input. The two arrays are the offboarding checklist's answers: what happens to each
+ * task the person is assigned, and who inherits each review routed to them.
+ *
+ * **Both are final shape, and both are necessarily empty until PUL-401.** `project_tasks` is
+ * migration 008, so in Phase 2 there is no task that could need reassigning — but the arrays
+ * are declared now rather than added later, so the action, its callers and the modal are all
+ * written once against the shape §13.1.4 specifies (CLAUDE.md §2: state is declared upfront).
+ *
+ * `"cancel"` as a `newAssigneeId` is §13.1.4's marker for "close this task instead of moving
+ * it", not a user id.
+ */
+export const DeactivateEmployeeInput = z.object({
+  userId: z.string().min(1),
+  reassignments: z
+    .array(
+      z.object({
+        taskId: z.string().min(1),
+        newAssigneeId: z.union([z.string().min(1), z.literal('cancel')]),
+      }),
+    )
+    .default([]),
+  rerouted: z
+    .array(
+      z.object({
+        taskId: z.string().min(1),
+        newReviewerId: z.string().min(1),
+      }),
+    )
+    .default([]),
+});
+
+export type DeactivateEmployeeInput = z.input<typeof DeactivateEmployeeInput>;

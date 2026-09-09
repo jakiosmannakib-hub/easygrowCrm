@@ -11,7 +11,7 @@ import { authorize } from '../../lib/authz';
 import { AppError } from '../../lib/errors';
 import { withTx } from '../../lib/mutation';
 import { writeAudit } from '../audit/write-audit';
-import { CreateEmployeeInput } from './schema';
+import { CreateEmployeeInput, UpdateEmployeeInput } from './schema';
 
 /** Postgres `unique_violation`. */
 const UNIQUE_VIOLATION = '23505';
@@ -101,4 +101,102 @@ export async function createEmployee(input: CreateEmployeeInput) {
     }
     throw error;
   }
+}
+
+/**
+ * The only columns §13.1.2 may touch. Not `email` (immutable), not `role` (§13.1.3), not
+ * `active` (§13.1.4/§13.1.5). `name` is `NOT NULL`; the other three are clearable.
+ */
+type EmployeeEdit = {
+  name?: string;
+  title?: string | null;
+  department?: string | null;
+  joinDate?: string | null;
+};
+type EditableField = keyof EmployeeEdit;
+
+/**
+ * §13.1.2 `updateEmployee` — SA + HR (`employee.update`).
+ *
+ * Profile fields only. `role` is not updatable here (§13.1.3 `changeRole` owns it, SA-only,
+ * with the min-2-managers guard) and `email` is immutable — the parse strips both before the
+ * UPDATE is built, so a payload carrying them changes nothing.
+ *
+ * The UPDATE and the audit row both carry the *diff*, not the submitted payload: a form that
+ * posts all four fields back with one edited writes one column and audits one field. A submit
+ * that changes nothing at all is a no-op — no UPDATE, no audit row. That keeps the append-only
+ * log (§16.4) a record of actual changes rather than of button presses.
+ *
+ * A deactivated employee is still editable: §13.1.2 names no guard, and correcting a name or
+ * join date after offboarding is legitimate. `active` moves only through §13.1.4/§13.1.5.
+ *
+ * Notify: none (§13.1.2).
+ */
+export async function updateEmployee(input: UpdateEmployeeInput) {
+  // 1. VALIDATE
+  const parsed = UpdateEmployeeInput.parse(input);
+
+  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+  const actor = await authorize('employee.update');
+
+  // 3. TRANSACT
+  return await withTx(async (tx) => {
+    // Read inside the tx: the diff is computed against the row we are about to write, so a
+    // concurrent edit can't slip between the read and the UPDATE.
+    const [current] = await tx
+      .select()
+      .from(userTable)
+      .where(eq(userTable.id, parsed.userId))
+      .limit(1);
+
+    if (!current) {
+      throw new AppError('NOT_FOUND', 'Employee not found');
+    }
+
+    // What the caller actually submitted — an absent key is "leave alone", `null` is "clear".
+    const submitted: EmployeeEdit = {
+      ...(parsed.name !== undefined && { name: parsed.name }),
+      ...(parsed.title !== undefined && { title: parsed.title }),
+      ...(parsed.department !== undefined && { department: parsed.department }),
+      ...(parsed.joinDate !== undefined && { joinDate: parsed.joinDate }),
+    };
+
+    const changes: EmployeeEdit = {};
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+
+    for (const [field, next] of Object.entries(submitted) as [EditableField, string | null][]) {
+      const currentValue = current[field] ?? null;
+      const nextValue = next ?? null;
+      if (currentValue === nextValue) continue; // submitted, but unchanged
+      before[field] = currentValue;
+      after[field] = nextValue;
+      Object.assign(changes, { [field]: nextValue });
+    }
+
+    // Nothing actually moved: no UPDATE, no audit row (see the doc comment above).
+    if (Object.keys(changes).length === 0) {
+      return current;
+    }
+
+    const [row] = await tx
+      .update(userTable)
+      .set(changes)
+      .where(eq(userTable.id, parsed.userId))
+      .returning();
+
+    // 4. AUDIT — same tx (§9.8). before/after carry only the changed fields.
+    await writeAudit(tx, {
+      actorId: actor.id,
+      action: 'employee.updated',
+      resourceType: 'employee',
+      resourceId: parsed.userId,
+      before,
+      after,
+    });
+
+    return row;
+  });
+
+  // 5. NOTIFY — none for this action (§13.1.2).
 }

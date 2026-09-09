@@ -10,8 +10,9 @@ import { user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { AppError } from '../../lib/errors';
 import { withTx } from '../../lib/mutation';
+import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { CreateEmployeeInput, UpdateEmployeeInput } from './schema';
+import { ChangeRoleInput, CreateEmployeeInput, UpdateEmployeeInput } from './schema';
 
 /** Postgres `unique_violation`. */
 const UNIQUE_VIOLATION = '23505';
@@ -199,4 +200,101 @@ export async function updateEmployee(input: UpdateEmployeeInput) {
   });
 
   // 5. NOTIFY — none for this action (§13.1.2).
+}
+
+/** The trigger's message, verbatim from migration 0003 (`enforce_min_two_managers`). */
+const MIN_MANAGERS_MESSAGE = 'operation would leave fewer than two active manager-level users';
+
+function isMinManagersViolation(error: unknown): boolean {
+  // Drizzle wraps the driver failure in its own "Failed query" error and keeps the Postgres
+  // error as `cause` — same shape the min-two-managers test reads.
+  const candidates = [error, (error as Error | undefined)?.cause];
+  return candidates.some((c) =>
+    String((c as Error | undefined)?.message ?? '').includes(MIN_MANAGERS_MESSAGE),
+  );
+}
+
+/**
+ * §13.1.3 `changeRole` — SA only (`employee.change_role`). HR cannot; §9.6 denies it.
+ *
+ * Guards, in order:
+ *   - **target ≠ actor.** An SA who demotes themselves locks the org out of every SA-only
+ *     action, so it is refused outright (`GATE:self_role_change`). Another SA can do it.
+ *   - **the §9.7-5 manager floor.** Demoting the second-to-last active manager-level user
+ *     (super_admin | team_leader | project_manager) is refused — but NOT by a count in this
+ *     function. The `user_min_managers` trigger from migration 0003 evaluates the invariant
+ *     inside the same statement that writes the row, which is race-free in a way an app-side
+ *     `SELECT count(*)` can never be. This action only translates the trigger's exception
+ *     into `GATE:last_managers` so the UI gets a typed error instead of a driver stack.
+ *
+ * **Deferred — Amendment E** (§13.1.3: promoting to `super_admin` requires the target to hold
+ * no open task assignments, else `GATE:sa_has_assignments`). `project_tasks` arrives in
+ * migration 008 / **PUL-401**, so no assignment can exist to violate it yet. That ticket wires
+ * the check in here, alongside attaching the `pt_no_sa_assignee` trigger whose function
+ * migration 0003 already defines.
+ *
+ * No session surgery on success: the new role takes effect on the target's next request,
+ * because `getSessionUser()` re-reads `role` from the database every time (§9.5 rule 4).
+ */
+export async function changeRole(input: ChangeRoleInput) {
+  // 1. VALIDATE
+  const parsed = ChangeRoleInput.parse(input);
+
+  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+  const actor = await authorize('employee.change_role');
+
+  if (parsed.userId === actor.id) {
+    throw new AppError('GATE', 'You cannot change your own role', {
+      reason: 'self_role_change',
+    });
+  }
+
+  // 3. TRANSACT
+  const result = await withTx(async (tx) => {
+    const [current] = await tx
+      .select({ id: userTable.id, role: userTable.role })
+      .from(userTable)
+      .where(eq(userTable.id, parsed.userId))
+      .limit(1);
+
+    if (!current) {
+      throw new AppError('NOT_FOUND', 'Employee not found');
+    }
+
+    let row;
+    try {
+      [row] = await tx
+        .update(userTable)
+        .set({ role: parsed.role })
+        .where(eq(userTable.id, parsed.userId))
+        .returning();
+    } catch (error) {
+      // The §9.7-5 floor, enforced by the trigger inside this very statement.
+      if (isMinManagersViolation(error)) {
+        throw new AppError(
+          'GATE',
+          'This change would leave fewer than two active managers',
+          { reason: 'last_managers' },
+        );
+      }
+      throw error;
+    }
+
+    // 4. AUDIT — same tx (§9.8 `employee.role_changed`).
+    await writeAudit(tx, {
+      actorId: actor.id,
+      action: 'employee.role_changed',
+      resourceType: 'employee',
+      resourceId: parsed.userId,
+      before: { role: current.role },
+      after: { role: parsed.role },
+    });
+
+    return row;
+  });
+
+  // 5. NOTIFY — after commit, outside the transaction (§12.4 step 5).
+  await notify({ to: parsed.userId, type: 'role_changed', data: { role: parsed.role } });
+
+  return result;
 }

@@ -28,3 +28,33 @@ export const CreateEmployeeInput = z.object({
 });
 
 export type CreateEmployeeInput = z.infer<typeof CreateEmployeeInput>;
+
+/**
+ * §13.1.2 input. `userId` names the target; the four editable columns are all optional and a
+ * submit must carry at least one of them — an empty payload is a caller bug, not a no-op
+ * request. `email` and `role` are deliberately absent: email is immutable, and role moves
+ * only through §13.1.3 `changeRole` (SA-only, with the min-2-managers guard). Anything extra
+ * in the payload is stripped by this parse and can never reach the UPDATE.
+ *
+ * The three nullable fields accept `null` to clear them — the columns are nullable and the
+ * edit form needs a way to empty a title or department. `joinDate` keeps the same
+ * `YYYY-MM-DD` string treatment as §13.1.1 (§11.0).
+ */
+export const UpdateEmployeeInput = z
+  .object({
+    userId: z.string().min(1),
+    name: z.string().min(1).optional(),
+    title: z.string().nullable().optional(),
+    department: z.string().nullable().optional(),
+    joinDate: z.iso.date().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.title !== undefined ||
+      v.department !== undefined ||
+      v.joinDate !== undefined,
+    { message: 'Provide at least one field to update' },
+  );
+
+export type UpdateEmployeeInput = z.infer<typeof UpdateEmployeeInput>;

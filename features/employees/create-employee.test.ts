@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, user as userTable } from '../../db/schema';
-import { AppError } from '../../lib/errors';
+import { expectFail, expectOk } from '../../tests/expect-result';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
 
 const getSession = vi.fn();
@@ -55,7 +55,7 @@ describe('createEmployee (§13.1.1)', () => {
   it('creates an active employee row and audits it in the same transaction', async () => {
     actAs(seed.superAdmin.id);
 
-    const created = await createEmployee(NEW_EMPLOYEE);
+    const created = expectOk(await createEmployee(NEW_EMPLOYEE));
 
     const row = await findByEmail(NEW_EMPLOYEE.email);
     expect(row).toMatchObject({
@@ -93,9 +93,10 @@ describe('createEmployee (§13.1.1)', () => {
     const before = await db.select().from(userTable);
     const auditBefore = await db.select().from(auditLog);
 
-    await expect(
-      createEmployee({ ...NEW_EMPLOYEE, email: seed.employees[0].email }),
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expectFail(
+      await createEmployee({ ...NEW_EMPLOYEE, email: seed.employees[0].email }),
+      'CONFLICT',
+    );
 
     // No partial write: neither a user row nor an audit row survived the rollback.
     expect(await db.select().from(userTable)).toHaveLength(before.length);
@@ -111,7 +112,7 @@ describe('createEmployee (§13.1.1)', () => {
       .where(eq(userTable.id, seed.employees[0].id));
     actAs(seed.employees[0].id);
 
-    const created = await createEmployee(NEW_EMPLOYEE);
+    const created = expectOk(await createEmployee(NEW_EMPLOYEE));
 
     expect(await findByEmail(NEW_EMPLOYEE.email)).toMatchObject({ id: created.id });
   });
@@ -119,9 +120,12 @@ describe('createEmployee (§13.1.1)', () => {
   it('denies a plain employee with FORBIDDEN', async () => {
     actAs(seed.employees[1].id);
 
-    await expect(createEmployee(NEW_EMPLOYEE)).rejects.toBeInstanceOf(AppError);
-    await expect(createEmployee(NEW_EMPLOYEE)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const auditBefore = await db.select().from(auditLog);
 
+    expectFail(await createEmployee(NEW_EMPLOYEE), 'FORBIDDEN');
+
+    // The consequence, not just the code: a denied caller creates no user and no audit row.
     expect(await findByEmail(NEW_EMPLOYEE.email)).toBeUndefined();
+    expect(await db.select().from(auditLog)).toHaveLength(auditBefore.length);
   });
 });

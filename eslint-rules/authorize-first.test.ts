@@ -45,6 +45,20 @@ ruleTester.run('authorize-first', rule, {
         return await getSomething(input.id);
       }
     `,
+    // PUL-111: the body now sits inside the `actionResult` boundary wrapper. The rule must
+    // still see through it — calls are attributed to every enclosing async frame, so the
+    // exported function is judged on what its wrapper's callback does.
+    `
+      export async function wrappedAction(input) {
+        return actionResult(async () => {
+          const parsed = Input.parse(input);
+          const actor = await authorize('project.update');
+          return withTx(async (tx) => {
+            await writeAudit(tx, { actorId: actor.id });
+          });
+        });
+      }
+    `,
   ],
 
   invalid: [
@@ -72,6 +86,35 @@ ruleTester.run('authorize-first', rule, {
           await authorize('project.update');
           return result;
         }
+      `,
+      errors: [{ messageId: 'authorizeAfterTx' }],
+    },
+    // PUL-111 regression guard: the same violation inside the boundary wrapper must still be
+    // reported. Before the `isExported` fix this produced NO error at all — the rule silently
+    // stopped applying to any action written in this shape.
+    {
+      code: `
+        export async function wrappedNoAuthorize(input) {
+          return actionResult(async () => {
+            return withTx(async (tx) => {
+              await writeAudit(tx, {});
+            });
+          });
+        }
+      `,
+      errors: [{ messageId: 'missingAuthorize' }],
+    },
+    // The other wrapper shape — `export const x = actionResult(async () => …)`. This is the
+    // one that was a true no-op: the arrow's parent is a CallExpression, so the export walk
+    // gave up and the action was never inspected.
+    {
+      code: `
+        export const wrappedConstAction = actionResult(async (input) => {
+          await withTx(async (tx) => {
+            await writeAudit(tx, {});
+          });
+          await authorize('project.update');
+        });
       `,
       errors: [{ messageId: 'authorizeAfterTx' }],
     },

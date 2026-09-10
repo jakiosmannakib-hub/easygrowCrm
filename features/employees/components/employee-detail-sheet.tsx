@@ -195,14 +195,16 @@ function EmployeeDetailBody({
     setErrors({});
     setSaving(true);
     try {
-      await updateEmployee(parsed.data);
+      const result = await updateEmployee(parsed.data);
+      if (!result.ok) {
+        showErrorToast(result);
+        return;
+      }
       // Not optimistic — an edit to the employee record waits for the server (§14.15 r.5).
       toast.success('Changes saved.');
       // Re-runs the server component, so the card behind the drawer shows the new values
       // without a manual reload.
       router.refresh();
-    } catch (error) {
-      showErrorToast(error as { code: string; message?: string });
     } finally {
       setSaving(false);
     }
@@ -211,14 +213,17 @@ function EmployeeDetailBody({
   async function onApplyRole() {
     setChangingRole(true);
     try {
-      await changeRole({ userId: employee.id, role: nextRole });
+      const result = await changeRole({ userId: employee.id, role: nextRole });
+      if (!result.ok) {
+        // GATE:self_role_change and GATE:last_managers arrive here as data and are named by
+        // the PUL-106 mapper. Before PUL-111 these were thrown, and production redaction
+        // stripped the reason — the toast said "Something went wrong" and nothing else.
+        showErrorToast(result);
+        return;
+      }
       toast.success(`Role changed to ${ROLE_LABELS[nextRole]}.`);
       setConfirmingRole(false);
       router.refresh();
-    } catch (error) {
-      // GATE:self_role_change and GATE:last_managers both land here and are named by the
-      // PUL-106 mapper — a blocked role change explains itself instead of throwing.
-      showErrorToast(error as { code: string; message?: string });
     } finally {
       setChangingRole(false);
     }
@@ -227,12 +232,14 @@ function EmployeeDetailBody({
   async function onReactivate() {
     setReactivating(true);
     try {
-      await reactivateEmployee({ userId: employee.id });
+      const result = await reactivateEmployee({ userId: employee.id });
+      if (!result.ok) {
+        showErrorToast(result);
+        return;
+      }
       toast.success(`${employee.name} can sign in again.`);
       setReactivateConfirm(false);
       router.refresh();
-    } catch (error) {
-      showErrorToast(error as { code: string; message?: string });
     } finally {
       setReactivating(false);
     }

@@ -90,16 +90,20 @@ export function AddEmployeeDialog() {
     setErrors({});
     setSubmitting(true);
     try {
-      await createEmployee(parsed.data);
+      const result = await createEmployee(parsed.data);
+      if (!result.ok) {
+        // Every server error goes through the PUL-106 mapper — including CONFLICT on a
+        // duplicate email, which is the one code that offers "Refresh" (§14.15 r.3).
+        // It arrives as a returned value, not a throw, so the code survives a production
+        // build (PUL-111); the modal stays open with the fields intact.
+        showErrorToast(result);
+        return;
+      }
       // Not optimistic: adding a person is an accountability action, so the modal stays
       // open until the server confirms (§14.15 r.5).
       toast.success(`${parsed.data.name} added.`);
       setForm(EMPTY);
       setOpen(false);
-    } catch (error) {
-      // Every server error goes through the PUL-106 mapper — including CONFLICT on a
-      // duplicate email, which is the one code that offers "Refresh" (§14.15 r.3).
-      showErrorToast(error as { code: string; message?: string });
     } finally {
       setSubmitting(false);
     }

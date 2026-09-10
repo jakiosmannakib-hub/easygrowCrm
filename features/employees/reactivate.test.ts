@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, user as userTable } from '../../db/schema';
-import { AppError } from '../../lib/errors';
+import { expectFail } from '../../tests/expect-result';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
 
@@ -128,9 +128,7 @@ describe('reactivateEmployee (§13.1.5)', () => {
 
     actAs(seed.employees[1].id);
 
-    const call = () => reactivateEmployee({ userId: target });
-    await expect(call()).rejects.toBeInstanceOf(AppError);
-    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expectFail(await reactivateEmployee({ userId: target }), 'FORBIDDEN');
 
     // Mutation-proof: a denied call leaves the flag AND the log untouched. If the permission
     // cell for `employee.reactivate` is ever flipped to allow, this is what fails — not just
@@ -145,9 +143,7 @@ describe('reactivateEmployee (§13.1.5)', () => {
 
     for (const actor of [seed.teamLeader.id, seed.projectManager.id]) {
       actAs(actor);
-      await expect(reactivateEmployee({ userId: target })).rejects.toMatchObject({
-        code: 'FORBIDDEN',
-      });
+      expectFail(await reactivateEmployee({ userId: target }), 'FORBIDDEN');
     }
 
     expect(await isActive(target)).toBe(false);
@@ -157,14 +153,15 @@ describe('reactivateEmployee (§13.1.5)', () => {
   it('rejects an unknown target with NOT_FOUND', async () => {
     actAs(seed.superAdmin.id);
 
-    await expect(reactivateEmployee({ userId: 'usr_does_not_exist' })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
+    expectFail(await reactivateEmployee({ userId: 'usr_does_not_exist' }), 'NOT_FOUND');
   });
 
   it('rejects a malformed input before it reaches the database', async () => {
     actAs(seed.superAdmin.id);
 
+    // Still a THROW, not an ActionResult (PUL-111): an empty id fails the Zod parse, and a
+    // ZodError is not an AppError, so `actionResult` re-throws it and production redaction
+    // keeps it opaque. Malformed input is a caller bug, not one of the seven §13 outcomes.
     await expect(reactivateEmployee({ userId: '' })).rejects.toThrow();
   });
 });

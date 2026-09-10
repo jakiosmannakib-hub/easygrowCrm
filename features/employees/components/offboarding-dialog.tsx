@@ -38,7 +38,11 @@ import type { EmployeeCard, PickableUser } from '../queries';
 /** §13.1.4's marker for "close this task instead of moving it". Not a user id. */
 const CANCEL = 'cancel';
 
-type OffboardingContext = Awaited<ReturnType<typeof loadOffboardingContext>>;
+/** The success payload only — the failure half is handled at the call in `load()`. */
+type OffboardingContext = Extract<
+  Awaited<ReturnType<typeof loadOffboardingContext>>,
+  { ok: true }
+>['data'];
 
 export function OffboardingDialog({
   employee,
@@ -66,14 +70,16 @@ export function OffboardingDialog({
     setLoadFailed(false);
     setReassignments({});
     setRerouted({});
-    try {
-      setContext(await loadOffboardingContext({ userId: employee.id }));
-    } catch (error) {
+
+    const result = await loadOffboardingContext({ userId: employee.id });
+    if (!result.ok) {
       // Without the blockers we cannot say whether it is safe to deactivate, so the button
       // stays disabled and the dialog says so rather than offering a guess.
       setLoadFailed(true);
-      showErrorToast(error as { code: string; message?: string });
+      showErrorToast(result);
+      return;
     }
+    setContext(result.data);
   }
 
   const blockers = context?.blockers;
@@ -101,7 +107,7 @@ export function OffboardingDialog({
   async function onConfirm() {
     setSubmitting(true);
     try {
-      await deactivateEmployee({
+      const result = await deactivateEmployee({
         userId: employee.id,
         // Both are empty until PUL-401; the pickers below already write into the state these
         // read from, so that ticket changes the query, not this call.
@@ -114,12 +120,17 @@ export function OffboardingDialog({
           newReviewerId: rerouted[t.taskId]!,
         })),
       });
+
+      if (!result.ok) {
+        // Including GATE:last_managers, which the advisory check above can lose a race to.
+        showErrorToast(result);
+        return;
+      }
+
       // Not optimistic — deactivation is an accountability action (§14.15 r.5).
       toast.success(`${employee.name} has been deactivated.`);
       onOpenChange(false);
       router.refresh();
-    } catch (error) {
-      showErrorToast(error as { code: string; message?: string });
     } finally {
       setSubmitting(false);
     }

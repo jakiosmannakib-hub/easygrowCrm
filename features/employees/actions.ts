@@ -8,6 +8,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
 import { session as sessionTable, user as userTable } from '../../db/schema';
+import { actionResult } from '../../lib/action-result';
 import { authorize } from '../../lib/authz';
 import { AppError } from '../../lib/errors';
 import { withTx } from '../../lib/mutation';
@@ -50,66 +51,68 @@ function isUniqueViolation(error: unknown): boolean {
  * Notify: none (§13.1.1) — the person is told out of band to sign in with Google.
  */
 export async function createEmployee(input: CreateEmployeeInput) {
-  // 1. VALIDATE
-  const parsed = CreateEmployeeInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = CreateEmployeeInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
-  const actor = await authorize('employee.create');
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('employee.create');
 
-  // 3. TRANSACT
-  try {
-    return await withTx(async (tx) => {
-      // Pre-check for the friendly CONFLICT. The unique index is still the authority —
-      // a concurrent insert between this read and ours is caught by the catch below.
-      const existing = await tx
-        .select({ id: userTable.id })
-        .from(userTable)
-        .where(eq(userTable.email, parsed.email))
-        .limit(1);
+    // 3. TRANSACT
+    try {
+      return await withTx(async (tx) => {
+        // Pre-check for the friendly CONFLICT. The unique index is still the authority —
+        // a concurrent insert between this read and ours is caught by the catch below.
+        const existing = await tx
+          .select({ id: userTable.id })
+          .from(userTable)
+          .where(eq(userTable.email, parsed.email))
+          .limit(1);
 
-      if (existing[0]) {
+        if (existing[0]) {
+          throw new AppError('CONFLICT', 'An employee with this email already exists');
+        }
+
+        const id = `usr_${crypto.randomUUID()}`;
+
+        const [row] = await tx
+          .insert(userTable)
+          .values({
+            id,
+            name: parsed.name,
+            email: parsed.email,
+            role: parsed.role,
+            title: parsed.title ?? null,
+            department: parsed.department ?? null,
+            joinDate: parsed.joinDate ?? null,
+            active: true,
+            // Google is the only identity provider and it verifies the address itself;
+            // Better Auth sets this on first sign-in. Provisioning does not assert it.
+            emailVerified: false,
+          })
+          .returning();
+
+        // 4. AUDIT — same tx (§9.8: "employee create/update/deactivate/reactivate").
+        await writeAudit(tx, {
+          actorId: actor.id,
+          action: 'employee.created',
+          resourceType: 'employee',
+          resourceId: id,
+          before: null,
+          after: row,
+        });
+
+        return row;
+      });
+    } catch (error) {
+      // The race backstop: the unique index fired between the pre-check and the insert.
+      // The transaction has already rolled back, so there is no partial write to undo.
+      if (isUniqueViolation(error)) {
         throw new AppError('CONFLICT', 'An employee with this email already exists');
       }
-
-      const id = `usr_${crypto.randomUUID()}`;
-
-      const [row] = await tx
-        .insert(userTable)
-        .values({
-          id,
-          name: parsed.name,
-          email: parsed.email,
-          role: parsed.role,
-          title: parsed.title ?? null,
-          department: parsed.department ?? null,
-          joinDate: parsed.joinDate ?? null,
-          active: true,
-          // Google is the only identity provider and it verifies the address itself;
-          // Better Auth sets this on first sign-in. Provisioning does not assert it.
-          emailVerified: false,
-        })
-        .returning();
-
-      // 4. AUDIT — same tx (§9.8: "employee create/update/deactivate/reactivate").
-      await writeAudit(tx, {
-        actorId: actor.id,
-        action: 'employee.created',
-        resourceType: 'employee',
-        resourceId: id,
-        before: null,
-        after: row,
-      });
-
-      return row;
-    });
-  } catch (error) {
-    // The race backstop: the unique index fired between the pre-check and the insert.
-    // The transaction has already rolled back, so there is no partial write to undo.
-    if (isUniqueViolation(error)) {
-      throw new AppError('CONFLICT', 'An employee with this email already exists');
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 /**
@@ -142,72 +145,74 @@ type EditableField = keyof EmployeeEdit;
  * Notify: none (§13.1.2).
  */
 export async function updateEmployee(input: UpdateEmployeeInput) {
-  // 1. VALIDATE
-  const parsed = UpdateEmployeeInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = UpdateEmployeeInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
-  const actor = await authorize('employee.update');
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('employee.update');
 
-  // 3. TRANSACT
-  return await withTx(async (tx) => {
-    // Read inside the tx: the diff is computed against the row we are about to write, so a
-    // concurrent edit can't slip between the read and the UPDATE.
-    const [current] = await tx
-      .select()
-      .from(userTable)
-      .where(eq(userTable.id, parsed.userId))
-      .limit(1);
+    // 3. TRANSACT
+    return await withTx(async (tx) => {
+      // Read inside the tx: the diff is computed against the row we are about to write, so a
+      // concurrent edit can't slip between the read and the UPDATE.
+      const [current] = await tx
+        .select()
+        .from(userTable)
+        .where(eq(userTable.id, parsed.userId))
+        .limit(1);
 
-    if (!current) {
-      throw new AppError('NOT_FOUND', 'Employee not found');
-    }
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Employee not found');
+      }
 
-    // What the caller actually submitted — an absent key is "leave alone", `null` is "clear".
-    const submitted: EmployeeEdit = {
-      ...(parsed.name !== undefined && { name: parsed.name }),
-      ...(parsed.title !== undefined && { title: parsed.title }),
-      ...(parsed.department !== undefined && { department: parsed.department }),
-      ...(parsed.joinDate !== undefined && { joinDate: parsed.joinDate }),
-    };
+      // What the caller actually submitted — an absent key is "leave alone", `null` is "clear".
+      const submitted: EmployeeEdit = {
+        ...(parsed.name !== undefined && { name: parsed.name }),
+        ...(parsed.title !== undefined && { title: parsed.title }),
+        ...(parsed.department !== undefined && { department: parsed.department }),
+        ...(parsed.joinDate !== undefined && { joinDate: parsed.joinDate }),
+      };
 
-    const changes: EmployeeEdit = {};
-    const before: Record<string, unknown> = {};
-    const after: Record<string, unknown> = {};
+      const changes: EmployeeEdit = {};
+      const before: Record<string, unknown> = {};
+      const after: Record<string, unknown> = {};
 
-    for (const [field, next] of Object.entries(submitted) as [EditableField, string | null][]) {
-      const currentValue = current[field] ?? null;
-      const nextValue = next ?? null;
-      if (currentValue === nextValue) continue; // submitted, but unchanged
-      before[field] = currentValue;
-      after[field] = nextValue;
-      Object.assign(changes, { [field]: nextValue });
-    }
+      for (const [field, next] of Object.entries(submitted) as [EditableField, string | null][]) {
+        const currentValue = current[field] ?? null;
+        const nextValue = next ?? null;
+        if (currentValue === nextValue) continue; // submitted, but unchanged
+        before[field] = currentValue;
+        after[field] = nextValue;
+        Object.assign(changes, { [field]: nextValue });
+      }
 
-    // Nothing actually moved: no UPDATE, no audit row (see the doc comment above).
-    if (Object.keys(changes).length === 0) {
-      return current;
-    }
+      // Nothing actually moved: no UPDATE, no audit row (see the doc comment above).
+      if (Object.keys(changes).length === 0) {
+        return current;
+      }
 
-    const [row] = await tx
-      .update(userTable)
-      .set(changes)
-      .where(eq(userTable.id, parsed.userId))
-      .returning();
+      const [row] = await tx
+        .update(userTable)
+        .set(changes)
+        .where(eq(userTable.id, parsed.userId))
+        .returning();
 
-    // 4. AUDIT — same tx (§9.8). before/after carry only the changed fields.
-    await writeAudit(tx, {
-      actorId: actor.id,
-      action: 'employee.updated',
-      resourceType: 'employee',
-      resourceId: parsed.userId,
-      before,
-      after,
+      // 4. AUDIT — same tx (§9.8). before/after carry only the changed fields.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'employee.updated',
+        resourceType: 'employee',
+        resourceId: parsed.userId,
+        before,
+        after,
+      });
+
+      return row;
     });
 
-    return row;
+    // 5. NOTIFY — none for this action (§13.1.2).
   });
-
-  // 5. NOTIFY — none for this action (§13.1.2).
 }
 
 /** The trigger's message, verbatim from migration 0003 (`enforce_min_two_managers`). */
@@ -245,64 +250,66 @@ function isMinManagersViolation(error: unknown): boolean {
  * because `getSessionUser()` re-reads `role` from the database every time (§9.5 rule 4).
  */
 export async function changeRole(input: ChangeRoleInput) {
-  // 1. VALIDATE
-  const parsed = ChangeRoleInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ChangeRoleInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
-  const actor = await authorize('employee.change_role');
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('employee.change_role');
 
-  if (parsed.userId === actor.id) {
-    throw new AppError('GATE', 'You cannot change your own role', {
-      reason: 'self_role_change',
-    });
-  }
-
-  // 3. TRANSACT
-  const result = await withTx(async (tx) => {
-    const [current] = await tx
-      .select({ id: userTable.id, role: userTable.role })
-      .from(userTable)
-      .where(eq(userTable.id, parsed.userId))
-      .limit(1);
-
-    if (!current) {
-      throw new AppError('NOT_FOUND', 'Employee not found');
+    if (parsed.userId === actor.id) {
+      throw new AppError('GATE', 'You cannot change your own role', {
+        reason: 'self_role_change',
+      });
     }
 
-    let row;
-    try {
-      [row] = await tx
-        .update(userTable)
-        .set({ role: parsed.role })
+    // 3. TRANSACT
+    const result = await withTx(async (tx) => {
+      const [current] = await tx
+        .select({ id: userTable.id, role: userTable.role })
+        .from(userTable)
         .where(eq(userTable.id, parsed.userId))
-        .returning();
-    } catch (error) {
-      // The §9.7-5 floor, enforced by the trigger inside this very statement.
-      if (isMinManagersViolation(error)) {
-        throw new AppError('GATE', 'This change would leave fewer than two active managers', {
-          reason: 'last_managers',
-        });
-      }
-      throw error;
-    }
+        .limit(1);
 
-    // 4. AUDIT — same tx (§9.8 `employee.role_changed`).
-    await writeAudit(tx, {
-      actorId: actor.id,
-      action: 'employee.role_changed',
-      resourceType: 'employee',
-      resourceId: parsed.userId,
-      before: { role: current.role },
-      after: { role: parsed.role },
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Employee not found');
+      }
+
+      let row;
+      try {
+        [row] = await tx
+          .update(userTable)
+          .set({ role: parsed.role })
+          .where(eq(userTable.id, parsed.userId))
+          .returning();
+      } catch (error) {
+        // The §9.7-5 floor, enforced by the trigger inside this very statement.
+        if (isMinManagersViolation(error)) {
+          throw new AppError('GATE', 'This change would leave fewer than two active managers', {
+            reason: 'last_managers',
+          });
+        }
+        throw error;
+      }
+
+      // 4. AUDIT — same tx (§9.8 `employee.role_changed`).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'employee.role_changed',
+        resourceType: 'employee',
+        resourceId: parsed.userId,
+        before: { role: current.role },
+        after: { role: parsed.role },
+      });
+
+      return row;
     });
 
-    return row;
+    // 5. NOTIFY — after commit, outside the transaction (§12.4 step 5).
+    await notify({ to: parsed.userId, type: 'role_changed', data: { role: parsed.role } });
+
+    return result;
   });
-
-  // 5. NOTIFY — after commit, outside the transaction (§12.4 step 5).
-  await notify({ to: parsed.userId, type: 'role_changed', data: { role: parsed.role } });
-
-  return result;
 }
 
 /**
@@ -335,84 +342,86 @@ export async function changeRole(input: ChangeRoleInput) {
  * notified of their own deactivation (they are told out of band, and can't sign in to read it).
  */
 export async function deactivateEmployee(input: DeactivateEmployeeInput) {
-  // 1. VALIDATE
-  const parsed = DeactivateEmployeeInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = DeactivateEmployeeInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
-  const actor = await authorize('employee.deactivate');
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('employee.deactivate');
 
-  if (parsed.userId === actor.id) {
-    throw new AppError('GATE', 'You cannot deactivate yourself', {
-      reason: 'self_deactivate',
-    });
-  }
-
-  // 3. TRANSACT — §13.1.4: every guard is checked INSIDE the tx, atomically.
-  return await withTx(async (tx) => {
-    const [current] = await tx
-      .select({ id: userTable.id, active: userTable.active })
-      .from(userTable)
-      .where(eq(userTable.id, parsed.userId))
-      .limit(1);
-
-    if (!current) {
-      throw new AppError('NOT_FOUND', 'Employee not found');
-    }
-
-    // The offboarding checklist. Vacuous until PUL-401 fills the query in — but wired now, so
-    // that ticket changes one function and this gate starts biting with no edit here.
-    const blockers = await getDeactivationBlockers(parsed.userId);
-
-    if (blockers.openAssignments.length > 0) {
-      throw new AppError('GATE', 'Every open task must be reassigned or cancelled first', {
-        reason: 'unresolved_assignments',
-        taskIds: blockers.openAssignments.map((t) => t.taskId),
+    if (parsed.userId === actor.id) {
+      throw new AppError('GATE', 'You cannot deactivate yourself', {
+        reason: 'self_deactivate',
       });
     }
 
-    if (blockers.routedReviews.length > 0) {
-      throw new AppError('GATE', 'Every pending review must be routed to someone else first', {
-        reason: 'unresolved_reviews',
-        taskIds: blockers.routedReviews.map((t) => t.taskId),
-      });
-    }
-
-    let row;
-    try {
-      [row] = await tx
-        .update(userTable)
-        .set({ active: false })
+    // 3. TRANSACT — §13.1.4: every guard is checked INSIDE the tx, atomically.
+    return await withTx(async (tx) => {
+      const [current] = await tx
+        .select({ id: userTable.id, active: userTable.active })
+        .from(userTable)
         .where(eq(userTable.id, parsed.userId))
-        .returning();
-    } catch (error) {
-      // The §9.7-5 floor, enforced by the trigger inside this very statement.
-      if (isMinManagersViolation(error)) {
-        throw new AppError('GATE', 'This would leave fewer than two active managers', {
-          reason: 'last_managers',
+        .limit(1);
+
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Employee not found');
+      }
+
+      // The offboarding checklist. Vacuous until PUL-401 fills the query in — but wired now, so
+      // that ticket changes one function and this gate starts biting with no edit here.
+      const blockers = await getDeactivationBlockers(parsed.userId);
+
+      if (blockers.openAssignments.length > 0) {
+        throw new AppError('GATE', 'Every open task must be reassigned or cancelled first', {
+          reason: 'unresolved_assignments',
+          taskIds: blockers.openAssignments.map((t) => t.taskId),
         });
       }
-      throw error;
-    }
 
-    // Kill every live session in the same transaction as the flag. `active: false` alone only
-    // stops the *next* request through `getSessionUser()`; deleting the rows also invalidates
-    // the cookie itself, so there is no window where a warm tab still works.
-    await tx.delete(sessionTable).where(eq(sessionTable.userId, parsed.userId));
+      if (blockers.routedReviews.length > 0) {
+        throw new AppError('GATE', 'Every pending review must be routed to someone else first', {
+          reason: 'unresolved_reviews',
+          taskIds: blockers.routedReviews.map((t) => t.taskId),
+        });
+      }
 
-    // 4. AUDIT — same tx (§9.8 `employee.deactivated`).
-    await writeAudit(tx, {
-      actorId: actor.id,
-      action: 'employee.deactivated',
-      resourceType: 'employee',
-      resourceId: parsed.userId,
-      before: { active: true },
-      after: { active: false },
+      let row;
+      try {
+        [row] = await tx
+          .update(userTable)
+          .set({ active: false })
+          .where(eq(userTable.id, parsed.userId))
+          .returning();
+      } catch (error) {
+        // The §9.7-5 floor, enforced by the trigger inside this very statement.
+        if (isMinManagersViolation(error)) {
+          throw new AppError('GATE', 'This would leave fewer than two active managers', {
+            reason: 'last_managers',
+          });
+        }
+        throw error;
+      }
+
+      // Kill every live session in the same transaction as the flag. `active: false` alone only
+      // stops the *next* request through `getSessionUser()`; deleting the rows also invalidates
+      // the cookie itself, so there is no window where a warm tab still works.
+      await tx.delete(sessionTable).where(eq(sessionTable.userId, parsed.userId));
+
+      // 4. AUDIT — same tx (§9.8 `employee.deactivated`).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'employee.deactivated',
+        resourceType: 'employee',
+        resourceId: parsed.userId,
+        before: { active: true },
+        after: { active: false },
+      });
+
+      return row;
     });
 
-    return row;
+    // 5. NOTIFY — none in Phase 2 (see the note above).
   });
-
-  // 5. NOTIFY — none in Phase 2 (see the note above).
 }
 
 /**
@@ -435,52 +444,54 @@ export async function deactivateEmployee(input: DeactivateEmployeeInput) {
  * Notify: none (§13.1.5) — the person is told out of band, exactly as at provisioning.
  */
 export async function reactivateEmployee(input: ReactivateEmployeeInput) {
-  // 1. VALIDATE
-  const parsed = ReactivateEmployeeInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ReactivateEmployeeInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
-  const actor = await authorize('employee.reactivate');
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('employee.reactivate');
 
-  // 3. TRANSACT
-  return await withTx(async (tx) => {
-    const [current] = await tx
-      .select({ id: userTable.id, active: userTable.active })
-      .from(userTable)
-      .where(eq(userTable.id, parsed.userId))
-      .limit(1);
+    // 3. TRANSACT
+    return await withTx(async (tx) => {
+      const [current] = await tx
+        .select({ id: userTable.id, active: userTable.active })
+        .from(userTable)
+        .where(eq(userTable.id, parsed.userId))
+        .limit(1);
 
-    if (!current) {
-      throw new AppError('NOT_FOUND', 'Employee not found');
-    }
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Employee not found');
+      }
 
-    // Already active: no UPDATE and no audit row — the PUL-203 convention. An audit log is a
-    // record of things that *happened*, so a row claiming a change that didn't occur is worse
-    // than no row: it would put a false "reactivated" event on someone's history, and two
-    // admins double-clicking would manufacture two of them.
-    if (current.active) {
-      return current;
-    }
+      // Already active: no UPDATE and no audit row — the PUL-203 convention. An audit log is a
+      // record of things that *happened*, so a row claiming a change that didn't occur is worse
+      // than no row: it would put a false "reactivated" event on someone's history, and two
+      // admins double-clicking would manufacture two of them.
+      if (current.active) {
+        return current;
+      }
 
-    const [row] = await tx
-      .update(userTable)
-      .set({ active: true })
-      .where(eq(userTable.id, parsed.userId))
-      .returning();
+      const [row] = await tx
+        .update(userTable)
+        .set({ active: true })
+        .where(eq(userTable.id, parsed.userId))
+        .returning();
 
-    // 4. AUDIT — same tx (§9.8 `employee.reactivated`).
-    await writeAudit(tx, {
-      actorId: actor.id,
-      action: 'employee.reactivated',
-      resourceType: 'employee',
-      resourceId: parsed.userId,
-      before: { active: false },
-      after: { active: true },
+      // 4. AUDIT — same tx (§9.8 `employee.reactivated`).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'employee.reactivated',
+        resourceType: 'employee',
+        resourceId: parsed.userId,
+        before: { active: false },
+        after: { active: true },
+      });
+
+      return row;
     });
 
-    return row;
+    // 5. NOTIFY — none for this action (§13.1.5).
   });
-
-  // 5. NOTIFY — none for this action (§13.1.5).
 }
 
 /**
@@ -498,30 +509,32 @@ export async function reactivateEmployee(input: ReactivateEmployeeInput) {
  * `GATE:last_managers`; see `activeManagerCount`.
  */
 export async function loadOffboardingContext(input: ReactivateEmployeeInput) {
-  // 1. VALIDATE — same `{ userId }` shape.
-  const parsed = ReactivateEmployeeInput.parse(input);
+  return actionResult(async () => {
+    // 1. VALIDATE — same `{ userId }` shape.
+    const parsed = ReactivateEmployeeInput.parse(input);
 
-  // 2. AUTHORIZE — first awaited line, same permission as the act it informs.
-  await authorize('employee.deactivate');
+    // 2. AUTHORIZE — first awaited line, same permission as the act it informs.
+    await authorize('employee.deactivate');
 
-  const [blockers, managerCount, target] = await Promise.all([
-    getDeactivationBlockers(parsed.userId),
-    activeManagerCount(),
-    db
-      .select({ role: userTable.role })
-      .from(userTable)
-      .where(eq(userTable.id, parsed.userId))
-      .limit(1),
-  ]);
+    const [blockers, managerCount, target] = await Promise.all([
+      getDeactivationBlockers(parsed.userId),
+      activeManagerCount(),
+      db
+        .select({ role: userTable.role })
+        .from(userTable)
+        .where(eq(userTable.id, parsed.userId))
+        .limit(1),
+    ]);
 
-  const role = target[0]?.role;
-  if (!role) {
-    throw new AppError('NOT_FOUND', 'Employee not found');
-  }
+    const role = target[0]?.role;
+    if (!role) {
+      throw new AppError('NOT_FOUND', 'Employee not found');
+    }
 
-  return {
-    blockers,
-    managerCount,
-    targetIsManager: (MANAGER_ROLES as readonly string[]).includes(role),
-  };
+    return {
+      blockers,
+      managerCount,
+      targetIsManager: (MANAGER_ROLES as readonly string[]).includes(role),
+    };
+  });
 }

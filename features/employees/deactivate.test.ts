@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, session as sessionTable, user as userTable } from '../../db/schema';
 import { clock } from '../../lib/clock';
-import { AppError } from '../../lib/errors';
+import { expectFail } from '../../tests/expect-result';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
 import { getDeactivationBlockers } from './queries';
@@ -129,9 +129,11 @@ describe('deactivateEmployee (§13.1.4)', () => {
     expect(await isActive(seed.teamLeader.id)).toBe(false);
 
     // 2 → 1 crosses the floor. The trigger raises; the action reports a typed GATE.
-    await expect(
-      deactivateEmployee({ userId: seed.projectManager.id, reassignments: [], rerouted: [] }),
-    ).rejects.toMatchObject({ code: 'GATE', reason: 'last_managers' });
+    expectFail(
+      await deactivateEmployee({ userId: seed.projectManager.id, reassignments: [], rerouted: [] }),
+      'GATE',
+      'last_managers',
+    );
 
     // Rejected means wholly untouched — flag and audit both rolled back.
     expect(await isActive(seed.projectManager.id)).toBe(true);
@@ -142,9 +144,11 @@ describe('deactivateEmployee (§13.1.4)', () => {
     actAs(seed.superAdmin.id);
     await giveSession(seed.superAdmin.id, 'tok_own');
 
-    await expect(
-      deactivateEmployee({ userId: seed.superAdmin.id, reassignments: [], rerouted: [] }),
-    ).rejects.toMatchObject({ code: 'GATE', reason: 'self_deactivate' });
+    expectFail(
+      await deactivateEmployee({ userId: seed.superAdmin.id, reassignments: [], rerouted: [] }),
+      'GATE',
+      'self_deactivate',
+    );
 
     expect(await isActive(seed.superAdmin.id)).toBe(true);
     expect(await sessionsOf(seed.superAdmin.id)).toHaveLength(1);
@@ -167,9 +171,10 @@ describe('deactivateEmployee (§13.1.4)', () => {
     const target = seed.employees[0].id;
     actAs(seed.employees[1].id);
 
-    const call = () => deactivateEmployee({ userId: target, reassignments: [], rerouted: [] });
-    await expect(call()).rejects.toBeInstanceOf(AppError);
-    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expectFail(
+      await deactivateEmployee({ userId: target, reassignments: [], rerouted: [] }),
+      'FORBIDDEN',
+    );
 
     expect(await isActive(target)).toBe(true);
     expect(await auditFor(target)).toHaveLength(0);
@@ -178,9 +183,10 @@ describe('deactivateEmployee (§13.1.4)', () => {
   it('rejects an unknown target with NOT_FOUND', async () => {
     actAs(seed.superAdmin.id);
 
-    await expect(
-      deactivateEmployee({ userId: 'usr_does_not_exist', reassignments: [], rerouted: [] }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expectFail(
+      await deactivateEmployee({ userId: 'usr_does_not_exist', reassignments: [], rerouted: [] }),
+      'NOT_FOUND',
+    );
   });
 });
 

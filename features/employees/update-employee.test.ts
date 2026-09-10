@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, user as userTable } from '../../db/schema';
-import { AppError } from '../../lib/errors';
+import { expectFail } from '../../tests/expect-result';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
 
 const getSession = vi.fn();
@@ -146,9 +146,9 @@ describe('updateEmployee (§13.1.2)', () => {
 
     const call = () => updateEmployee({ userId: seed.employees[0].id, name: 'Renamed Employee' });
 
-    await expect(call()).rejects.toBeInstanceOf(AppError);
-    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expectFail(await call(), 'FORBIDDEN');
 
+    // The consequence, not just the code: the row and the log are both untouched.
     expect((await target()).name).toBe(STARTING_PROFILE.name);
     expect(await auditFor(seed.employees[0].id)).toHaveLength(0);
   });
@@ -156,14 +156,16 @@ describe('updateEmployee (§13.1.2)', () => {
   it('rejects an unknown target with NOT_FOUND', async () => {
     actAs(seed.superAdmin.id);
 
-    await expect(
-      updateEmployee({ userId: 'usr_does_not_exist', name: 'Ghost' }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expectFail(await updateEmployee({ userId: 'usr_does_not_exist', name: 'Ghost' }), 'NOT_FOUND');
   });
 
   it('rejects a payload with no editable field', async () => {
     actAs(seed.superAdmin.id);
 
+    // Still a THROW, not an ActionResult, and deliberately so (PUL-111): the empty payload
+    // fails `UpdateEmployeeInput.parse`, and a ZodError is not an AppError, so `actionResult`
+    // re-throws it. An empty patch is a caller bug the UI already prevents — not one of the
+    // seven §13 outcomes — so it stays an unexpected error and stays redacted in production.
     await expect(updateEmployee({ userId: seed.employees[0].id })).rejects.toThrow();
   });
 });

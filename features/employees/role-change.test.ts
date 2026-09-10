@@ -17,7 +17,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, user as userTable } from '../../db/schema';
-import { AppError } from '../../lib/errors';
+import { expectFail } from '../../tests/expect-result';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { getSessionUser } from '../../lib/session';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
@@ -108,9 +108,7 @@ describe('changeRole (§13.1.3)', () => {
     actAs(seed.employees[1].id);
 
     const target = seed.employees[0].id;
-    await expect(changeRole({ userId: target, role: 'team_leader' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    expectFail(await changeRole({ userId: target, role: 'team_leader' }), 'FORBIDDEN');
 
     expect(await roleOf(target)).toBe('employee');
     expect(await auditFor(target)).toHaveLength(0);
@@ -120,9 +118,7 @@ describe('changeRole (§13.1.3)', () => {
     actAs(seed.employees[1].id);
     const target = seed.employees[0].id;
 
-    const call = () => changeRole({ userId: target, role: 'team_leader' });
-    await expect(call()).rejects.toBeInstanceOf(AppError);
-    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expectFail(await changeRole({ userId: target, role: 'team_leader' }), 'FORBIDDEN');
 
     expect(await roleOf(target)).toBe('employee');
     expect(await auditFor(target)).toHaveLength(0);
@@ -131,9 +127,11 @@ describe('changeRole (§13.1.3)', () => {
   it('refuses to let an SA change their own role (GATE:self_role_change)', async () => {
     actAs(seed.superAdmin.id);
 
-    await expect(
-      changeRole({ userId: seed.superAdmin.id, role: 'employee' }),
-    ).rejects.toMatchObject({ code: 'GATE', reason: 'self_role_change' });
+    expectFail(
+      await changeRole({ userId: seed.superAdmin.id, role: 'employee' }),
+      'GATE',
+      'self_role_change',
+    );
 
     expect(await roleOf(seed.superAdmin.id)).toBe('super_admin');
     expect(await auditFor(seed.superAdmin.id)).toHaveLength(0);
@@ -149,9 +147,11 @@ describe('changeRole (§13.1.3)', () => {
     expect(await roleOf(seed.projectManager.id)).toBe('employee');
 
     // 2 → 1 crosses it. The trigger raises; the action reports it as a typed GATE.
-    await expect(
-      changeRole({ userId: seed.teamLeader.id, role: 'employee' }),
-    ).rejects.toMatchObject({ code: 'GATE', reason: 'last_managers' });
+    expectFail(
+      await changeRole({ userId: seed.teamLeader.id, role: 'employee' }),
+      'GATE',
+      'last_managers',
+    );
 
     // Rejected means untouched — role and audit both.
     expect(await roleOf(seed.teamLeader.id)).toBe('team_leader');
@@ -162,8 +162,6 @@ describe('changeRole (§13.1.3)', () => {
   it('rejects an unknown target with NOT_FOUND', async () => {
     actAs(seed.superAdmin.id);
 
-    await expect(
-      changeRole({ userId: 'usr_does_not_exist', role: 'team_leader' }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expectFail(await changeRole({ userId: 'usr_does_not_exist', role: 'team_leader' }), 'NOT_FOUND');
   });
 });

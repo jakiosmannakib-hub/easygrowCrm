@@ -43,8 +43,20 @@ const rule = {
     function isExported(node) {
       let child = node;
       let parent = node.parent;
-      // Walk out through `const x = async () => {}` / `const x = async function () {}`.
-      while (parent && (parent.type === 'VariableDeclarator' || parent.type === 'VariableDeclaration')) {
+      // Walk out through `const x = async () => {}` / `const x = async function () {}`, and
+      // through a wrapping call — `export const x = actionResult(async () => {})` (PUL-111).
+      //
+      // That last case matters: without it, moving an action body inside the `actionResult`
+      // boundary wrapper would make this rule a SILENT NO-OP for that action — the arrow's
+      // parent is a CallExpression, which used to fail the export check, so the action was
+      // never inspected at all. A lint rule that quietly stops firing is worse than one that
+      // never existed, because CI still reports green.
+      while (
+        parent &&
+        (parent.type === 'VariableDeclarator' ||
+          parent.type === 'VariableDeclaration' ||
+          (parent.type === 'CallExpression' && parent.arguments.includes(child)))
+      ) {
         child = parent;
         parent = parent.parent;
       }

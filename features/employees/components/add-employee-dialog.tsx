@@ -32,16 +32,8 @@ import {
 import { userRole } from '@/db/schema/enums';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { createEmployee } from '../actions';
+import { ROLE_LABELS } from '../display';
 import { CreateEmployeeInput } from '../schema';
-
-/** All five `user_role` values, labelled for humans. Order follows §9.6's column order. */
-const ROLE_LABELS: Record<(typeof userRole.enumValues)[number], string> = {
-  super_admin: 'Super Admin',
-  team_leader: 'Team Leader',
-  project_manager: 'Project Manager',
-  admin_hr: 'Admin / HR',
-  employee: 'Employee',
-};
 
 const EMPTY = {
   email: '',
@@ -131,8 +123,7 @@ export function AddEmployeeDialog() {
           <DialogHeader>
             <DialogTitle>Add employee</DialogTitle>
             <DialogDescription>
-              They&apos;ll sign in with their company Google account. No invitation email is
-              sent.
+              They&apos;ll sign in with their company Google account. No invitation email is sent.
             </DialogDescription>
           </DialogHeader>
 
@@ -149,11 +140,7 @@ export function AddEmployeeDialog() {
             </Field>
 
             <Field id="name" label="Full name" error={errors.name}>
-              <Input
-                id="name"
-                value={form.name}
-                onChange={(e) => set('name', e.target.value)}
-              />
+              <Input id="name" value={form.name} onChange={(e) => set('name', e.target.value)} />
             </Field>
 
             <Field id="role" label="Role" error={errors.role}>
@@ -205,7 +192,13 @@ export function AddEmployeeDialog() {
           </div>
 
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" type="button">Cancel</Button>} />
+            <DialogClose
+              render={
+                <Button variant="outline" type="button">
+                  Cancel
+                </Button>
+              }
+            />
             <Button type="submit" disabled={submitting}>
               {submitting ? 'Adding…' : 'Add employee'}
             </Button>

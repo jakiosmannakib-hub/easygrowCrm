@@ -104,3 +104,18 @@ export const DeactivateEmployeeInput = z.object({
 });
 
 export type DeactivateEmployeeInput = z.input<typeof DeactivateEmployeeInput>;
+
+/**
+ * §13.1.5 input. Just the target — reactivation restores the `active` flag and nothing else.
+ *
+ * Deliberately NOT the mirror image of `DeactivateEmployeeInput`: offboarding has to decide
+ * what happens to the person's work, whereas onboarding them back has nothing to redistribute.
+ * Their old assignments were reassigned or cancelled on the way out and do not come back — if
+ * they should own that work again, it is assigned to them afterwards, as a separate, audited
+ * act. Sessions are not restored either; they sign in again with Google.
+ */
+export const ReactivateEmployeeInput = z.object({
+  userId: z.string().min(1),
+});
+
+export type ReactivateEmployeeInput = z.infer<typeof ReactivateEmployeeInput>;

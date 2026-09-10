@@ -38,7 +38,10 @@ export const GATE_REASONS: Record<string, string> = {
   pending_reviews: 'You still have tasks waiting on your review.',
   client_in_use: 'This client has projects attached and cannot be deleted.',
   last_managers: 'The team must keep at least two active managers.',
+  self_role_change: 'You cannot change your own role — ask another super admin to do it.',
   unresolved_assignments: 'This user still has tasks assigned. Reassign them first.',
+  unresolved_reviews: 'This user still has reviews routed to them. Reroute them first.',
+  self_deactivate: 'You cannot deactivate your own account — ask another admin to do it.',
   sa_has_assignments: 'A super admin cannot hold task assignments.',
   use_review: 'Use the review screen to approve or return this task.',
 };
@@ -69,7 +72,8 @@ export function errorToToast(err: ErrorLike): ToastContent {
       return { message: err.message ?? FALLBACK.VALIDATION, refresh: false };
 
     case 'GATE': {
-      const reason = err.reason ?? (typeof err.meta?.reason === 'string' ? err.meta.reason : undefined);
+      const reason =
+        err.reason ?? (typeof err.meta?.reason === 'string' ? err.meta.reason : undefined);
       const known = reason ? GATE_REASONS[reason] : undefined;
       return { message: known ?? err.message ?? FALLBACK.GATE, refresh: false };
     }

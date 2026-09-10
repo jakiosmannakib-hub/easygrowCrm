@@ -55,6 +55,10 @@ export const PERMISSIONS = {
   'employee.update':      { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
   'employee.change_role': { super_admin: A, team_leader: D, project_manager: D, admin_hr: D, employee: D },
   'employee.deactivate':  { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
+  // NOT in the §9.6 grid — §9.6 lists no reactivate row, but §13.1.5 defines the action and
+  // names its audience ("Who: SA, HR"). Encoded to match `employee.deactivate` exactly, since
+  // undoing an offboarding is the same authority as performing one. §9.6 needs the row added.
+  'employee.reactivate':  { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
 
   // ── Projects ─────────────────────────────────────────────────────────────────
   'project.create':  { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },

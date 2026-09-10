@@ -3,7 +3,7 @@
 // Reads for the employees slice. No 'use server' and no writes — queries may run anywhere
 // (server components, other queries, actions); only actions.ts writes (CLAUDE.md §2).
 
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import { user as userTable } from '../../db/schema';
 
@@ -65,4 +65,85 @@ export async function activeUsersQuery(): Promise<PickableUser[]> {
     .from(userTable)
     .where(eq(userTable.active, true))
     .orderBy(asc(userTable.name));
+}
+
+/**
+ * The columns the §14.12 grid and its detail drawer need. Narrower than `user` — no
+ * timestamps, no auth columns.
+ *
+ * `joinDate` is here for the drawer's edit form (§13.1.2) rather than the card, which never
+ * shows it. It is a `YYYY-MM-DD` string, not a `Date`: the column is a bare `date` (§11.0),
+ * read as an Asia/Dhaka calendar day, and turning it into a `Date` anywhere in this path is
+ * how it would silently shift across a day boundary.
+ */
+export interface EmployeeCard {
+  id: string;
+  name: string;
+  email: string;
+  role: (typeof userTable.$inferSelect)['role'];
+  title: string | null;
+  department: string | null;
+  active: boolean;
+  image: string | null;
+  joinDate: string | null;
+}
+
+/**
+ * Every employee — **including deactivated ones** — name-ordered, for the §14.12 grid.
+ *
+ * This is deliberately the opposite of `activeUsersQuery()` above, and the two must not be
+ * confused: a picker offering a deactivated person is a bug, while an employee *directory*
+ * that hides them is also a bug — /employees is where HR goes to confirm an offboarding
+ * actually took, and the status ▾ filter needs both sets to filter between. Deactivated rows
+ * render through `displayNameParts()` with the muted suffix (§14.15 r.9).
+ *
+ * No pagination and no server-side filtering: the org is 20–50 people (CLAUDE.md preamble),
+ * so one unfiltered fetch is smaller than the JS that would page it, and dept/status/search
+ * all run in memory client-side with no round trip.
+ */
+export async function employeesListQuery(): Promise<EmployeeCard[]> {
+  return db
+    .select({
+      id: userTable.id,
+      name: userTable.name,
+      email: userTable.email,
+      role: userTable.role,
+      title: userTable.title,
+      department: userTable.department,
+      active: userTable.active,
+      image: userTable.image,
+      joinDate: userTable.joinDate,
+    })
+    .from(userTable)
+    .orderBy(asc(userTable.name));
+}
+
+/**
+ * The three roles the §9.7-5 "≥2 active manager-level users" invariant counts, exactly as
+ * migration 0003's `user_min_managers` trigger defines them.
+ *
+ * `admin_hr` is deliberately absent. It IS a manager-level role in the org chart, but the
+ * invariant is about the roles that can run delivery, and the trigger's own list is the one
+ * that decides whether an UPDATE succeeds — so this list must mirror it and nothing else. If
+ * the trigger ever changes, this changes with it, in the same commit.
+ */
+export const MANAGER_ROLES = ['super_admin', 'team_leader', 'project_manager'] as const;
+
+/**
+ * How many active manager-level users exist right now.
+ *
+ * **Advisory only.** This exists so the offboarding modal can gray out Deactivate and say why
+ * *before* the user commits, rather than letting them press a button that is guaranteed to
+ * fail. It is NOT the enforcement and must never be treated as such: between this count and
+ * the UPDATE, another admin can deactivate someone. The `user_min_managers` trigger evaluates
+ * the invariant inside the writing statement, which is the only race-free place to do it, and
+ * `deactivateEmployee` translates its exception into `GATE:last_managers`.
+ */
+export async function activeManagerCount(): Promise<number> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(userTable)
+    .where(and(eq(userTable.active, true), inArray(userTable.role, [...MANAGER_ROLES])));
+
+  return rows[0]?.count ?? 0;
 }

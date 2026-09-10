@@ -29,7 +29,9 @@ async function rawDeactivate(id: string) {
 
 /** Change a user's role with raw SQL. */
 async function rawSetRole(id: string, role: string) {
-  await db.execute(sql`update "user" set role = ${sql.raw(`'${role}'`)}::user_role where id = ${id}`);
+  await db.execute(
+    sql`update "user" set role = ${sql.raw(`'${role}'`)}::user_role where id = ${id}`,
+  );
 }
 
 /**

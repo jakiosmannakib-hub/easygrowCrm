@@ -6,17 +6,19 @@
 'use server';
 
 import { eq } from 'drizzle-orm';
+import { db } from '../../db';
 import { session as sessionTable, user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { AppError } from '../../lib/errors';
 import { withTx } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { getDeactivationBlockers } from './queries';
+import { activeManagerCount, getDeactivationBlockers, MANAGER_ROLES } from './queries';
 import {
   ChangeRoleInput,
   CreateEmployeeInput,
   DeactivateEmployeeInput,
+  ReactivateEmployeeInput,
   UpdateEmployeeInput,
 } from './schema';
 
@@ -277,11 +279,9 @@ export async function changeRole(input: ChangeRoleInput) {
     } catch (error) {
       // The §9.7-5 floor, enforced by the trigger inside this very statement.
       if (isMinManagersViolation(error)) {
-        throw new AppError(
-          'GATE',
-          'This change would leave fewer than two active managers',
-          { reason: 'last_managers' },
-        );
+        throw new AppError('GATE', 'This change would leave fewer than two active managers', {
+          reason: 'last_managers',
+        });
       }
       throw error;
     }
@@ -387,11 +387,9 @@ export async function deactivateEmployee(input: DeactivateEmployeeInput) {
     } catch (error) {
       // The §9.7-5 floor, enforced by the trigger inside this very statement.
       if (isMinManagersViolation(error)) {
-        throw new AppError(
-          'GATE',
-          'This would leave fewer than two active managers',
-          { reason: 'last_managers' },
-        );
+        throw new AppError('GATE', 'This would leave fewer than two active managers', {
+          reason: 'last_managers',
+        });
       }
       throw error;
     }
@@ -415,4 +413,115 @@ export async function deactivateEmployee(input: DeactivateEmployeeInput) {
   });
 
   // 5. NOTIFY — none in Phase 2 (see the note above).
+}
+
+/**
+ * §13.1.5 `reactivateEmployee` — SA + HR (`employee.reactivate`).
+ *
+ * The inverse of §13.1.4 and deliberately far smaller than it. Offboarding has to decide the
+ * fate of live work before the account closes; bringing someone back has nothing to
+ * redistribute — their old assignments were reassigned or cancelled on the way out and do not
+ * return. Re-granting them work is a separate, separately-audited act.
+ *
+ * No manager-floor concern in either direction: this can only *raise* the active manager
+ * count, and `user_min_managers` only fires on a decrease. No sessions are restored — the row
+ * flips and the person signs in with Google again, which is also what re-creates their
+ * session legitimately rather than resurrecting cookies deleted during offboarding.
+ *
+ * No self-guard either, unlike deactivate: reactivating yourself is impossible by
+ * construction, since a deactivated user cannot hold a session to call this with
+ * (`getSessionUser()` throws DEACTIVATED first, §9.5 r.4).
+ *
+ * Notify: none (§13.1.5) — the person is told out of band, exactly as at provisioning.
+ */
+export async function reactivateEmployee(input: ReactivateEmployeeInput) {
+  // 1. VALIDATE
+  const parsed = ReactivateEmployeeInput.parse(input);
+
+  // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+  const actor = await authorize('employee.reactivate');
+
+  // 3. TRANSACT
+  return await withTx(async (tx) => {
+    const [current] = await tx
+      .select({ id: userTable.id, active: userTable.active })
+      .from(userTable)
+      .where(eq(userTable.id, parsed.userId))
+      .limit(1);
+
+    if (!current) {
+      throw new AppError('NOT_FOUND', 'Employee not found');
+    }
+
+    // Already active: no UPDATE and no audit row — the PUL-203 convention. An audit log is a
+    // record of things that *happened*, so a row claiming a change that didn't occur is worse
+    // than no row: it would put a false "reactivated" event on someone's history, and two
+    // admins double-clicking would manufacture two of them.
+    if (current.active) {
+      return current;
+    }
+
+    const [row] = await tx
+      .update(userTable)
+      .set({ active: true })
+      .where(eq(userTable.id, parsed.userId))
+      .returning();
+
+    // 4. AUDIT — same tx (§9.8 `employee.reactivated`).
+    await writeAudit(tx, {
+      actorId: actor.id,
+      action: 'employee.reactivated',
+      resourceType: 'employee',
+      resourceId: parsed.userId,
+      before: { active: false },
+      after: { active: true },
+    });
+
+    return row;
+  });
+
+  // 5. NOTIFY — none for this action (§13.1.5).
+}
+
+/**
+ * What the offboarding checklist modal needs to render, in one authorized round trip.
+ *
+ * This is a **read**, and it sits in actions.ts for one reason: a client component cannot call
+ * `queries.ts` (server-only, no `'use server'`), and this data is fetched on demand when the
+ * modal opens rather than for all ~50 people on every page load. Living here means the
+ * `authorize-first` ESLint rule applies to it, which is exactly right — who is blocking whose
+ * offboarding is not public information, and the same permission that gates the deactivation
+ * gates knowing about it. It writes nothing and takes no transaction.
+ *
+ * `managerCount` / `targetIsManager` are advisory, for graying out the button with an
+ * explanation. The §9.7-5 floor is enforced by the trigger inside the UPDATE and surfaces as
+ * `GATE:last_managers`; see `activeManagerCount`.
+ */
+export async function loadOffboardingContext(input: ReactivateEmployeeInput) {
+  // 1. VALIDATE — same `{ userId }` shape.
+  const parsed = ReactivateEmployeeInput.parse(input);
+
+  // 2. AUTHORIZE — first awaited line, same permission as the act it informs.
+  await authorize('employee.deactivate');
+
+  const [blockers, managerCount, target] = await Promise.all([
+    getDeactivationBlockers(parsed.userId),
+    activeManagerCount(),
+    db
+      .select({ role: userTable.role })
+      .from(userTable)
+      .where(eq(userTable.id, parsed.userId))
+      .limit(1),
+  ]);
+
+  const role = target[0]?.role;
+  if (!role) {
+    throw new AppError('NOT_FOUND', 'Employee not found');
+  }
+
+  return {
+    blockers,
+    managerCount,
+    targetIsManager: (MANAGER_ROLES as readonly string[]).includes(role),
+  };
 }

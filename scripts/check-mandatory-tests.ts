@@ -16,6 +16,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/employees/update-employee.test.ts', // PUL-203.3
   'features/employees/role-change.test.ts', // PUL-204.3
   'features/employees/deactivate.test.ts', // PUL-205.5
+  'features/employees/reactivate.test.ts', // PUL-206 Stage 3 (§13.1.5)
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

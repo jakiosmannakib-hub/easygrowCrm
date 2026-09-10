@@ -30,6 +30,8 @@ const EXPECTED: Record<string, [Expected, Expected, Expected, Expected, Expected
   'employee.update': ['allow', 'deny', 'deny', 'allow', 'deny'],
   'employee.change_role': ['allow', 'deny', 'deny', 'deny', 'deny'],
   'employee.deactivate': ['allow', 'deny', 'deny', 'allow', 'deny'],
+  // §9.6 has no reactivate row; §13.1.5 says SA + HR. Same audience as deactivate.
+  'employee.reactivate': ['allow', 'deny', 'deny', 'allow', 'deny'],
 
   // Projects
   'project.create': ['allow', 'allow', 'allow', 'deny', 'deny'],
@@ -148,7 +150,7 @@ describe('can() encodes the §9.6 permission table', () => {
 
     // The done-check, made mechanical: if §9.6 grows and this fixture wasn't updated to
     // match, the count differs and CI fails rather than silently under-testing.
-    expect(cells, 'cell count must equal §9.6').toBe(255);
-    expect(Object.keys(EXPECTED)).toHaveLength(51);
+    expect(cells, 'cell count must equal §9.6').toBe(260);
+    expect(Object.keys(EXPECTED)).toHaveLength(52);
   });
 });

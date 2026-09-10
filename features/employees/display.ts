@@ -3,6 +3,8 @@
 // Presentation helpers for employee names. Pure functions, no DB — safe in both client and
 // server components.
 
+import { userRole } from '../../db/schema/enums';
+
 /** The suffix, defined once so the wording can't drift between call sites. */
 export const DEACTIVATED_SUFFIX = ' (deactivated)';
 
@@ -34,4 +36,38 @@ export function displayNameParts(user: { name: string; active: boolean }): {
   suffix: string | null;
 } {
   return { name: user.name, suffix: user.active ? null : DEACTIVATED_SUFFIX };
+}
+
+/**
+ * The five `user_role` values, labelled for humans. Order follows §9.6's column order.
+ *
+ * Lives here rather than in a component because two surfaces now render it — the PUL-202 add
+ * modal's role ▾ and the PUL-206 card grid's role badge — and a label that says "Admin / HR"
+ * in one place and "HR" in the other is the kind of drift that makes a directory look
+ * untrustworthy. Typed off `userRole.enumValues`, so adding a role to the enum without a
+ * label here is a compile error rather than a blank badge.
+ */
+export const ROLE_LABELS: Record<(typeof userRole.enumValues)[number], string> = {
+  super_admin: 'Super Admin',
+  team_leader: 'Team Leader',
+  project_manager: 'Project Manager',
+  admin_hr: 'Admin / HR',
+  employee: 'Employee',
+};
+
+/**
+ * Up to two initials for an avatar fallback, for the (common) case of a user with no Google
+ * profile image yet — an account provisioned by HR has no `image` until its owner first signs
+ * in, so the fallback is the *normal* state on this page, not an edge case.
+ *
+ * Takes the first and last whitespace-separated parts, so "Jaki Osman Nakib" → "JN". Falls
+ * back to "?" rather than "" for a name that is somehow whitespace, so the circle is never
+ * mysteriously blank.
+ */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = parts[0]![0]!;
+  const last = parts.length > 1 ? parts[parts.length - 1]![0]! : '';
+  return (first + last).toUpperCase();
 }

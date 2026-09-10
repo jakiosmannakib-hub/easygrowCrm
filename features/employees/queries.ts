@@ -66,3 +66,44 @@ export async function activeUsersQuery(): Promise<PickableUser[]> {
     .where(eq(userTable.active, true))
     .orderBy(asc(userTable.name));
 }
+
+/** The columns the §14.12 card grid renders. Narrower than `user` — no joinDate, no timestamps. */
+export interface EmployeeCard {
+  id: string;
+  name: string;
+  email: string;
+  role: (typeof userTable.$inferSelect)['role'];
+  title: string | null;
+  department: string | null;
+  active: boolean;
+  image: string | null;
+}
+
+/**
+ * Every employee — **including deactivated ones** — name-ordered, for the §14.12 grid.
+ *
+ * This is deliberately the opposite of `activeUsersQuery()` above, and the two must not be
+ * confused: a picker offering a deactivated person is a bug, while an employee *directory*
+ * that hides them is also a bug — /employees is where HR goes to confirm an offboarding
+ * actually took, and the status ▾ filter needs both sets to filter between. Deactivated rows
+ * render through `displayNameParts()` with the muted suffix (§14.15 r.9).
+ *
+ * No pagination and no server-side filtering: the org is 20–50 people (CLAUDE.md preamble),
+ * so one unfiltered fetch is smaller than the JS that would page it, and dept/status/search
+ * all run in memory client-side with no round trip.
+ */
+export async function employeesListQuery(): Promise<EmployeeCard[]> {
+  return db
+    .select({
+      id: userTable.id,
+      name: userTable.name,
+      email: userTable.email,
+      role: userTable.role,
+      title: userTable.title,
+      department: userTable.department,
+      active: userTable.active,
+      image: userTable.image,
+    })
+    .from(userTable)
+    .orderBy(asc(userTable.name));
+}

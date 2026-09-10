@@ -32,16 +32,8 @@ import {
 import { userRole } from '@/db/schema/enums';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { createEmployee } from '../actions';
+import { ROLE_LABELS } from '../display';
 import { CreateEmployeeInput } from '../schema';
-
-/** All five `user_role` values, labelled for humans. Order follows §9.6's column order. */
-const ROLE_LABELS: Record<(typeof userRole.enumValues)[number], string> = {
-  super_admin: 'Super Admin',
-  team_leader: 'Team Leader',
-  project_manager: 'Project Manager',
-  admin_hr: 'Admin / HR',
-  employee: 'Employee',
-};
 
 const EMPTY = {
   email: '',

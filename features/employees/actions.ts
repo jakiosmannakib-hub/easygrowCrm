@@ -277,11 +277,9 @@ export async function changeRole(input: ChangeRoleInput) {
     } catch (error) {
       // The §9.7-5 floor, enforced by the trigger inside this very statement.
       if (isMinManagersViolation(error)) {
-        throw new AppError(
-          'GATE',
-          'This change would leave fewer than two active managers',
-          { reason: 'last_managers' },
-        );
+        throw new AppError('GATE', 'This change would leave fewer than two active managers', {
+          reason: 'last_managers',
+        });
       }
       throw error;
     }
@@ -387,11 +385,9 @@ export async function deactivateEmployee(input: DeactivateEmployeeInput) {
     } catch (error) {
       // The §9.7-5 floor, enforced by the trigger inside this very statement.
       if (isMinManagersViolation(error)) {
-        throw new AppError(
-          'GATE',
-          'This would leave fewer than two active managers',
-          { reason: 'last_managers' },
-        );
+        throw new AppError('GATE', 'This would leave fewer than two active managers', {
+          reason: 'last_managers',
+        });
       }
       throw error;
     }

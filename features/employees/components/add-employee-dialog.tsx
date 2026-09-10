@@ -123,8 +123,7 @@ export function AddEmployeeDialog() {
           <DialogHeader>
             <DialogTitle>Add employee</DialogTitle>
             <DialogDescription>
-              They&apos;ll sign in with their company Google account. No invitation email is
-              sent.
+              They&apos;ll sign in with their company Google account. No invitation email is sent.
             </DialogDescription>
           </DialogHeader>
 
@@ -141,11 +140,7 @@ export function AddEmployeeDialog() {
             </Field>
 
             <Field id="name" label="Full name" error={errors.name}>
-              <Input
-                id="name"
-                value={form.name}
-                onChange={(e) => set('name', e.target.value)}
-              />
+              <Input id="name" value={form.name} onChange={(e) => set('name', e.target.value)} />
             </Field>
 
             <Field id="role" label="Role" error={errors.role}>
@@ -197,7 +192,13 @@ export function AddEmployeeDialog() {
           </div>
 
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" type="button">Cancel</Button>} />
+            <DialogClose
+              render={
+                <Button variant="outline" type="button">
+                  Cancel
+                </Button>
+              }
+            />
             <Button type="submit" disabled={submitting}>
               {submitting ? 'Adding…' : 'Add employee'}
             </Button>

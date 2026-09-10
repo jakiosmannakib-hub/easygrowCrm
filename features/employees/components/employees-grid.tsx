@@ -1,9 +1,7 @@
 // features/employees/components/employees-grid.tsx — PUL-206.1 / 206.2, §14.12
 //
-// The employee directory: card grid + dept / status / name filters.
-//
-// Read-only in Stage 1. The card is not yet clickable — PUL-206 Stage 2 turns it into the
-// trigger for the detail drawer (edit §13.1.2, change role §13.1.3, deactivate §13.1.4).
+// The employee directory: card grid + dept / status / name filters, and the card click that
+// opens the detail drawer (edit §13.1.2, change role §13.1.3; deactivate §13.1.4 in Stage 3).
 //
 // The whole list arrives from the server component as a prop and every filter runs in memory:
 // a 20–50-person org (CLAUDE.md preamble) is far below the size where paging or a server-side
@@ -23,8 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import type { userRole } from '@/db/schema/enums';
 import { ROLE_LABELS, displayNameParts, initials } from '../display';
 import type { EmployeeCard } from '../queries';
+import { EmployeeDetailSheet } from './employee-detail-sheet';
+
+type Role = (typeof userRole.enumValues)[number];
 
 /**
  * §14.12's status ▾. Defaults to Active — the everyday question this page answers is "who
@@ -42,10 +44,19 @@ type Status = (typeof STATUS_OPTIONS)[number]['value'];
 /** The sentinel for "no department filter". Not a real department, so it can't collide. */
 const ALL_DEPTS = '__all__';
 
-export function EmployeesGrid({ employees }: { employees: EmployeeCard[] }) {
+export function EmployeesGrid({
+  employees,
+  viewerRole,
+  viewerId,
+}: {
+  employees: EmployeeCard[];
+  viewerRole: Role;
+  viewerId: string;
+}) {
   const [status, setStatus] = useState<Status>('active');
   const [department, setDepartment] = useState<string>(ALL_DEPTS);
   const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /**
    * The dept ▾ options come from the data, not a hardcoded list — departments are free text
@@ -75,6 +86,19 @@ export function EmployeesGrid({ employees }: { employees: EmployeeCard[] }) {
       return true;
     });
   }, [employees, status, department, search]);
+
+  /**
+   * The drawer is keyed by id, not by holding the row object: after a save, `router.refresh()`
+   * re-runs the server component and hands down a *new* `employees` array, and looking the
+   * person up again here means the open drawer re-seeds from the saved values instead of
+   * showing the stale copy it was opened with. A selected row that has vanished (deleted, or
+   * filtered out by a refresh) resolves to null, which closes the drawer rather than leaving
+   * it pointing at nothing.
+   */
+  const selected = useMemo(
+    () => employees.find((e) => e.id === selectedId) ?? null,
+    [employees, selectedId],
+  );
 
   return (
     <div className="space-y-4">
@@ -133,53 +157,82 @@ export function EmployeesGrid({ employees }: { employees: EmployeeCard[] }) {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((employee) => (
-            <EmployeeGridCard key={employee.id} employee={employee} />
+            <EmployeeGridCard
+              key={employee.id}
+              employee={employee}
+              onSelect={() => setSelectedId(employee.id)}
+            />
           ))}
         </div>
       )}
+
+      <EmployeeDetailSheet
+        employee={selected}
+        viewerRole={viewerRole}
+        viewerId={viewerId}
+        onOpenChange={(open) => {
+          if (!open) setSelectedId(null);
+        }}
+      />
     </div>
   );
 }
 
-function EmployeeGridCard({ employee }: { employee: EmployeeCard }) {
+function EmployeeGridCard({
+  employee,
+  onSelect,
+}: {
+  employee: EmployeeCard;
+  onSelect: () => void;
+}) {
   // §14.15 r.9 — a deactivated person keeps their name and gains a muted suffix.
   const { name, suffix } = displayNameParts(employee);
 
   return (
-    <Card className="flex flex-row items-start gap-3 p-4">
-      <Avatar size="lg">
-        {/* No `image` until the person first signs in with Google, so the initials fallback
+    // A real <button> around the Card, not a click handler on a div: the drawer has to be
+    // reachable by keyboard, and a div with onClick is neither focusable nor announced as
+    // actionable. (Card is a plain div with no `render` prop, so it is wrapped, not rendered
+    // as the button itself.)
+    <button
+      type="button"
+      onClick={onSelect}
+      className="focus-visible:ring-ring rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
+    >
+      <Card className="hover:bg-muted/40 flex h-full flex-row items-start gap-3 p-4 transition-colors">
+        <Avatar size="lg">
+          {/* No `image` until the person first signs in with Google, so the initials fallback
             is the normal state for a freshly provisioned account, not an error case. */}
-        {employee.image ? <AvatarImage src={employee.image} alt="" /> : null}
-        <AvatarFallback>{initials(employee.name)}</AvatarFallback>
-      </Avatar>
+          {employee.image ? <AvatarImage src={employee.image} alt="" /> : null}
+          <AvatarFallback>{initials(employee.name)}</AvatarFallback>
+        </Avatar>
 
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">
-              {name}
-              {suffix ? <span className="text-muted-foreground">{suffix}</span> : null}
-            </p>
-            <p className="text-muted-foreground truncate text-xs">
-              {employee.title?.trim() || '—'}
-            </p>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">
+                {name}
+                {suffix ? <span className="text-muted-foreground">{suffix}</span> : null}
+              </p>
+              <p className="text-muted-foreground truncate text-xs">
+                {employee.title?.trim() || '—'}
+              </p>
+            </div>
+
+            <Badge variant={employee.active ? 'secondary' : 'outline'}>
+              {employee.active ? 'Active' : 'Deactivated'}
+            </Badge>
           </div>
 
-          <Badge variant={employee.active ? 'secondary' : 'outline'}>
-            {employee.active ? 'Active' : 'Deactivated'}
-          </Badge>
-        </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline">{ROLE_LABELS[employee.role]}</Badge>
+            {employee.department?.trim() ? (
+              <Badge variant="ghost">{employee.department.trim()}</Badge>
+            ) : null}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline">{ROLE_LABELS[employee.role]}</Badge>
-          {employee.department?.trim() ? (
-            <Badge variant="ghost">{employee.department.trim()}</Badge>
-          ) : null}
+          <p className="text-muted-foreground truncate text-xs">{employee.email}</p>
         </div>
-
-        <p className="text-muted-foreground truncate text-xs">{employee.email}</p>
-      </div>
-    </Card>
+      </Card>
+    </button>
   );
 }

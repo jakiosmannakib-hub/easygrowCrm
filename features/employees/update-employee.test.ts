@@ -130,7 +130,10 @@ describe('updateEmployee (§13.1.2)', () => {
   it('allows admin_hr', async () => {
     // §9.6 grants employee.update to HR, and the fixture has no HR user — promote a seeded
     // row so the decision comes from the database, as §16.5 requires.
-    await db.update(userTable).set({ role: 'admin_hr' }).where(eq(userTable.id, seed.employees[1].id));
+    await db
+      .update(userTable)
+      .set({ role: 'admin_hr' })
+      .where(eq(userTable.id, seed.employees[1].id));
     actAs(seed.employees[1].id);
 
     await updateEmployee({ userId: seed.employees[0].id, title: 'Team Lead of SEO' });

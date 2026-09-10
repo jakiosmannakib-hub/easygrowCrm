@@ -70,13 +70,12 @@ describe('createEmployee (§13.1.1)', () => {
     });
 
     // Provisioning is the invitation (§9.2): a user row, and no OAuth account yet.
-    const accounts = await db.query.account.findMany({ where: (a, { eq: e }) => e(a.userId, row.id) });
+    const accounts = await db.query.account.findMany({
+      where: (a, { eq: e }) => e(a.userId, row.id),
+    });
     expect(accounts).toHaveLength(0);
 
-    const audit = await db
-      .select()
-      .from(auditLog)
-      .where(eq(auditLog.resourceId, created.id));
+    const audit = await db.select().from(auditLog).where(eq(auditLog.resourceId, created.id));
 
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({

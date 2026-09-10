@@ -9,7 +9,11 @@ import { requireRouteAccess } from '@/lib/route-guard';
 export default async function EmployeesPage() {
   // THE security boundary (§9.5): unauthenticated → /sign-in, wrong role → 404. The sidebar
   // hiding this item is cosmetic and is not access control.
-  await requireRouteAccess('/employees');
+  // Returns the DB-read viewer (§9.5 r.4), which the drawer needs for two DIFFERENT reasons:
+  // `role` decides whether the Change-role control is rendered at all (§14.1 curated
+  // visibility — the action still authorizes SA-only, so this is presentation), and `id`
+  // lets the drawer explain up front that nobody can change their own role.
+  const viewer = await requireRouteAccess('/employees');
 
   const { title, subtitle } = PAGE_META['/employees'];
 
@@ -29,9 +33,8 @@ export default async function EmployeesPage() {
         <AddEmployeeDialog />
       </div>
 
-      {/* PUL-206 Stage 2 makes these cards open the detail drawer (edit / change role /
-          deactivate). Stage 1 is read-only. */}
-      <EmployeesGrid employees={employees} />
+      {/* Stage 3 adds Deactivate to the drawer these cards open (§13.1.4). */}
+      <EmployeesGrid employees={employees} viewerRole={viewer.role} viewerId={viewer.id} />
     </div>
   );
 }

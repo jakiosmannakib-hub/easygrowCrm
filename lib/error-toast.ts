@@ -38,6 +38,7 @@ export const GATE_REASONS: Record<string, string> = {
   pending_reviews: 'You still have tasks waiting on your review.',
   client_in_use: 'This client has projects attached and cannot be deleted.',
   last_managers: 'The team must keep at least two active managers.',
+  self_role_change: 'You cannot change your own role — ask another super admin to do it.',
   unresolved_assignments: 'This user still has tasks assigned. Reassign them first.',
   sa_has_assignments: 'A super admin cannot hold task assignments.',
   use_review: 'Use the review screen to approve or return this task.',

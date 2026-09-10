@@ -67,7 +67,15 @@ export async function activeUsersQuery(): Promise<PickableUser[]> {
     .orderBy(asc(userTable.name));
 }
 
-/** The columns the §14.12 card grid renders. Narrower than `user` — no joinDate, no timestamps. */
+/**
+ * The columns the §14.12 grid and its detail drawer need. Narrower than `user` — no
+ * timestamps, no auth columns.
+ *
+ * `joinDate` is here for the drawer's edit form (§13.1.2) rather than the card, which never
+ * shows it. It is a `YYYY-MM-DD` string, not a `Date`: the column is a bare `date` (§11.0),
+ * read as an Asia/Dhaka calendar day, and turning it into a `Date` anywhere in this path is
+ * how it would silently shift across a day boundary.
+ */
 export interface EmployeeCard {
   id: string;
   name: string;
@@ -77,6 +85,7 @@ export interface EmployeeCard {
   department: string | null;
   active: boolean;
   image: string | null;
+  joinDate: string | null;
 }
 
 /**
@@ -103,6 +112,7 @@ export async function employeesListQuery(): Promise<EmployeeCard[]> {
       department: userTable.department,
       active: userTable.active,
       image: userTable.image,
+      joinDate: userTable.joinDate,
     })
     .from(userTable)
     .orderBy(asc(userTable.name));

@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/select';
 import type { userRole } from '@/db/schema/enums';
 import { ROLE_LABELS, displayNameParts, initials } from '../display';
-import type { EmployeeCard } from '../queries';
+import type { EmployeeCard, PickableUser } from '../queries';
 import { EmployeeDetailSheet } from './employee-detail-sheet';
 
 type Role = (typeof userRole.enumValues)[number];
@@ -48,10 +48,12 @@ export function EmployeesGrid({
   employees,
   viewerRole,
   viewerId,
+  pickableUsers,
 }: {
   employees: EmployeeCard[];
   viewerRole: Role;
   viewerId: string;
+  pickableUsers: PickableUser[];
 }) {
   const [status, setStatus] = useState<Status>('active');
   const [department, setDepartment] = useState<string>(ALL_DEPTS);
@@ -170,6 +172,7 @@ export function EmployeesGrid({
         employee={selected}
         viewerRole={viewerRole}
         viewerId={viewerId}
+        pickableUsers={pickableUsers}
         onOpenChange={(open) => {
           if (!open) setSelectedId(null);
         }}

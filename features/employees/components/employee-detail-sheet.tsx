@@ -1,10 +1,10 @@
-// features/employees/components/employee-detail-sheet.tsx — PUL-206.3 (Stage 2), §14.12
+// features/employees/components/employee-detail-sheet.tsx — PUL-206.3, §14.12
 //
-// The employee detail drawer: edit fields (§13.1.2) + change role (§13.1.3, SA only).
+// The employee detail drawer: edit fields (§13.1.2), change role (§13.1.3, SA only), and
+// deactivate / reactivate (§13.1.4 / §13.1.5).
 // A Sheet rather than a route, per §14.12 — the grid stays behind it, so an HR user working
 // down the roster never loses their filters to a navigation.
 //
-// Stage 3 adds Deactivate / the offboarding checklist (§13.1.4) where marked below.
 
 'use client';
 
@@ -32,10 +32,11 @@ import {
 } from '@/components/ui/sheet';
 import type { userRole } from '@/db/schema/enums';
 import { showErrorToast } from '@/lib/show-error-toast';
-import { changeRole, updateEmployee } from '../actions';
+import { changeRole, reactivateEmployee, updateEmployee } from '../actions';
 import { ROLE_LABELS, displayNameParts, initials } from '../display';
-import type { EmployeeCard } from '../queries';
+import type { EmployeeCard, PickableUser } from '../queries';
 import { UpdateEmployeeInput } from '../schema';
+import { OffboardingDialog } from './offboarding-dialog';
 
 type Role = (typeof userRole.enumValues)[number];
 
@@ -96,12 +97,15 @@ export function EmployeeDetailSheet({
   employee,
   viewerRole,
   viewerId,
+  pickableUsers,
   onOpenChange,
 }: {
   /** `null` closes the drawer. The grid owns which row is selected. */
   employee: EmployeeCard | null;
   viewerRole: Role;
   viewerId: string;
+  /** From `activeUsersQuery` — the reassign / reroute pickers in the offboarding modal. */
+  pickableUsers: PickableUser[];
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -124,6 +128,7 @@ export function EmployeeDetailSheet({
             employee={employee}
             viewerRole={viewerRole}
             viewerId={viewerId}
+            pickableUsers={pickableUsers}
           />
         </SheetContent>
       ) : null}
@@ -135,10 +140,12 @@ function EmployeeDetailBody({
   employee,
   viewerRole,
   viewerId,
+  pickableUsers,
 }: {
   employee: EmployeeCard;
   viewerRole: Role;
   viewerId: string;
+  pickableUsers: PickableUser[];
 }) {
   const router = useRouter();
 
@@ -150,6 +157,9 @@ function EmployeeDetailBody({
   const [nextRole, setNextRole] = useState<Role>(employee.role);
   const [confirmingRole, setConfirmingRole] = useState(false);
   const [changingRole, setChangingRole] = useState(false);
+  const [offboarding, setOffboarding] = useState(false);
+  const [reactivateConfirm, setReactivateConfirm] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
 
   const patch = useMemo(() => buildPatch(form, employee), [form, employee]);
 
@@ -211,6 +221,20 @@ function EmployeeDetailBody({
       showErrorToast(error as { code: string; message?: string });
     } finally {
       setChangingRole(false);
+    }
+  }
+
+  async function onReactivate() {
+    setReactivating(true);
+    try {
+      await reactivateEmployee({ userId: employee.id });
+      toast.success(`${employee.name} can sign in again.`);
+      setReactivateConfirm(false);
+      router.refresh();
+    } catch (error) {
+      showErrorToast(error as { code: string; message?: string });
+    } finally {
+      setReactivating(false);
     }
   }
 
@@ -357,18 +381,67 @@ function EmployeeDetailBody({
           </div>
         ) : null}
 
-        {/* ── PUL-206 Stage 3 ─────────────────────────────────────────────────────
-            Deactivate / Reactivate goes here: the §13.1.4 offboarding checklist modal
-            (open assignments → reassign ▾ / cancel, routed reviews → reroute ▾), with
-            Deactivate disabled until every row is resolved and blocked outright when it
-            would leave fewer than two active managers. `getDeactivationBlockers` and
-            `deactivateEmployee` already exist from PUL-205.
-            ──────────────────────────────────────────────────────────────────────── */}
-        <div className="border-t pt-4">
-          <h3 className="text-xs font-medium">Account status</h3>
-          <p className="text-muted-foreground text-xs">
-            Deactivation arrives in the next stage of this ticket.
-          </p>
+        <div className="space-y-3 border-t pt-4">
+          <div>
+            <h3 className="text-xs font-medium">Account status</h3>
+            <p className="text-muted-foreground text-xs">
+              {employee.active
+                ? 'Offboarding ends their sessions immediately. The account and its history are kept.'
+                : 'They cannot sign in. Their record and history are intact.'}
+            </p>
+          </div>
+
+          {employee.active ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                // Self-deactivation is refused by the action (GATE:self_deactivate). Saying so
+                // here rather than letting the click fail — the toast would arrive with no
+                // explanation of why this one person can't be offboarded from this screen.
+                disabled={employee.id === viewerId}
+                onClick={() => setOffboarding(true)}
+              >
+                Deactivate…
+              </Button>
+              {employee.id === viewerId ? (
+                <p className="text-muted-foreground text-xs">
+                  You can&apos;t deactivate your own account.
+                </p>
+              ) : null}
+
+              <OffboardingDialog
+                employee={employee}
+                pickableUsers={pickableUsers}
+                open={offboarding}
+                onOpenChange={setOffboarding}
+              />
+            </>
+          ) : reactivateConfirm ? (
+            <div className="bg-muted/50 space-y-2 rounded-md border p-3">
+              <p className="text-xs">
+                Restore access for <strong>{employee.name}</strong>? They&apos;ll sign in with
+                Google again. Work they used to own does not come back.
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={onReactivate} disabled={reactivating}>
+                  {reactivating ? 'Reactivating…' : 'Confirm'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setReactivateConfirm(false)}
+                  disabled={reactivating}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => setReactivateConfirm(true)}>
+              Reactivate
+            </Button>
+          )}
         </div>
       </div>
     </>

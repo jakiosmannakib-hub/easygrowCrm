@@ -3,7 +3,7 @@
 // Reads for the employees slice. No 'use server' and no writes — queries may run anywhere
 // (server components, other queries, actions); only actions.ts writes (CLAUDE.md §2).
 
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import { user as userTable } from '../../db/schema';
 
@@ -116,4 +116,34 @@ export async function employeesListQuery(): Promise<EmployeeCard[]> {
     })
     .from(userTable)
     .orderBy(asc(userTable.name));
+}
+
+/**
+ * The three roles the §9.7-5 "≥2 active manager-level users" invariant counts, exactly as
+ * migration 0003's `user_min_managers` trigger defines them.
+ *
+ * `admin_hr` is deliberately absent. It IS a manager-level role in the org chart, but the
+ * invariant is about the roles that can run delivery, and the trigger's own list is the one
+ * that decides whether an UPDATE succeeds — so this list must mirror it and nothing else. If
+ * the trigger ever changes, this changes with it, in the same commit.
+ */
+export const MANAGER_ROLES = ['super_admin', 'team_leader', 'project_manager'] as const;
+
+/**
+ * How many active manager-level users exist right now.
+ *
+ * **Advisory only.** This exists so the offboarding modal can gray out Deactivate and say why
+ * *before* the user commits, rather than letting them press a button that is guaranteed to
+ * fail. It is NOT the enforcement and must never be treated as such: between this count and
+ * the UPDATE, another admin can deactivate someone. The `user_min_managers` trigger evaluates
+ * the invariant inside the writing statement, which is the only race-free place to do it, and
+ * `deactivateEmployee` translates its exception into `GATE:last_managers`.
+ */
+export async function activeManagerCount(): Promise<number> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(userTable)
+    .where(and(eq(userTable.active, true), inArray(userTable.role, [...MANAGER_ROLES])));
+
+  return rows[0]?.count ?? 0;
 }

@@ -12,7 +12,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,7 +38,13 @@ import type { EmployeeCard, PickableUser } from '../queries';
 /** §13.1.4's marker for "close this task instead of moving it". Not a user id. */
 const CANCEL = 'cancel';
 
-/** The success payload only — the failure half is handled at the call in `load()`. */
+/**
+ * The success payload only — the failure half is handled where the action is called.
+ *
+ * Derived from the action's own return type rather than restated, so the `ActionResult`
+ * boundary (PUL-111) cannot drift apart from what this component reads: change the action's
+ * shape and this stops compiling.
+ */
 type OffboardingContext = Extract<
   Awaited<ReturnType<typeof loadOffboardingContext>>,
   { ok: true }
@@ -56,6 +62,58 @@ export function OffboardingDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <Dialog
+      open={open}
+      // Reports Base UI's own closes only — Escape, an outside press, the Cancel button.
+      //
+      // It is NOT where the checklist gets loaded, which is the bug this file shipped with.
+      // Base UI calls `onOpenChange` only from its internal `setOpen`; this dialog has no
+      // `Dialog.Trigger`, so it is opened by the parent drawer flipping state, and a
+      // controlled `open` prop is synced straight into the store (`useControlledProp`),
+      // bypassing `setOpen`. The load therefore never ran on the way *in*: `context` stayed
+      // null and the Deactivate button stayed disabled forever. The body below owns the
+      // fetch instead, and mounts only while open.
+      onOpenChange={onOpenChange}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Deactivate {employee.name}?</DialogTitle>
+          <DialogDescription>
+            Their sessions end immediately and they can no longer sign in. The account and its
+            history are kept — this is offboarding, not deletion.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/*
+          Mounted per opening, and keyed by the person: MOUNTING IS THE RESET. Every piece of
+          checklist state is seeded at mount, so re-opening — or opening on someone else —
+          starts clean with no state to clear, and the effect below never has to setState
+          synchronously to undo a previous visit (which `react-hooks/set-state-in-effect`
+          rejects, correctly: that is a cascading render).
+        */}
+        {open ? (
+          <OffboardingBody
+            key={employee.id}
+            employee={employee}
+            pickableUsers={pickableUsers}
+            onOpenChange={onOpenChange}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OffboardingBody({
+  employee,
+  pickableUsers,
+  onOpenChange,
+}: {
+  employee: EmployeeCard;
+  pickableUsers: PickableUser[];
+  onOpenChange: (open: boolean) => void;
+}) {
   const router = useRouter();
 
   const [context, setContext] = useState<OffboardingContext | null>(null);
@@ -65,22 +123,36 @@ export function OffboardingDialog({
   const [rerouted, setRerouted] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  async function load() {
-    setContext(null);
-    setLoadFailed(false);
-    setReassignments({});
-    setRerouted({});
+  /**
+   * Fetch the checklist on mount — which, per the `key` above, means once per opening.
+   *
+   * Fetched per opening rather than once for the page: the checklist has to reflect the
+   * moment the admin decides, and re-opening after resolving something elsewhere must re-read.
+   */
+  useEffect(() => {
+    // Guards a stale response from an earlier opening landing on a newer one: React 19 Strict
+    // Mode double-invokes effects in dev, and a fast close/re-open can leave a request in
+    // flight against an unmounted body.
+    let current = true;
 
-    const result = await loadOffboardingContext({ userId: employee.id });
-    if (!result.ok) {
-      // Without the blockers we cannot say whether it is safe to deactivate, so the button
-      // stays disabled and the dialog says so rather than offering a guess.
-      setLoadFailed(true);
-      showErrorToast(result);
-      return;
-    }
-    setContext(result.data);
-  }
+    void (async () => {
+      const result = await loadOffboardingContext({ userId: employee.id });
+      if (!current) return;
+
+      if (!result.ok) {
+        // Without the blockers we cannot say whether it is safe to deactivate, so the button
+        // stays disabled and the dialog says so rather than offering a guess.
+        setLoadFailed(true);
+        showErrorToast(result);
+        return;
+      }
+      setContext(result.data);
+    })();
+
+    return () => {
+      current = false;
+    };
+  }, [employee.id]);
 
   const blockers = context?.blockers;
   const openAssignments = blockers?.openAssignments ?? [];
@@ -137,87 +209,69 @@ export function OffboardingDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next: boolean) => {
-        onOpenChange(next);
-        // Fetched on open, not on mount: the checklist has to reflect the moment the admin
-        // decides, and re-opening after resolving something elsewhere must re-read.
-        if (next) void load();
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Deactivate {employee.name}?</DialogTitle>
-          <DialogDescription>
-            Their sessions end immediately and they can no longer sign in. The account and its
-            history are kept — this is offboarding, not deletion.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <div className="grid max-h-[50vh] gap-4 overflow-y-auto">
+        {context === null && !loadFailed ? (
+          <p className="text-muted-foreground text-xs">Checking open work…</p>
+        ) : null}
 
-        <div className="grid max-h-[50vh] gap-4 overflow-y-auto">
-          {context === null && !loadFailed ? (
-            <p className="text-muted-foreground text-xs">Checking open work…</p>
-          ) : null}
+        {loadFailed ? (
+          <p className="text-destructive text-xs">
+            Couldn&apos;t check their open work. Close this and try again.
+          </p>
+        ) : null}
 
-          {loadFailed ? (
-            <p className="text-destructive text-xs">
-              Couldn&apos;t check their open work. Close this and try again.
-            </p>
-          ) : null}
+        {context !== null ? (
+          <>
+            <BlockerSection
+              title="Open assignments"
+              emptyLabel="No open tasks assigned to them."
+              rows={openAssignments}
+              value={reassignments}
+              onChange={(taskId, value) => setReassignments((r) => ({ ...r, [taskId]: value }))}
+              users={pickableUsers}
+              excludeUserId={employee.id}
+              placeholder="Reassign to…"
+              // §13.1.4 allows closing a task instead of moving it; a review has to go
+              // to a person, so only this section offers the choice.
+              allowCancel
+            />
 
-          {context !== null ? (
-            <>
-              <BlockerSection
-                title="Open assignments"
-                emptyLabel="No open tasks assigned to them."
-                rows={openAssignments}
-                value={reassignments}
-                onChange={(taskId, value) => setReassignments((r) => ({ ...r, [taskId]: value }))}
-                users={pickableUsers}
-                excludeUserId={employee.id}
-                placeholder="Reassign to…"
-                // §13.1.4 allows closing a task instead of moving it; a review has to go
-                // to a person, so only this section offers the choice.
-                allowCancel
-              />
+            <BlockerSection
+              title="Reviews routed to them"
+              emptyLabel="No reviews are waiting on them."
+              rows={routedReviews}
+              value={rerouted}
+              onChange={(taskId, value) => setRerouted((r) => ({ ...r, [taskId]: value }))}
+              users={pickableUsers}
+              excludeUserId={employee.id}
+              placeholder="Reroute to…"
+            />
 
-              <BlockerSection
-                title="Reviews routed to them"
-                emptyLabel="No reviews are waiting on them."
-                rows={routedReviews}
-                value={rerouted}
-                onChange={(taskId, value) => setRerouted((r) => ({ ...r, [taskId]: value }))}
-                users={pickableUsers}
-                excludeUserId={employee.id}
-                placeholder="Reroute to…"
-              />
+            {wouldStrandManagers ? (
+              <p className="border-destructive/40 bg-destructive/5 text-destructive rounded-md border p-3 text-xs">
+                {employee.name} is one of only {context.managerCount} active managers. Deactivating
+                them would leave fewer than two, which isn&apos;t allowed. Promote someone else
+                first.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+      </div>
 
-              {wouldStrandManagers ? (
-                <p className="border-destructive/40 bg-destructive/5 text-destructive rounded-md border p-3 text-xs">
-                  {employee.name} is one of only {context.managerCount} active managers.
-                  Deactivating them would leave fewer than two, which isn&apos;t allowed. Promote
-                  someone else first.
-                </p>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-
-        <DialogFooter>
-          <DialogClose
-            render={
-              <Button variant="outline" type="button">
-                Cancel
-              </Button>
-            }
-          />
-          <Button variant="destructive" onClick={onConfirm} disabled={!canDeactivate}>
-            {submitting ? 'Deactivating…' : 'Deactivate'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <DialogFooter>
+        <DialogClose
+          render={
+            <Button variant="outline" type="button">
+              Cancel
+            </Button>
+          }
+        />
+        <Button variant="destructive" onClick={onConfirm} disabled={!canDeactivate}>
+          {submitting ? 'Deactivating…' : 'Deactivate'}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 

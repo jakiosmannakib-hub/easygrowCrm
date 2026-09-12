@@ -274,11 +274,7 @@ function EmployeeDetailBody({
           <h3 className="text-xs font-medium">Details</h3>
 
           <Field id="edit-name" label="Full name" error={errors.name}>
-            <Input
-              id="edit-name"
-              value={form.name}
-              onChange={(e) => set('name', e.target.value)}
-            />
+            <Input id="edit-name" value={form.name} onChange={(e) => set('name', e.target.value)} />
           </Field>
 
           <Field id="edit-title" label="Title" error={errors.title}>
@@ -323,18 +319,24 @@ function EmployeeDetailBody({
           <div className="space-y-3 border-t pt-4">
             <div>
               <h3 className="text-xs font-medium">Role</h3>
-              <p className="text-muted-foreground text-xs">
-                Takes effect on their next request.
-              </p>
+              <p className="text-muted-foreground text-xs">Takes effect on their next request.</p>
             </div>
 
             <Select
               value={nextRole}
               onValueChange={(value: string | null) => {
-                setNextRole((value as Role) ?? employee.role);
-                // Any change to the selection cancels a pending confirmation, so Confirm can
-                // never apply a role the user didn't just read.
-                setConfirmingRole(false);
+                const picked = (value as Role) ?? employee.role;
+                setNextRole(picked);
+                // SELECTING IS THE FIRST STEP. The confirmation is revealed by the choice
+                // itself — there is no separate "Change role" button, because a control that
+                // only un-greys on selection reads as dead UI, which is exactly how this
+                // shipped and exactly what manual QA reported as "does nothing".
+                //
+                // Re-selecting still cancels: the panel is re-rendered against `picked`, so
+                // Confirm can only ever apply the role currently named in the sentence above
+                // it, and picking the role they already hold withdraws the confirmation
+                // rather than offering a no-op change.
+                setConfirmingRole(picked !== employee.role);
               }}
             >
               <SelectTrigger aria-label="New role" className="w-full">
@@ -356,29 +358,28 @@ function EmployeeDetailBody({
                   <strong>{ROLE_LABELS[nextRole]}</strong>?
                 </p>
                 <div className="flex gap-2">
+                  {/* Calls `changeRole` directly (§13.1.3) — INDEPENDENT of the edit form
+                      above, which owns only the four §13.1.2 profile fields and cannot
+                      carry a role. */}
                   <Button size="sm" onClick={onApplyRole} disabled={changingRole}>
                     {changingRole ? 'Applying…' : 'Confirm'}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setConfirmingRole(false)}
+                    // Cancel restores the picker to the role they actually hold, so the
+                    // drawer never sits showing a role that was never applied.
+                    onClick={() => {
+                      setNextRole(employee.role);
+                      setConfirmingRole(false);
+                    }}
                     disabled={changingRole}
                   >
                     Cancel
                   </Button>
                 </div>
               </div>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={nextRole === employee.role}
-                onClick={() => setConfirmingRole(true)}
-              >
-                Change role
-              </Button>
-            )}
+            ) : null}
 
             {employee.id === viewerId ? (
               <p className="text-muted-foreground text-xs">

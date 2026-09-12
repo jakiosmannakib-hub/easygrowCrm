@@ -146,6 +146,7 @@ easygrowcrm/
 > `lib/auth/` and `lib/db/` folders were not adopted: `lib/` holds one file per concern and `db/`
 > sits at the repo root. As built: `lib/auth.ts`, `lib/auth-guards.ts`, `lib/auth-client.ts`,
 > `lib/session.ts`, `lib/authz.ts` (the §9.6 table + `can()` + `authorize()`), `lib/errors.ts`,
+> `lib/action-result.ts` (the PUL-111 boundary, §12.4),
 > `lib/mutation.ts` (`withTx`), `lib/notifications.ts`, `lib/clock.ts`, `lib/nav.ts`,
 > `lib/route-guard.ts`; `db/index.ts`, `db/schema/*`, `db/migrations/`. Nothing lives at
 > `lib/auth/can.ts`, `lib/auth/authorize.ts`, `lib/db/tx.ts` or `lib/permissions.ts` — imports
@@ -164,6 +165,11 @@ easygrowcrm/
 ## 12.3 The authorization layer
 
 Exactly one function protects every mutation. This is the single most important line of code in EasyGrowCrm.
+
+> **DECIDED (Phase 1) : names as built.** `requireUser()` in the sketches below is
+> **`getSessionUser()`** (`lib/session.ts`); `can()` and the §9.6 table live in `lib/authz.ts`
+> alongside `authorize()`, not in a separate `can.ts`. Behaviour is exactly as written here.
+> See the flat-layout note in §12.2 and §9.5 rule 4.
 
 ```ts
 // lib/authz.ts   (DECIDED Phase 1: flat layout)
@@ -214,6 +220,7 @@ export async function requireUser() {
 import { z } from "zod";
 import { authorize } from "@/lib/authz";   // DECIDED Phase 1: flat layout, not lib/auth/
 import { withTx } from "@/lib/mutation";   // DECIDED Phase 1: flat layout, not lib/db/tx
+import { actionResult } from "@/lib/action-result";   // DECIDED Phase 1 (PUL-111)
 import { writeAudit } from "@/lib/audit/write";
 
 const ApproveInput = z.object({
@@ -222,6 +229,7 @@ const ApproveInput = z.object({
 });
 
 export async function approveTask(input: z.infer<typeof ApproveInput>) {
+ return actionResult(async () => {                    // 0. BOUNDARY (PUL-111)
   const parsed = ApproveInput.parse(input);          // 1. VALIDATE
   const task = await getTaskForApproval(parsed.taskId);
   const actor = await authorize("project_task.review", task);   // 2. AUTHORIZE
@@ -254,10 +262,40 @@ export async function approveTask(input: z.infer<typeof ApproveInput>) {
   });
                                                      // 5. NOTIFY (after commit — outside tx)
                                                      //    ...enqueue Discord + email + in-app notif
+ });
 }
 ```
 
 **Every mutation follows the same five steps: validate → authorize → transact → audit (same tx) → notify (after commit).** This is not a suggestion; it's a code-review rule and every review rejects anything else.
+
+> **DECIDED (Phase 1, PUL-111) : the five steps now sit inside a sixth: the `actionResult` boundary.**
+> Every exported server action returns `Promise<ActionResult<T>>`, a discriminated union of
+> `{ ok: true, data }` and `{ ok: false, code, reason?, message, details? }`. No expected error
+> crosses the server-action boundary as a throw any more.
+>
+> **Why:** Next.js redacts an error thrown out of a Server Action in a **production** build. The
+> message is replaced with a generic string plus a `digest`, and custom properties (our `code`, our
+> `meta.reason`) are stripped entirely. That is a deliberate security feature and is not
+> configurable per error. Before PUL-111 every typed failure therefore collapsed at the boundary in
+> production only: `GATE:last_managers`, `FORBIDDEN` and `CONFLICT` all arrived at the client as the
+> same anonymous object, so the toast mapper fell through to "Something went wrong" for all of them.
+> In dev, where Next passes errors through intact, everything looked correct. A **returned** value
+> is ordinary data, so React serializes it and hands it to the client verbatim.
+>
+> **`AppError` is still the internal language, and is still thrown INSIDE the body.** A throw is
+> what unwinds the transaction and rolls the audit row back with the work it records (§16.4), so
+> action bodies, `authorize()`, `withTx` callbacks and every helper keep throwing. **Only the
+> outermost boundary converts.** Nothing below `actionResult` knows the file exists.
+>
+> **Non-`AppError` throws are re-thrown, deliberately.** A `TypeError`, a driver connection
+> failure, a bug: none are part of the §13 contract, and their messages and stacks are exactly what
+> production redaction exists to hide. They stay throws, stay redacted, and reach the client as an
+> opaque digest that the toast mapper renders as the generic line. Swallowing them into a typed
+> result would be a security regression and would mislabel a crash as a handled outcome.
+>
+> **Shape note:** the exported function stays an `async function` declaration wrapping the call.
+> Writing `export const myAction = actionResult(async () => …)` instead silently disables the
+> `easygrowcrm/authorize-first` lint rule for that action.
 
 ---
 
@@ -356,7 +394,7 @@ Recording these here so nobody reopens them in month three.
 
 Bullet form, so this becomes the top of the CLAUDE.md:
 
-- **Every server action:** validate (Zod) → `authorize()` → `withTx` → `writeAudit(tx, …)` → return.
+- **Every server action:** `actionResult(async () => …)` wrapping validate (Zod) → `authorize()` → `withTx` → `writeAudit(tx, …)` → return. *(DECIDED Phase 1, PUL-111: the five steps sit inside the `actionResult` boundary, which returns a typed `ActionResult<T>` instead of throwing across the server-action boundary (§12.4).)*
 - **`authorize()` is the first line.** No exceptions. Enforced by ESLint.
 - **`role` and `active` are read from the DB every request.** Never from the session.
 - **Middleware never gates mutations.** It only redirects unauthenticated visitors.
@@ -367,7 +405,7 @@ Bullet form, so this becomes the top of the CLAUDE.md:
 - **Notifications and webhooks are enqueued after `withTx` commits.** Never inside it.
 - **Dates that represent working days are Asia/Dhaka calendar days.** Use `lib/time/dhaka.ts`.
 - **Never `new Date()` / `Date.now()` in `features/**`.** The clock port (`lib/clock.ts`) is the only source of "now" — enforced by `easygrowcrm/no-direct-date`.
-- **All thrown errors carry a §13 code** via `AppError` (`GATE` / `CONFLICT` / `FORBIDDEN` / …) — never bare `Error`.
+- **Every error carries a §13 code** via `AppError` (`GATE` / `CONFLICT` / `FORBIDDEN` / …), never a bare `Error`. `AppError` is thrown **inside** the action body; the `actionResult` boundary converts it to a returned `{ ok: false, code, reason?, message }` so the code survives production redaction. Anything that is not an `AppError` is re-thrown and stays redacted. *(DECIDED Phase 1, PUL-111: was "All thrown errors carry a §13 code": they are returned now; see §12.4.)*
 - **Tests are colocated in `features/**`** per the §15.4 mandatory list; `tests/` holds only fixtures and Playwright flows.
 - **Subtasks never gate submission; the checklist does** (§9.6 ⁷ / §14.3.3).
 - **When in doubt about permissions, read `lib/permissions.ts` and §9.6 of the PRD.** They are the same table.

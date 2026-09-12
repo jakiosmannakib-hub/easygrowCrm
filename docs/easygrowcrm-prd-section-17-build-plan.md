@@ -1346,7 +1346,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
 | **Total**                              |                     | **80** |
 
-Mandatory §15.4 test files are attached to: PUL-102, 103, 104, 201, 202, 204, 205, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list.
+Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 
 ---
 
@@ -1372,3 +1372,39 @@ Do not skip tickets; extend the phase. Every ticket exists because something bre
 6. This doc: §17.1–§17.2 deep, then Phase 0–1 tickets — 15 min
 
 ~2 hours. Then open Claude Code, load PUL-001, and start ticking boxes.
+
+---
+
+# 17.7 Open follow-ups that still need their own tickets
+
+Found during reconciliation (PUL-112) and **not scheduled**. Each needs a ticket number before it
+is worked; none is assigned to an existing ticket, and none should be quietly folded into one.
+
+**1. `VALIDATION` is a §13 code that nothing emits.**
+Zod's `.parse()` throws a `ZodError`, not an `AppError`. The `actionResult` boundary re-throws
+anything that is not an `AppError` (by design, §12.4), so a bad input reaches the client as a
+redacted digest and the toast mapper renders the generic line, exactly the outcome PUL-111 exists
+to prevent, for the one code that is supposed to describe a *user-correctable* mistake. Today the
+forms carry a client-side `safeParse` against the same schema, so a normal user does not hit it;
+anything that bypasses the form does. The fix is to convert `ZodError` to
+`AppError('VALIDATION', …)` at the boundary, with per-field detail. Until then §13's `VALIDATION`
+code is documentation of an intent, not of a behaviour.
+
+**2. `getDeactivationBlockers` must be threaded with the transaction executor BEFORE PUL-401.**
+Its signature is `(userId)` and it reads the module-level `db`, so inside `deactivateEmployee` it
+runs **outside** the surrounding transaction. That is harmless today only because its body returns
+hardcoded empty arrays (`project_tasks` is migration 008). The moment PUL-401 fills the query in, the
+blocker check and the `active=false` UPDATE sit in different snapshots, and a task assigned to the
+target in that window slips through the offboarding gate: the account closes owning live work, which
+is the one thing §13.1.4 exists to prevent. It must become `(executor, userId)` and be called with
+`tx`. **Do this as its own ticket before PUL-401 touches the query body**, not as part of it; the
+change is mechanical while the body is empty and easy to verify, and invisible once it is not.
+
+**3. A Playwright job proving the PUL-111 boundary against a production build.**
+`action-result-boundary.test.ts` uses `structuredClone` as a necessary-but-not-sufficient stand-in,
+because production error redaction does not reproduce in a dev build or inside vitest (§15.4.1).
+Nothing currently proves end to end that a `GATE` reason reaches a real browser in a real production
+build, the exact failure PUL-111 was written to fix.
+
+**4. A DOM test environment for client event plumbing.** See §15.4.2: accepted gap, manual QA is
+the designated catcher, closing it properly needs its own ticket.

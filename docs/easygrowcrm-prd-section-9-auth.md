@@ -121,12 +121,22 @@ databaseHooks: {
 
 4. Google identity is linked to the existing row. Session created. Done.
 
-**Also enforce:** reject any email whose domain is not the company domain (`hd` claim / email suffix check). Belt and braces — a rogue Gmail address should never reach step 3.
+~~**Also enforce:** reject any email whose domain is not the company domain (`hd` claim / email suffix check). Belt and braces — a rogue Gmail address should never reach step 3.~~
+
+> **DECIDED (Phase 1, PUL-103: dropped, personal Gmail, no Google Workspace).** The company-domain
+> rejection was never built and must not be. The team signs in with **personal Gmail accounts**;
+> there is no Workspace tenant, so there is no `hd` claim to check and no company domain that every
+> employee's address shares. `lib/auth-guards.ts` has no domain check.
+>
+> **The provisioned `"user"` row is the sole gate.** `guardProvisioned` rejects any email without a
+> pre-existing row, and `guardActive` rejects a row whose `active` is false (§9.3). Provisioning
+> *is* the invitation, and it is also the whole of the allowlist: an address nobody added cannot
+> reach step 3 regardless of its domain.
 
 **Consequences for the PRD:**
 - Delete `inviteExpiryHours` from §3.12 Settings. It no longer exists.
 - Delete any "invitation email" flow. Provisioning *is* the invitation.
-- MFA: not needed. Google Workspace already enforces it upstream. If Workspace doesn't have MFA on, **turn it on there** — that's where it belongs, not in EasyGrowCrm.
+- ~~MFA: not needed. Google Workspace already enforces it upstream.~~ *(PUL-103: there is no Workspace tenant; see the note above. MFA is whatever each person has enabled on their own Google account; EasyGrowCrm neither enforces nor checks it. Revisit only if the agency moves to Workspace.)*
 
 ---
 
@@ -228,6 +238,13 @@ Legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **
 | `employee.update` | ✅ | ⛔ | ⛔ | ✅ | ⛔ |
 | `employee.change_role` | ✅ | ⛔ | ⛔ | ⛔ | ⛔ |
 | `employee.deactivate` | ✅ | ⛔ | ⛔ | ✅ | ⛔ |
+| `employee.reactivate` | ✅ | ⛔ | ⛔ | ✅ | ⛔ |
+
+> **Added (Phase 1, PUL-206) : `employee.reactivate` was missing from this matrix.** §13.1.5 defines
+> the action and names its audience "SA, HR", but no row existed here, so the table and
+> `lib/authz.ts` disagreed. Same cells as `employee.deactivate`: reactivation is the inverse of
+> offboarding and is held by the same people. With this row the table is **52 keys / 260 cells**
+> (52 × 5 roles), matching `lib/authz.ts` exactly.
 
 ### Projects
 

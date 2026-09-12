@@ -8,7 +8,7 @@ You are building **EasyGrowCrm**, an internal CRM + HRM for a ~20–50-person di
 
 ## 0. The one-paragraph mental model
 
-Every meaningful change is a **server action** with the same five-step shape (validate → authorize → transaction → audit → notify). Every action checks permission as its first real line, reads the user's role from the database (never the session), writes an append-only audit row inside the same transaction as the work, and enqueues notifications only after that transaction commits. Data models are strict hierarchies walked by explicit helpers. Time never comes from `new Date()` — it comes from an injectable clock so it can be frozen in tests. The client displays; the server decides. Get those reflexes right and most of this codebase writes itself.
+Every meaningful change is a **server action** with the same five-step shape (validate → authorize → transaction → audit → notify), wrapped in a sixth: the **`actionResult` boundary** (PUL-111), which returns a typed `ActionResult<T>` rather than letting an expected error throw across the server-action boundary; Next.js redacts those in production. Every action checks permission as its first real line, reads the user's role from the database (never the session), writes an append-only audit row inside the same transaction as the work, and enqueues notifications only after that transaction commits. Data models are strict hierarchies walked by explicit helpers. Time never comes from `new Date()` — it comes from an injectable clock so it can be frozen in tests. The client displays; the server decides. Get those reflexes right and most of this codebase writes itself.
 
 ---
 
@@ -37,7 +37,8 @@ The PRD is split into sections §9–§17 plus a foundational §1–§8. All liv
 These are the rules that, if broken, cost the most to unwind. Most are mechanically enforced; the rest are caught in review.
 
 ### Mutations
-- **Every server action follows the shape:** `validate (Zod)` → `authorize()` → `withTx` → `writeAudit(tx, …)` → return, then enqueue notifications after commit. Copy `features/_example/actions.ts`; don't freehand it.
+- **Every server action follows the shape:** `actionResult(async () => …)` wrapping `validate (Zod)` → `authorize()` → `withTx` → `writeAudit(tx, …)` → return, then enqueue notifications after commit. Copy `features/_example/actions.ts`; don't freehand it.
+- **Actions return, they don't throw (PUL-111).** The body still throws `AppError` (that is what unwinds the transaction), but `actionResult` converts it at the boundary to `{ ok: false, code, reason?, message }`. Keep the exported function an `async function` declaration wrapping the call; `export const x = actionResult(…)` silently disables `authorize-first` for that action. Non-`AppError` throws are re-thrown on purpose and stay redacted. Every client call site must branch on `result.ok`.
 - **`authorize()` is the first awaited line** after validation. No exceptions. Enforced by the `easygrowcrm/authorize-first` ESLint rule.
 - **Nothing outside `features/*/actions.ts` writes to the DB.** Queries can read anywhere; writes live in actions only.
 - **`writeAudit` takes the `tx`.** Never call it against the global `db` — an audit row must roll back with the work it records.
@@ -55,7 +56,7 @@ These are the rules that, if broken, cost the most to unwind. Most are mechanica
 - **Working-day dates are Asia/Dhaka calendar days** (work week Sun–Thu). Use `lib/time/dhaka.ts`, never the browser locale/timezone.
 
 ### Errors
-- **Every thrown error is an `AppError` carrying a §13 code** (`GATE` / `CONFLICT` / `FORBIDDEN` / `NOT_FOUND` / `VALIDATION` / `UNAUTHENTICATED` / `DEACTIVATED`). Never a bare `Error`. Gate errors name the specific field or task.
+- **Every error is an `AppError` carrying a §13 code** (`GATE` / `CONFLICT` / `FORBIDDEN` / `NOT_FOUND` / `VALIDATION` / `UNAUTHENTICATED` / `DEACTIVATED`). Never a bare `Error`. Gate errors name the specific field or task. Thrown inside the body, returned at the `actionResult` boundary (PUL-111).
 
 ### Data shape
 - **Templates are a strict hierarchy:** Template → Month → Category → Task → Subtask. There is no flat `tasks[]`. `tplAllTasks()` is the *only* way to flatten one. No parallel flat caches of hierarchical data.
@@ -109,7 +110,11 @@ is superseded (its *rules* — ports in `lib/`, feature slices own their code �
 | `lib/auth-client.ts` | Better Auth browser client |
 | `lib/session.ts` | `getSessionUser()` — re-reads role + active from the DB every request (§16.5) |
 | `lib/authz.ts` | The §9.6 permission table as data, `can()`, and `authorize()` |
-| `lib/errors.ts` | `AppError` + the seven §13 codes |
+| `lib/errors.ts` | `AppError` + the seven §13 codes (landed in PUL-103, not PUL-106) |
+| `lib/action-result.ts` | `ActionResult<T>`, `actionResult()`, `unwrap()`: the PUL-111 server-action boundary |
+| `lib/mutation.ts` | `withTx` |
+| `lib/route-guard.ts` | `requireRouteAccess()`: the per-page server guard (§9.5) |
+| `lib/nav.ts` | The §14.1 nav table + `PAGE_META`; visibility is explicit `visibleTo` lists, not live `can()` |
 | `db/index.ts` | The Drizzle client |
 | `db/schema/*.ts` | Table definitions, re-exported from `db/schema/index.ts` |
 | `db/migrations/` | Generated SQL + `meta/` snapshots |

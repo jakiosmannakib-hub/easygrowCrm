@@ -109,11 +109,24 @@ export async function actionName(input: Input) {
 
 ## 16.8 Fail loudly, fail early, fail with a name
 
-**Rule:** Every error has a code (`GATE`, `CONFLICT`, `NOT_FOUND`, `FORBIDDEN`, `VALIDATION`, `UNAUTHENTICATED`, `DEACTIVATED`), carried by the canonical **`AppError`** class (`lib/errors.ts`, PUL-106 — never a bare `Error`, §12.11). Every gate error names the specific field or task that failed. Every conflict error offers a refresh action. Nothing is silently swallowed.
+**Rule:** Every error has a code (`GATE`, `CONFLICT`, `NOT_FOUND`, `FORBIDDEN`, `VALIDATION`, `UNAUTHENTICATED`, `DEACTIVATED`), carried by the canonical **`AppError`** class (`lib/errors.ts`, PUL-103 — never a bare `Error`, §12.11. *DECIDED Phase 1: the class landed in PUL-103, not PUL-106, because `getSessionUser()` throws `UNAUTHENTICATED`/`DEACTIVATED` before PUL-106 exists; PUL-106 adds only the toast mapper on top*). Every gate error names the specific field or task that failed. Every conflict error offers a refresh action. Nothing is silently swallowed.
 
 **Why:** A caught exception that doesn't reach a human is a bug. Generic "Something went wrong" toasts hide the actual problem and train users to retry blindly.
 
 **Consequence:** The toast layer maps error codes 1:1 to user-facing messages. `GATE:checklist_incomplete` becomes *"'Homepage design': checklist has 2 unchecked items."* The user knows what to do.
+
+> **DECIDED (Phase 1, PUL-111) : the toast layer maps a RETURNED result, not a caught throw.**
+> `AppError` remains the internal language: it is still thrown inside action bodies, because a throw
+> is what unwinds the transaction and rolls its audit row back (§16.4). But the `actionResult`
+> boundary converts it to a returned `{ ok: false, code, reason?, message }`, and the toast mapper
+> switches on that value (§12.4, §13 rule 6).
+>
+> **This section's own warning is why.** Next.js redacts errors thrown out of a Server Action in a
+> production build: the message is replaced and custom properties (`code`, `meta.reason`) are
+> stripped. So every typed failure collapsed into precisely the *"Something went wrong"* toast this
+> principle exists to forbid, in production only, while dev looked correct. That is the concrete
+> case of the failure mode named above, and it survived four tickets unnoticed because the
+> difference is invisible outside a production build.
 
 **Reject in review:** a caught exception without a re-throw or a coded error; a toast without a specific field/task name for gate errors.
 

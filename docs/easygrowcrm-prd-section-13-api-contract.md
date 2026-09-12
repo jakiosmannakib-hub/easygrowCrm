@@ -4,12 +4,12 @@
 **Purpose:** the complete list of server actions (mutations) and queries. Claude Code implements entries from this document by name — it never invents an endpoint. Every build-plan subtask references contract IDs (e.g. "implement 13.4.6 `submitTask`").
 
 **Universal rules (apply to every mutation; not repeated per entry):**
-1. Shape: **validate (Zod) → `authorize()` → `withTx` → `writeAudit(tx,…)` → commit → notify** (§12.4).
+1. Shape: **`actionResult(async () => …)` wrapping validate (Zod) → `authorize()` → `withTx` → `writeAudit(tx,…)` → commit → notify** (§12.4). *(DECIDED Phase 1, PUL-111: the five steps sit inside the `actionResult` boundary.)*
 2. `authorize()` is the first statement after input parsing. Role/`active` read from DB (§9.5).
 3. Audit rows are written **inside** the transaction. Notifications/webhooks are enqueued **after** commit via `webhook_outbox` / `notifications` (§12.7).
 4. Soft-deleted rows (`deleted_at IS NOT NULL`) are invisible to every query and rejected as targets of every mutation.
 5. All date logic uses Asia/Dhaka helpers (§12.8).
-6. Errors are thrown as typed codes: `UNAUTHENTICATED` · `DEACTIVATED` · `FORBIDDEN` · `NOT_FOUND` · `VALIDATION` (Zod) · `GATE` (business precondition failed, with a machine-readable `reason`) · `CONFLICT` (optimistic-lock/version or unique-index collision). The UI maps codes to human messages; server messages are terse and never leak other users' data.
+6. Errors carry typed codes: `UNAUTHENTICATED` · `DEACTIVATED` · `FORBIDDEN` · `NOT_FOUND` · `VALIDATION` (Zod) · `GATE` (business precondition failed, with a machine-readable `reason`) · `CONFLICT` (optimistic-lock/version or unique-index collision). The UI maps codes to human messages; server messages are terse and never leak other users' data. **Errors are RETURNED, not thrown across the boundary** *(DECIDED Phase 1, PUL-111: was "Errors are thrown as typed codes")*: `AppError` is still thrown inside the action body, and the `actionResult` wrapper converts it to `{ ok: false, code, reason?, message, details? }` so that `code`, `reason` and `message` all survive Next.js's production error redaction (§12.4). The code list above is unchanged. Anything that is not an `AppError` is re-thrown and reaches the client as an opaque digest.
 7. Notification templates referenced as `N:<name>` are defined once in `lib/notifications/templates.ts` — text lives there, not in actions.
 
 Actor legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **HR** admin_hr · **EMP** employee · **MGR** = SA|TL|PM · **Sys** = pg-boss job.
@@ -21,8 +21,9 @@ Actor legend: **SA** super_admin · **TL** team_leader · **PM** project_manager
 ### 13.1.1 `createEmployee`
 - **Who:** SA, HR (`employee.create`)
 - **Input:** `{ email: string.email, name: string.min(1), role: user_role, title?: string, department?: string, joinDate?: date }`
-- **Guards:** email unique; email domain = company domain (same check as the OAuth gate, §9.3).
-- **Tx:** insert `"user"` row (`active: true`, no OAuth account yet — provisioning *is* the invitation). The same tx initializes the new employee's leave balances against `leave_quotas` (PUL-701.2's on-add hook lives here, not in a second action).
+- **Guards:** email unique. *(PUL-103: the "email domain = company domain" guard is **dropped**: the team signs in with personal Gmail and there is no Workspace tenant, so the OAuth gate it mirrored does not exist. The provisioned `"user"` row is itself the allowlist; see §9.3.)*
+- **Tx:** insert `"user"` row (`active: true`, no OAuth account yet; provisioning *is* the invitation).
+- **DEFERRED to PUL-701**: leave-balance initialization against `leave_quotas`. That table is migration 011, so there is nothing to initialize against yet. **§13.1.1's intent stands unchanged: PUL-701.2's on-add hook lands INSIDE this action's transaction, not in a second action.**
 - **Audit:** `employee.created` (after = full row minus nothing sensitive; there is no sensitive data).
 - **Notify:** none (the person is told out-of-band to sign in with Google).
 
@@ -51,6 +52,27 @@ Actor legend: **SA** super_admin · **TL** team_leader · **PM** project_manager
 - **Tx:** apply reassignments (or set `cancelled`); apply reviewer reroutes; auto-reject target's `pending` leave (`manager_comment: "auto-rejected on deactivation"`); if an attendance row is open today → end open break, close it as `auto_closed` now; set `active=false`; `DELETE FROM session WHERE user_id=target`.
 - **Audit:** one `employee.deactivated` row + one row per reassignment/reroute/leave auto-reject.
 - **Notify:** `N:task_reassigned` → each new assignee; `N:review_rerouted` → each new reviewer.
+
+> **As built (PUL-205 / PUL-206): the contract above is the target; most of the transaction is
+> DEFERRED to the tickets that create the tables it touches.** The action's **shape is final**,
+> including the two (currently always empty) input arrays and the blocker check, so each ticket
+> below adds statements inside this transaction rather than reshaping the action.
+>
+> **Ships today:** target ≠ actor (`GATE:self_deactivate`); the `user_min_managers` trigger from
+> migration 004 evaluated inside the `UPDATE` itself, translated to `GATE:last_managers`; the
+> blocker check (`GATE:unresolved_assignments` / `GATE:unresolved_reviews`, against empty sets);
+> `active=false`; `DELETE FROM session WHERE user_id=target`; the `employee.deactivated` audit row.
+>
+> | Deferred piece | Owning ticket | Why it cannot ship yet |
+> |---|---|---|
+> | Apply reassignments / cancellations, reviewer reroutes, and one audit row per row resolved | **PUL-401** | `project_tasks` is migration 008 |
+> | `N:task_reassigned` / `N:review_rerouted` | **PUL-401** | nothing to announce until there are reassignments |
+> | Auto-reject the target's `pending` leave (+ its audit row) | **PUL-701** | `leave_requests` is migration 011 |
+> | Close today's open attendance row and any open break as `auto_closed` | **Phase 3 (attendance)** | `attendance` / `breaks` are migrations 005–006 |
+>
+> **Notify is therefore none in Phase 2**: §13.1.4's only notifications announce reassignments and
+> reroutes, and there are none. The target is not notified of their own deactivation; they are told
+> out of band and cannot sign in to read it.
 
 ### 13.1.5 `reactivateEmployee`
 - **Who:** SA, HR. **Input:** `{ userId }`. **Tx:** `active=true`. **Audit:** `employee.reactivated`.

@@ -55,7 +55,12 @@ What we *are* doing is closer to **contract-first / outside-in**: define the con
 | **Flow** | multi-step happy paths (sign-in → sign-out; submit → review → approve) | `playwright` against a seeded dev DB | CI nightly + pre-release |
 | **Manual** | mobile viewport sign-in/out, board drag-drop, calendar navigation, print export of Excel | checklist | pre-release |
 
-There is deliberately no separate "unit test the React component" layer. Integration tests exercise the components through real user actions; if a component works in an integration test it works.
+There is deliberately no separate "unit test the React component" layer. ~~Integration tests exercise the components through real user actions; if a component works in an integration test it works.~~
+
+> **DECIDED (Phase 1, PUL-112): that second sentence is not true as built.** The Integration row
+> invokes server actions **directly**, not through components, and the Flow (Playwright) row has no
+> job yet. So nothing currently exercises a component's event wiring, and the decision to skip a
+> component-unit layer is presently an **uncovered gap rather than a covered one**. See §15.4.2.
 
 ---
 
@@ -106,13 +111,64 @@ features/employees/
   deactivate.test.ts              // blocks if <2 managers; requires offboarding resolution
   role-change.test.ts             // SA only; audited
   min-two-managers.test.ts        // DB CHECK + app-level guard
+  create-employee.test.ts         // happy + duplicate CONFLICT + audit row + HR allowed / EMP forbidden (PUL-202.4)
+  update-employee.test.ts         // profile fields only; role and email untouchable here; audit diff shape (PUL-203.3)
+  reactivate.test.ts              // SA + HR; already-active is a no-op with no audit row (PUL-206 Stage 3, §13.1.5)
+  action-result-boundary.test.ts  // AppError -> { ok:false, code, reason } survives the boundary (PUL-111)
 
 features/eod/
   immutability.test.ts            // no UPDATE path exists in actions
   acknowledge.test.ts             // ✓ Reviewed; 🚩 Flagged with note
 ```
 
-That's **31** test files. Anything beyond this list is welcome but not required; the list is otherwise locked.
+That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees entries added above are built and CI-enforced today)*. Anything beyond this list is welcome but not required; the list is otherwise locked.
+
+### 15.4.1 The CI-enforced manifest: what is required *today*
+
+The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
+names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
+`scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **11 files**, every one of which
+also appears in §15.4 above:
+
+```
+features/auth/session-from-google.test.ts          // PUL-103.5
+features/audit/audit-write.test.ts                 // PUL-102.4
+features/audit/audit-immutability.test.ts          // PUL-102.4
+features/auth/authorize.test.ts                    // PUL-104.3
+features/employees/min-two-managers.test.ts        // PUL-201.3
+features/employees/create-employee.test.ts         // PUL-202.4
+features/employees/update-employee.test.ts         // PUL-203.3
+features/employees/role-change.test.ts             // PUL-204.3
+features/employees/deactivate.test.ts              // PUL-205.5
+features/employees/reactivate.test.ts              // PUL-206 Stage 3
+features/employees/action-result-boundary.test.ts  // PUL-111
+```
+
+**When these two lists disagree, the script wins for "is CI green" and §15.4 wins for "may we
+ship v1".** A ticket that adds a mandatory test adds it to both.
+
+**Caveat on `action-result-boundary.test.ts` (PUL-111):** it asserts the boundary contract by putting
+each result through `structuredClone`, a **necessary-but-not-sufficient** stand-in for the real
+serialization step. Booting a production Next server inside vitest is impractical, and production
+redaction is exactly the behaviour that does not reproduce in a dev build. It proves the returned
+shape survives structured cloning; it does **not** prove a production build preserves it end to end.
+The real proof is a Playwright job against a production build, which **does not exist yet and needs
+its own ticket** (see §17's open follow-ups).
+
+### 15.4.2 ACCEPTED GAP: client event plumbing is not unit-tested
+
+There is no jsdom or `@testing-library` in the project and `vitest.config.ts` is
+`environment: 'node'` throughout, so **no test exercises a React component's event wiring**: a
+handler that never fires, a control wired to the wrong state, a fetch that never runs. Two real
+PUL-206 drawer defects reached main this way and were caught by manual QA (a dialog whose data
+load hung off Base UI's `onOpenChange`, which never fires for a parent-controlled `open`; and a
+confirm step wired to a separate button instead of to the selection).
+
+This is **accepted, not resolved.** The designated catcher is the per-ticket manual QA pass
+(e.g. PUL-206.4, "manual QA as all 5 roles"), and every ticket with UI must keep carrying one.
+Closing the gap properly means adding a DOM test environment and is **not scheduled**; it needs
+its own ticket before anyone claims this layer is covered.
 
 ---
 

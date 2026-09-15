@@ -19,6 +19,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/employees/reactivate.test.ts', // PUL-206 Stage 3 (§13.1.5)
   'features/employees/action-result-boundary.test.ts', // PUL-111
   'features/clients/clients.test.ts', // PUL-207.4
+  'features/auth/oauth-link-provisioned.test.ts', // ACCOUNT_NOT_LINKED regression (PUL-202 "Done when")
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

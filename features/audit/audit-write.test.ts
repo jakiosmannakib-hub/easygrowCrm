@@ -10,7 +10,12 @@ import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../db';
 import { auditLog } from '../../db/schema';
+import { assertTestDb } from '../../tests/seed';
 import { writeAudit } from './write-audit';
+
+// assertTestDb() runs before every direct write below. This file inserts/truncates on `db`
+// without going through seedMinimal(), so without it the only thing keeping it off the dev
+// database was tests/setup-db.ts overriding DATABASE_URL.
 
 const ACTOR_ID = 'usr_audit_write';
 
@@ -22,6 +27,7 @@ function rowsFor(resourceId: string) {
 }
 
 beforeEach(async () => {
+  assertTestDb();
   // audit_log.actor_id has an FK to "user", so the actor must really exist.
   await db.execute(sql`
     insert into "user" (id, name, email, email_verified, role, active)
@@ -30,6 +36,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  assertTestDb();
   // The append-only trigger blocks DELETE on audit_log, but not TRUNCATE (it is a
   // FOR EACH ROW trigger on UPDATE/DELETE only). Truncate first — the user row is
   // referenced by any audit rows written above.

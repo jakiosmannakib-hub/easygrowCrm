@@ -11,6 +11,14 @@ import { sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { db } from '../../db';
 import { guardActive, guardProvisioned } from '../../lib/auth-guards';
+import { assertTestDb } from '../../tests/seed';
+
+// assertTestDb() runs before every direct write below. This file inserts/deletes on `db`
+// without going through seedMinimal(), so without it the only thing keeping it off the dev
+// database was tests/setup-db.ts overriding DATABASE_URL.
+//
+// What this file does NOT cover: the guards are called directly, so Better Auth's account-link
+// decision never runs here. That path is features/auth/oauth-link-provisioned.test.ts.
 
 const UNKNOWN_EMAIL = 'nobody-not-provisioned@example.com';
 const NOT_REGISTERED = 'This email is not registered with EasyGrowCrm. Contact HR.';
@@ -23,6 +31,7 @@ async function insertUser(suffix: string, active: boolean) {
   const id = `usr_test_${suffix}`;
   const email = `test-${suffix}@example.com`;
   ids.push(id);
+  assertTestDb();
   await db.execute(sql`
     insert into "user" (id, name, email, email_verified, role, active)
     values (${id}, ${'Test ' + suffix}, ${email}, true, 'employee', ${active})
@@ -32,6 +41,7 @@ async function insertUser(suffix: string, active: boolean) {
 
 afterEach(async () => {
   if (ids.length === 0) return;
+  assertTestDb();
   await db.execute(sql`delete from "user" where id in ${sql`(${sql.join(
     ids.map((id) => sql`${id}`),
     sql`, `,

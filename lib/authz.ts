@@ -65,6 +65,11 @@ export const PERMISSIONS = {
   'project.read':    { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: A },
   'project.update':  { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },
   'project.archive': { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },
+  // NOT in the §9.6 grid — §9.6 lists no unarchive row, but §13.3.4 defines the action and
+  // names its audience ("Reverse: `unarchiveProject` (same actors)"). Encoded to match
+  // `project.archive` exactly. Same situation as `employee.reactivate` above; §9.6 needs the
+  // row added.
+  'project.unarchive': { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },
   'project.delete':  { super_admin: A, team_leader: D, project_manager: D, admin_hr: D, employee: D },
 
   // ── Project tasks ────────────────────────────────────────────────────────────

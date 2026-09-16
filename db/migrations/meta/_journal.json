@@ -36,6 +36,27 @@
       "when": 1789483959971,
       "tag": "0004_clients",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789567545171,
+      "tag": "0005_projects_personal_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789568512668,
+      "tag": "0006_project_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789569021519,
+      "tag": "0007_qc_trail",
+      "breakpoints": true
     }
   ]
 }

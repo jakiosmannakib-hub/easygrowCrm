@@ -48,15 +48,22 @@ const GOOGLE_SUB = '100000000000000000001';
 
 let seed: MinimalSeed;
 
+const GOOGLE_IMAGE = 'https://lh3.googleusercontent.com/a/test-avatar=s96-c';
+/**
+ * Deliberately NOT the name the row is provisioned with ('New Hire'). Google carrying a
+ * different spelling is the whole point of the `name`-is-untouched assertions below.
+ */
+const GOOGLE_NAME = 'Nu Hyre (Google spelling)';
+
 /** The profile Google's callback would hand Better Auth for `email`. */
-function googleProfile(email: string, sub = GOOGLE_SUB) {
+function googleProfile(email: string, sub = GOOGLE_SUB, image: string | null = GOOGLE_IMAGE) {
   return {
     userInfo: {
       id: sub,
       email,
       emailVerified: true, // Google verifies the address it returns
-      name: 'New Hire',
-      image: null,
+      name: GOOGLE_NAME,
+      image,
     },
     account: {
       providerId: 'google',
@@ -83,9 +90,22 @@ type EndpointContext = Parameters<typeof handleOAuthUserInfo>[0];
  * bound parts of a real endpoint context (headers, cookies) are what the callback route uses
  * AFTER this returns, to set the session cookie — outside what this test claims to cover.
  */
-async function signInWithGoogle(email: string, sub?: string) {
+async function signInWithGoogle(email: string, sub?: string, image?: string | null) {
   const context = await auth.$context;
-  return handleOAuthUserInfo({ context } as unknown as EndpointContext, googleProfile(email, sub));
+  return handleOAuthUserInfo({ context } as unknown as EndpointContext, {
+    ...googleProfile(email, sub, image),
+    // READ from the configured provider rather than hardcoded, exactly as the callback route
+    // does in 1.7.2 (`overrideUserInfo: provider.options?.overrideUserInfoOnSignIn`). This is
+    // load-bearing: hardcoding `true` here makes the override path run no matter what
+    // lib/auth.ts says, so the image assertions would pass even with the fix backed out — the
+    // test would be pinning Better Auth's behaviour instead of our configuration. Verified by
+    // removing the options and watching these cases go red.
+    overrideUserInfo: (
+      context.socialProviders.find((p) => p.id === 'google') as
+        | { options?: { overrideUserInfoOnSignIn?: boolean } }
+        | undefined
+    )?.options?.overrideUserInfoOnSignIn,
+  });
 }
 
 /** Provision through the real action, as SA — the row shape production writes. */
@@ -148,6 +168,49 @@ describe('Google sign-in links a provisioned, unverified row (ACCOUNT_NOT_LINKED
     expect(again.error).toBeNull();
     expect(again.data?.user.id).toBe(provisioned.id);
     expect(await db.select().from(accountTable).where(eq(accountTable.userId, provisioned.id))).toHaveLength(1);
+  });
+});
+
+describe('Google profile-picture sync (PUL-113)', () => {
+  it('backfills image on the first link, and leaves the HR-owned name alone', async () => {
+    const provisioned = await provision(NEW_HIRE_EMAIL);
+    // Preconditions the bug needs: no picture yet, and HR's spelling is on the row.
+    expect(provisioned.image).toBeNull();
+    expect(provisioned.name).toBe('New Hire');
+
+    expect((await signInWithGoogle(NEW_HIRE_EMAIL)).error).toBeNull();
+
+    const [row] = await userByEmail(NEW_HIRE_EMAIL);
+    expect(row?.image).toBe(GOOGLE_IMAGE);
+    // THE load-bearing assertion. Google offered 'Nu Hyre (Google spelling)' and was ignored:
+    // `name` belongs to HR via updateEmployee (PUL-203). If this ever fails, a sign-in is
+    // silently reverting HR's corrections.
+    expect(row?.name).toBe('New Hire');
+  });
+
+  it('a later sign-in updates a changed photo, still without touching the name', async () => {
+    const provisioned = await provision(NEW_HIRE_EMAIL);
+    await signInWithGoogle(NEW_HIRE_EMAIL);
+    // HR corrects the spelling AFTER the link — the case that makes this rule matter.
+    assertTestDb();
+    await db.update(userTable).set({ name: 'Corrected Name' }).where(eq(userTable.id, provisioned.id));
+
+    const changed = `${GOOGLE_IMAGE}&v=2`;
+    expect((await signInWithGoogle(NEW_HIRE_EMAIL, undefined, changed)).error).toBeNull();
+
+    const [row] = await userByEmail(NEW_HIRE_EMAIL);
+    expect(row?.image).toBe(changed); // a new Google photo propagates
+    expect(row?.name).toBe('Corrected Name'); // HR's correction survives the sign-in
+  });
+
+  it('a user who has never signed in keeps image NULL (the initials-fallback case)', async () => {
+    // Not a bug to paper over: the header renders initials() for exactly this row, and it is
+    // the normal state for everyone SA/HR has provisioned but who has not yet signed in.
+    const provisioned = await provision(NEW_HIRE_EMAIL);
+    expect(provisioned.image).toBeNull();
+
+    const [row] = await userByEmail(NEW_HIRE_EMAIL);
+    expect(row?.image).toBeNull();
   });
 });
 

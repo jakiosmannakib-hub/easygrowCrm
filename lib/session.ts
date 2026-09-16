@@ -33,6 +33,12 @@ export async function getSessionUser() {
   const rows = await db
     .select({
       id: userTable.id,
+      // `name` and `image` are for display only (the PUL-113 header block). They ride along on
+      // the read that already has to happen rather than in a second query, and they come from
+      // the DB rather than `session.user` on purpose: an HR name edit (PUL-203) lands here on
+      // the next request, where the session payload would keep the stale one until re-login.
+      name: userTable.name,
+      image: userTable.image,
       email: userTable.email,
       role: userTable.role,
       active: userTable.active,

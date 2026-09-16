@@ -16,6 +16,15 @@ import { db } from '../db';
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
+ * Anything a query can run against: the global `db` or a transaction handle.
+ *
+ * A read that a guard depends on takes this as its FIRST argument so the action can call it
+ * with `tx` — the check and the write then share one snapshot. A guard read against the global
+ * `db` from inside `withTx` sits outside the transaction (see §17.7 #2).
+ */
+export type Executor = typeof db | Tx;
+
+/**
  * Every multi-table mutation runs inside `withTx` (§12.6). Rolls back on throw,
  * commits on return. `writeAudit(tx)` must run inside it (§9.8) — an audit row has to
  * roll back with the work it records.

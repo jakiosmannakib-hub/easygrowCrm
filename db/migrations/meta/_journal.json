@@ -29,6 +29,13 @@
       "when": 1788876925447,
       "tag": "0003_user_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789483959971,
+      "tag": "0004_clients",
+      "breakpoints": true
     }
   ]
 }

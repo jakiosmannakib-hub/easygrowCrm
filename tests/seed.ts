@@ -5,13 +5,12 @@
 // (see `assertTestDb`).
 //
 // SCOPE (intentional deviation from §15.5, PUL-109): §15.5's seedMinimal is "1 SA, 2 managers,
-// 3 employees, 1 client, 1 project". The client and project tables are Phase 2 and do not exist
-// yet, so this builds the user cast + guard + reset now. The fixture is written to keep
-// compiling as tables land — client and project rows get appended to `seedMinimal` then.
+// 3 employees, 1 client, 1 project". The user cast + guard + reset landed first; the client
+// joined in PUL-207 (migration 0004). The project waits for PUL-401, which appends it here.
 
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
-import { user } from '../db/schema';
+import { clients, user } from '../db/schema';
 
 /**
  * True iff a database name is a test database.
@@ -56,7 +55,7 @@ export async function reset(): Promise<void> {
   assertTestDb();
 
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "clients", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -67,11 +66,17 @@ export interface SeededUser {
   role: 'super_admin' | 'team_leader' | 'project_manager' | 'admin_hr' | 'employee';
 }
 
+export interface SeededClient {
+  id: string;
+  name: string;
+}
+
 export interface MinimalSeed {
   superAdmin: SeededUser;
   teamLeader: SeededUser;
   projectManager: SeededUser;
   employees: [SeededUser, SeededUser, SeededUser];
+  client: SeededClient;
 }
 
 /**
@@ -87,7 +92,7 @@ export interface MinimalSeed {
  * random uuid. All users are active with email_verified true — the deactivated and unverified
  * cases are what individual tests set up, never the shared fixture.
  *
- * Client + project rows join this fixture when those tables exist (Phase 2).
+ * One non-archived client (PUL-207). The project row joins when `projects` exists (PUL-401).
  */
 export async function seedMinimal(): Promise<MinimalSeed> {
   assertTestDb();
@@ -106,8 +111,11 @@ export async function seedMinimal(): Promise<MinimalSeed> {
     cast.map((u) => ({ ...u, emailVerified: true, active: true })),
   );
 
+  const client: SeededClient = { id: 'seed_client', name: 'Seed Client' };
+  await db.insert(clients).values(client);
+
   const [superAdmin, teamLeader, projectManager, e1, e2, e3] = cast;
-  return { superAdmin, teamLeader, projectManager, employees: [e1, e2, e3] };
+  return { superAdmin, teamLeader, projectManager, employees: [e1, e2, e3], client };
 }
 
 /**

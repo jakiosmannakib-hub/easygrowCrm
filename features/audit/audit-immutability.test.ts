@@ -10,7 +10,12 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../db';
 import { auditLog } from '../../db/schema';
+import { assertTestDb } from '../../tests/seed';
 import { writeAudit } from './write-audit';
+
+// assertTestDb() runs before every direct write below. This file inserts/truncates on `db`
+// without going through seedMinimal(), so without it the only thing keeping it off the dev
+// database was tests/setup-db.ts overriding DATABASE_URL.
 
 const ACTOR_ID = 'usr_audit_immutable';
 const RESOURCE_ID = 'r_immutable';
@@ -34,6 +39,7 @@ async function expectAppendOnlyRejection(run: () => Promise<unknown>) {
 }
 
 beforeEach(async () => {
+  assertTestDb();
   await db.execute(sql`
     insert into "user" (id, name, email, email_verified, role, active)
     values (${ACTOR_ID}, 'Audit Reader', 'audit-reader@example.com', true, 'employee', true)
@@ -50,6 +56,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  assertTestDb();
   await db.execute(sql`truncate audit_log`);
   await db.execute(sql`delete from "user" where id = ${ACTOR_ID}`);
 });

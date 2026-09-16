@@ -79,6 +79,32 @@ export const PAGE_META: Record<AppRoute, { title: string; subtitle: string }> = 
   '/settings': { title: 'Settings', subtitle: 'Working hours, holidays, and policy' },
 };
 
+/**
+ * The sections inside `/settings` (§14.14), each with its own curated `visibleTo`, in the same
+ * explicit-list style as `NAV_ITEMS`. Presentation only: the page is already SA/HR-only via
+ * `requireRouteAccess('/settings')`, and every action behind a section authorizes itself.
+ *
+ * Only Clients exists so far (PUL-207). PUL-903 adds the policy fields and the holidays editor.
+ */
+export type SettingsSectionId = 'clients';
+
+export interface SettingsSection {
+  id: SettingsSectionId;
+  label: string;
+  visibleTo: Role[];
+}
+
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  // §9.6 ¹⁰ / §14.14: client management lives with Settings, SA + HR.
+  { id: 'clients', label: 'Clients', visibleTo: SA_HR },
+];
+
+/** Whether a role sees a given Settings section. Cosmetic — never the security boundary. */
+export function canSeeSettingsSection(role: Role, id: SettingsSectionId): boolean {
+  const section = SETTINGS_SECTIONS.find((s) => s.id === id);
+  return section ? section.visibleTo.includes(role) : false;
+}
+
 /** The sidebar items a role sees, in §14.1 order. Cosmetic — never the security boundary. */
 export function visibleNavItems(role: Role): NavItem[] {
   return NAV_ITEMS.filter((item) => item.visibleTo.includes(role));

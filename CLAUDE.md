@@ -108,7 +108,7 @@ is superseded (its *rules* — ports in `lib/`, feature slices own their code �
 | `lib/auth.ts` | Better Auth server instance + its `databaseHooks` wiring |
 | `lib/auth-guards.ts` | `guardProvisioned` / `guardActive` — the sign-in rejection rules (§9.3) |
 | `lib/auth-client.ts` | Better Auth browser client |
-| `lib/session.ts` | `getSessionUser()` — re-reads role + active from the DB every request (§16.5) |
+| `lib/session.ts` | `getSessionUser()` — re-reads role + active (and the header's name + image) from the DB every request (§16.5) |
 | `lib/authz.ts` | The §9.6 permission table as data, `can()`, and `authorize()` |
 | `lib/errors.ts` | `AppError` + the seven §13 codes (landed in PUL-103, not PUL-106) |
 | `lib/action-result.ts` | `ActionResult<T>`, `actionResult()`, `unwrap()`: the PUL-111 server-action boundary |
@@ -129,6 +129,17 @@ folders — imports across the codebase assume the flat paths above.
 Learned the hard way — don't repeat them:
 
 - **Copying behavior from the prototype.** It's visual reference only. The prototype gives HR template-edit rights, uses `window._mwiz`/`window._tftSubs` globals, and has a flat task list — all three are wrong for the real build.
+- **Assuming Better Auth does on *link* what it does on *create*.** This has bitten us three
+  times now (PUL-202's `requireLocalEmailVerified`, PUL-113's missing `image`). **We provision
+  users before Google ever sees them**, so sign-in always takes Better Auth's *link* branch and
+  every behaviour that fires on user *creation* is dead code in this app. Before assuming the
+  library does something for you on sign-in, read the branch it actually takes in
+  `node_modules/better-auth/dist/oauth2/link-account.mjs` — most of those paths are gated behind
+  an option that defaults to off.
+- **Letting Google write `name`.** `name` is HR-owned via `updateEmployee` (PUL-203). The
+  `user.update.before` hook in `lib/auth.ts` strips it from every Better Auth-originated update;
+  don't remove it. Without it, an employee's next sign-in silently reverts an HR correction, and
+  a Google account with no name blanks the column outright. `image` is the only field Google owns.
 - **Bringing back a deleted feature because §1–§8 mentions it.** Scoring, selfies, IP checks, recurring-spawn, invite emails, index-based template refs — all removed. Before implementing anything you first saw in the foundational PRD, confirm it still exists in the relevant §9–§17 section.
 - **`new Date()` sneaking into a break timer or "due today" check.** Always `clock.now()`.
 - **An audit row written outside the transaction, or skipped "because it's a small action."** If it's accountability-bearing, it's audited, in the tx.

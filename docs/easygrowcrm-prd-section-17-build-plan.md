@@ -11,12 +11,12 @@
 
 The unit of work is the **ticket**. Tickets are numbered `PUL-<phase><serial>` — the leading digit(s) name the phase (`PUL-104` = Phase 1, ticket 04; `PUL-1003` = Phase 10, ticket 03), and subtasks are `<ticket>.<n>` (e.g. `104.2`). Work top to bottom: tickets are dependency-ordered, so start at the lowest open number and don't begin a phase until the previous one is green.
 
-The plan is **80 tickets across 11 phases**, with 340+ checkable subtasks:
+The plan is **83 tickets across 11 phases**, with 340+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed)*:
 
 | Phase | Focus                                                       | Tickets             |
 | ----- | ----------------------------------------------------------- | ------------------- |
 | 0     | Environments & project setup                                | PUL-001 … PUL-004   |
-| 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-110   |
+| 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-113   |
 | 2     | Employees & clients                                         | PUL-201 … PUL-207   |
 | 3     | Attendance                                                  | PUL-301 … PUL-308   |
 | 4     | Projects & tasks                                            | PUL-401 … PUL-413   |
@@ -388,7 +388,60 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-**Phase 1 exit:** all 10 tickets done. CI enforces types, lint (both custom rules), tests, migrations, and the manifest. Only now do features begin.
+### PUL-113 — Signed-in user in the top header (§14.1 addition)
+
+**Budget:** S · **Reads:** §14.1 · **Depends:** PUL-110
+
+> Added after Phase 1 closed, like PUL-111 and PUL-112. §14.1 specced the top header as page
+> title + subtitle + bell only, with no indication of *who you are signed in as* anywhere in
+> the shell — the sidebar shows Logout but not the account it would log out of. This ticket
+> adds that block and amends §14.1 to match.
+
+- [x] 113.1 Right-aligned user block in `components/shell/header.tsx`: Google profile picture, name, role label. The avatar falls back to `initials()` from `features/employees/display.ts` when `image` is null — the normal state for a provisioned user who has not yet signed in, not an error. The role label comes from the shared `ROLE_LABELS` map in the same file, so the header and the PUL-206 card grid cannot drift on wording.
+- [x] 113.2 **Read-only, no switcher.** §14.1 says the prototype's user-switcher dropdown must NOT ship, so the block is a plain `<div>` — no dropdown, no menu, no account switching, no click behaviour. Logout keeps its single home at the sidebar bottom and is **not** duplicated here. Responsive: the name and role collapse below `sm`, the avatar always survives.
+- [x] 113.3 No new query. The `(app)` layout already resolves the user via `getSessionUser()` to pick the sidebar's role; it now passes that row to `<Header>`. `lib/session.ts`'s select gains `name` and `image` — two more columns on a read that already happens. They are read from the DB rather than `session.user` deliberately: an HR name edit (PUL-203) then lands on the person's next request instead of waiting up to 7 days for the token to refresh, the same reasoning §16.5 applies to `role`/`active`.
+- [x] 113.4 Amend §14.1's "Top header" bullet to describe the addition and record that it is read-only.
+- [x] 113.5 **Fix: Google profile pictures were never stored.** Shipped in this ticket because 113.1 is what made the empty column visible — `"user".image` was NULL for all 6 dev users, the daily-signing-in super admin included. See the as-built note below.
+
+**Done when:** ✅ the header names the signed-in user on every page, with a real Google picture once they have signed in and initials before that. No automated test (UI, no new data path) — the image *backfill* is tested, see below. Gates green: `tsc --noEmit` 0 · `eslint .` 0 · `vitest run` 20 files / 152 tests · `drizzle-kit check` clean · manifest 13 files · `next build` compiles.
+
+> **As-built — the profile-picture backfill (113.5).** A third instance of the same family as
+> PUL-202's `requireLocalEmailVerified` bug: **this app provisions users before Google exists,
+> so every Better Auth behaviour that fires on user *creation* is dead code here.** Sign-in
+> always takes the *link* branch of `handleOAuthUserInfo`, which defers to
+> `applyUpdateUserInfoOnLink` — whose first line returns early unless
+> `accountLinking.updateUserInfoOnLink` is true. It was not set, so `image` had no path to the
+> database at all. Fixed with the library's own extension points:
+> `accountLinking.updateUserInfoOnLink` (first link) + `google.overrideUserInfoOnSignIn` (every
+> later sign-in, so a changed photo propagates).
+>
+> **Neither option is image-only** — both call `updateUser({ name, image, … })` — so a third
+> piece was needed: a `databaseHooks.user.update.before` hook forcing `name: undefined`, which
+> the adapter strips. Without it Google's name silently reverts an HR correction made through
+> `updateEmployee` on the employee's next sign-in, and because the callback route coerces a
+> missing provider name to `''`, a Google account with no name would blank the column outright
+> (verified: `undefined` preserves, `''` writes). **`name` is HR-owned; Google never writes it.**
+> Safe to apply to every Better Auth user update, because `createEmployee` and `updateEmployee`
+> both write the `user` table through Drizzle directly and never reach the hook. No audit row —
+> profile plumbing carries no accountability.
+>
+> `next.config.ts` is deliberately untouched: the header renders base-ui's `AvatarImage`, a
+> plain `<img>`, not `next/image`, so `remotePatterns` does not apply. **If anyone swaps it for
+> `next/image`, avatars break instantly** until `lh3.googleusercontent.com` is added there.
+>
+> Tests: 3 cases added to `features/auth/oauth-link-provisioned.test.ts` (not a §15.4 mandatory
+> file; manifest unchanged at 13). The load-bearing one asserts `name` is UNCHANGED when Google
+> offers a different spelling. Both halves mutation-proofed. One trap worth remembering: the
+> helper must read `overrideUserInfo` off the *configured* provider the way the callback route
+> does — hardcoding `true` made the image assertions pass with the fix fully backed out, pinning
+> Better Auth's behaviour instead of ours.
+>
+> **Still unproven:** the real Google round-trip. The tests supply the profile Google would
+> return; a genuine `lh3` URL arriving in a real ID token needs a manual sign-in.
+
+---
+
+**Phase 1 exit:** all 10 tickets done. CI enforces types, lint (both custom rules), tests, migrations, and the manifest. Only now do features begin. *(PUL-111, PUL-112 and PUL-113 were added afterwards, against a closed phase — see each ticket for why.)*
 
 ---
 
@@ -456,9 +509,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §13.1.2 · **Depends:** PUL-202
 
-- [ ] 203.1 Action: name, title, dept, join date editable (role NOT here — that's PUL-204; email immutable)
-- [ ] 203.2 Audit row carries before→after diff
-- [ ] 203.3 Tests: happy path + role-not-editable-here + audit diff shape
+- [x] 203.1 Action: name, title, dept, join date editable (role NOT here — that's PUL-204; email immutable)
+- [x] 203.2 Audit row carries before→after diff
+- [x] 203.3 Tests: happy path + role-not-editable-here + audit diff shape
 
 **Done when:** field edits round-trip; role and email untouchable via this action.
 
@@ -468,9 +521,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §13.1.3 · **Depends:** PUL-202
 
-- [ ] 204.1 Action: SA only; HR gets `FORBIDDEN`
-- [ ] 204.2 Next request by the affected user reflects the new role (DB re-read proof, §16.5)
-- [ ] 204.3 Test: `features/employees/role-change.test.ts` → CI manifest
+- [x] 204.1 Action: SA only; HR gets `FORBIDDEN`
+- [x] 204.2 Next request by the affected user reflects the new role (DB re-read proof, §16.5)
+- [x] 204.3 Test: `features/employees/role-change.test.ts` → CI manifest
 
 **Done when:** demote-a-manager attempt that breaks min-2 is rejected by the PUL-201 trigger.
 
@@ -480,11 +533,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §13.1.4, §14.12 · **Depends:** PUL-203 _(fully testable after Phase 4 adds tasks; blocker-list query ships now against empty sets)_
 
-- [ ] 205.1 Blocker query: open assignments + routed reviews for the target user (returns empty pre-Phase-4; shape is final)
-- [ ] 205.2 Offboarding modal per §14.12:每 blocker row with reassign ▾ / cancel; Deactivate disabled until zero blockers
-- [ ] 205.3 Hard block + explanation if deactivation would leave <2 managers
-- [ ] 205.4 Deactivated users: muted "(deactivated)" in history, excluded from every dropdown (shared `activeUsersQuery`)
-- [ ] 205.5 Test: `features/employees/deactivate.test.ts` (happy, min-managers-block; open-task-block extended in Phase 4) → CI manifest
+- [x] 205.1 Blocker query: open assignments + routed reviews for the target user (returns empty pre-Phase-4; shape is final)
+- [x] 205.2 Offboarding modal per §14.12:每 blocker row with reassign ▾ / cancel; Deactivate disabled until zero blockers
+- [x] 205.3 Hard block + explanation if deactivation would leave <2 managers
+- [x] 205.4 Deactivated users: muted "(deactivated)" in history, excluded from every dropdown (shared `activeUsersQuery`)
+- [x] 205.5 Test: `features/employees/deactivate.test.ts` (happy, min-managers-block; open-task-block extended in Phase 4) → CI manifest
 
 **Done when:** deactivation is impossible while blockers exist; sessions of the deactivated user die on next request.
 
@@ -494,10 +547,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.12 · **Depends:** PUL-202…PUL-205, PUL-110
 
-- [ ] 206.1 Card grid: avatar, name, title, dept chip, role badge, Active/Deactivated pill
-- [ ] 206.2 Filters: dept ▾, status ▾, name search
-- [ ] 206.3 Detail drawer: edit fields (203), Change role (SA-only visible, 204), Deactivate (205)
-- [ ] 206.4 Manual QA as all 5 roles (EMP/PM/TL don't see the page at all — nav + route guard)
+- [x] 206.1 Card grid: avatar, name, title, dept chip, role badge, Active/Deactivated pill
+- [x] 206.2 Filters: dept ▾, status ▾, name search
+- [x] 206.3 Detail drawer: edit fields (203), Change role (SA-only visible, 204), Deactivate (205)
+- [x] 206.4 Manual QA as all 5 roles (EMP/PM/TL don't see the page at all — nav + route guard)
 
 **Done when:** every §14.12 affordance works through the real actions.
 
@@ -507,12 +560,18 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §11 (clients table), §14.3 filter bar · **Depends:** PUL-105
 
-- [ ] 207.1 Clients table lands with migration 007 prep or its own mini-migration — name, contact, active flag (v1-minimal per §11)
-- [ ] 207.2 Actions: create / edit / archive-client (archive blocked if live projects exist → `GATE`)
-- [ ] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section)
-- [ ] 207.4 Tests: CRUD + archive gate + audit
+- [x] 207.1 Clients table lands with migration 007 prep or its own mini-migration — name, contact, active flag (v1-minimal per §11)
+- [x] 207.2 Actions: create / edit / archive-client (archive blocked if live projects exist → `GATE`)
+- [x] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section)
+- [x] 207.4 Tests: CRUD + archive gate + audit
 
 **Done when:** the Phase 4 filter bar and Phase 5 Start Project wizard have real clients to select.
+
+> **Status: built, NOT yet merged.** All four subtasks are implemented and green on
+> `feat/pul-207-clients` (migration `0004_clients.sql`, `features/clients/*`, the Settings
+> section, and `clients.test.ts` in the CI manifest), but the branch has no PR and is not on
+> `main`. Per CONTRIBUTING, Jaki merges — so this ticket is not closed until that happens. The
+> boxes are ticked to record the work, not the merge.
 
 ---
 
@@ -1334,7 +1393,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | Phase                                  | Tickets             | Count  |
 | -------------------------------------- | ------------------- | ------ |
 | 0 — Environments & Setup               | PUL-001 … PUL-004   | 4      |
-| 1 — Foundation                         | PUL-101 … PUL-110   | 10     |
+| 1 — Foundation                         | PUL-101 … PUL-113   | 13     |
 | 2 — Employees & Clients                | PUL-201 … PUL-207   | 7      |
 | 3 — Attendance                         | PUL-301 … PUL-308   | 8      |
 | 4 — Projects & Tasks                   | PUL-401 … PUL-413   | 13     |
@@ -1344,7 +1403,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 8 — Dashboards, Notifications & Polish | PUL-801 … PUL-809   | 9      |
 | 9 — Reports, Audit & Settings          | PUL-901 … PUL-903   | 3      |
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
-| **Total**                              |                     | **80** |
+| **Total**                              |                     | **83** |
 
 Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 

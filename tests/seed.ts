@@ -59,7 +59,7 @@ export async function reset(): Promise<void> {
   // one statement and CASCADE would reach the children anyway. Being explicit means a new table
   // that nothing references yet still gets wiped instead of quietly surviving a reset.
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
 }
 

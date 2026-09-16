@@ -50,6 +50,13 @@
       "when": 1789568512668,
       "tag": "0006_project_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789569021519,
+      "tag": "0007_qc_trail",
+      "breakpoints": true
     }
   ]
 }

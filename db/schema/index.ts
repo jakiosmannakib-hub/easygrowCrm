@@ -5,3 +5,4 @@ export * from './audit';
 export * from './clients';
 export * from './projects';
 export * from './personal-tasks';
+export * from './project-tasks';

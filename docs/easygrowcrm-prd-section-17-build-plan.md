@@ -567,11 +567,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** the Phase 4 filter bar and Phase 5 Start Project wizard have real clients to select.
 
-> **Status: built, NOT yet merged.** All four subtasks are implemented and green on
-> `feat/pul-207-clients` (migration `0004_clients.sql`, `features/clients/*`, the Settings
-> section, and `clients.test.ts` in the CI manifest), but the branch has no PR and is not on
-> `main`. Per CONTRIBUTING, Jaki merges — so this ticket is not closed until that happens. The
-> boxes are ticked to record the work, not the merge.
+> **Status: merged.** Landed on `main` in PR #26 (merge commit `515981b`) — migration
+> `0004_clients.sql`, `features/clients/*`, the Settings section, and `clients.test.ts` in the CI
+> manifest. *(This note previously read "built, NOT yet merged"; it was left stale after the
+> merge and is corrected here.)*
+>
+> `clients` shipped **alone** rather than with `projects` + `personal_tasks` as §11.9's logical
+> migration 007 groups them, because `projects` belongs to PUL-401. That split is where the
+> logical-vs-drizzle file numbering diverges — see the mapping table under PUL-401.
 
 ---
 
@@ -701,12 +704,44 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §11 (007–009) · **Depends:** PUL-101, PUL-207
 
-- [ ] 401.1 Migrations: `projects`, `project_tasks`, `project_task_subtasks`, `project_task_checklist`, `project_task_comments` per §11
-- [ ] 401.2 FK chain + indices; **no denormalized shortcuts** (§16.7)
-- [ ] 401.3 DB trigger: `assignee` may never be an SA (invariant layer 3)
-- [ ] 401.4 Extend `seedMinimal` (1 project, 3 tasks) and `seedFull`
+- [x] 401.1 Migrations: `projects`, `personal_tasks`, `project_tasks`, `task_subtasks`, `task_checklist_items`, `task_comments`, `task_submissions`, `task_reviews` per §11. **Table names corrected:** this line originally read `project_task_subtasks` / `project_task_checklist` / `project_task_comments`; §11.3.1 is authoritative on schema and names them `task_subtasks` / `task_checklist_items` / `task_comments`, which is what shipped. The line also omitted `personal_tasks` (§11.9 puts it in logical 007) and the §11.3.2 QC pair (logical 009) even though the ticket header covers 007–009 — both are built.
+- [x] 401.2 FK chain + indices per §11, including the four `project_tasks` partial indices, the `task_submissions`/`task_reviews` `desc` indices, and the UNIQUE `one_review_per_submission`. **"No denormalized shortcuts" holds with the two exceptions §11.3.2 mandates** — `task_reviews.task_id` (scorecard speed) and `task_reviews.submitter_id` (copied at write time). The second is not an optimization: a CHECK constraint sees only the row being written, so without the copy `no_self_review` could not exist in the database at all and §9.7-1 would rest on application code alone. §11 is the more specific document and governs; both columns are documented as deliberate in `db/schema/task-reviews.ts`. **§16.7 should be amended to name these two**, so the next reader does not "fix" them.
+- [x] 401.3 DB trigger `pt_no_sa_assignee` attached in drizzle file 0006. The FUNCTION `forbid_super_admin_assignee()` already existed from PUL-201 (file 0003), which deliberately left it unattached until `project_tasks` existed — so this ticket attaches only, never redefines. `DROP TRIGGER IF EXISTS` first, since PG16 has no `CREATE OR REPLACE TRIGGER` and every migration must stay re-runnable.
+- [x] 401.4 `seedMinimal` extended with 1 project + 3 tasks (varied status/priority: unassigned `planned`, employee `in_progress`, TL `submitted`), `seedFull` with a second project + 3 more (`approved`, `revision_required`, unassigned `urgent`) and a new `FullSeed extends MinimalSeed` return type. **No assignee is ever `seed_sa`** — 401.3's trigger would reject it and every suite would fail at fixture time. `reset()` truncates all eight new tables FK-safe. The QC tables stay empty until PUL-603 seeds a real submission.
 
-**Done when:** schema diff vs §11 empty; SA-assignee rejected by raw SQL.
+**Done when:** ✅ schema diff vs §11 empty (`drizzle-kit generate` reports no changes; `drizzle-kit check` green); SA-assignee rejected by raw SQL — probed in a rolled-back transaction on INSERT *and* on `UPDATE OF assignee_id`, both raising `super_admin cannot be a task assignee`.
+
+> **Migration numbering: §11.9's logical numbers are not the drizzle file numbers.** They diverged
+> when PUL-207 shipped `clients` alone, and this ticket inherits the offset. The mapping:
+>
+> | §11.9 logical | drizzle file | Contents | Ticket |
+> |---|---|---|---|
+> | 007 | `0004_clients.sql` | `clients` | PUL-207 |
+> | 007 (rest) | `0005_projects_personal_tasks.sql` | `projects`, `personal_tasks` | PUL-401 |
+> | 008 | `0006_project_tasks.sql` | `project_tasks` + 3 children + `pt_no_sa_assignee` | PUL-401 |
+> | 009 | `0007_qc_trail.sql` | `task_submissions`, `task_reviews` | PUL-401 |
+>
+> Always read `db/migrations/meta/_journal.json` for the next free index rather than inferring it
+> from a §11.9 number. Generated files are renamed to descriptive slugs (drizzle emits names like
+> `0006_hard_karma`), with the journal `tag` updated to match.
+
+> **Built in three stages on `feat/pul-401-project-side-tables`; NOT yet merged.** All four
+> subtasks are implemented and the full local gate is green (`tsc --noEmit`, ESLint, `vitest run`
+> 152 passing, `drizzle-kit check`, mandatory-test manifest). Per CONTRIBUTING, Jaki merges — the
+> boxes record the work, not the merge.
+>
+> **No test file was added, and the manifest is unchanged at 13.** This ticket is schema +
+> fixtures, and §15.4 lists nothing for it; the constraint probes above were throwaway SQL, not
+> regression tests. Three invariants now live only in the database and still owe a test:
+> `pt_no_sa_assignee` → **PUL-403.5** (`assign.test.ts`, which §17 already requires to prove
+> "both layers"), and `one_review_per_submission` + `no_self_review` → **PUL-603.3**
+> (`one-review-per-submission.test.ts`). Do not let those two tickets close without them.
+
+> **Phase-order note.** PUL-401 was taken ahead of Phase 3 (PUL-301…308, all still open) at the
+> owner's direction. Its own `Depends` — PUL-101 and PUL-207 — were both satisfied, so nothing
+> was built on missing foundations, but §17's "lowest open ticket" rule was knowingly set aside
+> rather than overlooked. Phase 3 remains unstarted and Phase 4's later tickets do not depend on
+> it; **PUL-305 (atomic sign-out) is still the blocker for PUL-605/606 and the whole EOD chain.**
 
 ---
 

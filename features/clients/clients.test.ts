@@ -10,7 +10,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { auditLog, clients, user as userTable } from '../../db/schema';
+import { auditLog, clients, projects, user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { expectFail, expectOk } from '../../tests/expect-result';
@@ -145,9 +145,25 @@ describe('updateClient (§13.2.2)', () => {
   });
 });
 
+/**
+ * `seedMinimal` now seeds `proj_seed` — an ACTIVE project owned by `seed_client` (PUL-401.4) —
+ * so the §13.2.3 `client_in_use` gate is live and `seed_client` no longer archives by default.
+ *
+ * That is the correct new behaviour, not an obstacle: these cases archive the *project* first,
+ * which is what an operator would genuinely have to do. Archiving the project rather than
+ * deleting it keeps the case closest to real use.
+ */
+async function releaseSeedClient() {
+  await db
+    .update(projects)
+    .set({ status: 'archived' })
+    .where(eq(projects.clientId, seed.client.id));
+}
+
 describe('archiveClient (§13.2.3)', () => {
   it('soft-deletes (sets deleted_at, keeps the row) and audits client.archived', async () => {
     actAs(seed.superAdmin.id);
+    await releaseSeedClient();
 
     expectOk(await archiveClient({ clientId: seed.client.id }));
 
@@ -173,6 +189,7 @@ describe('archiveClient (§13.2.3)', () => {
 
   it('re-archiving is a no-op with no second audit row', async () => {
     actAs(seed.superAdmin.id);
+    await releaseSeedClient();
 
     expectOk(await archiveClient({ clientId: seed.client.id }));
     expectOk(await archiveClient({ clientId: seed.client.id }));
@@ -180,12 +197,56 @@ describe('archiveClient (§13.2.3)', () => {
     expect(await auditFor(seed.client.id)).toHaveLength(1);
   });
 
-  it('the client_in_use gate is vacuous until PUL-401: usage is empty and archive succeeds', async () => {
+  it('blocks with GATE:client_in_use while the client has a live project', async () => {
+    // This case previously asserted the OPPOSITE — that the gate was vacuous and the archive
+    // succeeded — because `projects` did not exist and `getClientProjectUsage` returned a
+    // hard-coded empty list. PUL-401 created the table and PUL-402 Stage 2 filled the query,
+    // so the gate now bites and the expectation is corrected to match.
     actAs(seed.superAdmin.id);
 
     // Called through a real transaction handle, the way archiveClient calls it.
     const usage = await db.transaction((tx) => getClientProjectUsage(tx, seed.client.id));
-    expect(usage).toEqual({ liveProjects: [] });
+    expect(usage.liveProjects).toEqual([{ projectId: seed.project.id, name: seed.project.name }]);
+
+    const failure = expectFail(
+      await archiveClient({ clientId: seed.client.id }),
+      'GATE',
+      'client_in_use',
+    );
+    expect(failure.details).toMatchObject({ projectIds: [seed.project.id] });
+
+    // Blocked means blocked: still live, no audit row.
+    expect((await target()).deletedAt).toBeNull();
+    expect(await auditFor(seed.client.id)).toHaveLength(0);
+  });
+
+  it('archives once the client has only archived projects', async () => {
+    actAs(seed.superAdmin.id);
+    await releaseSeedClient();
+
+    const usage = await db.transaction((tx) => getClientProjectUsage(tx, seed.client.id));
+    expect(usage.liveProjects).toEqual([]);
+
+    expectOk(await archiveClient({ clientId: seed.client.id }));
+    expect((await target()).deletedAt).toEqual(NOW);
+  });
+
+  it('archives a client that has no projects at all', async () => {
+    actAs(seed.superAdmin.id);
+
+    const created = expectOk(await createClient({ name: 'Never Engaged' }));
+    expectOk(await archiveClient({ clientId: created.id }));
+  });
+
+  it('a soft-deleted project does not block either', async () => {
+    actAs(seed.superAdmin.id);
+
+    // Deleted is not merely archived, but neither is "live" — §13.2.3's gate is about work in
+    // flight, and a deleted project has none.
+    await db
+      .update(projects)
+      .set({ deletedAt: NOW })
+      .where(eq(projects.clientId, seed.client.id));
 
     expectOk(await archiveClient({ clientId: seed.client.id }));
   });

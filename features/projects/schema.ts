@@ -21,18 +21,29 @@ import { z } from 'zod';
  * path is how a start date silently shifts a day for a UTC+6 office, and it is also what the
  * `no-direct-date` rule exists to prevent. `<input type="date">` already produces this format.
  *
- * `deadline` is optional per §13.3.1. The `deadline >= start_date` rule is NOT checked here:
- * it is the `deadline_after_start` CHECK constraint in migration 0005, enforced by the database
- * for every writer. A zod `.refine()` would duplicate it and could only cover the create path,
- * where both values happen to be present in one payload.
+ * `deadline` is optional per §13.3.1. When it IS present the `.refine()` below enforces
+ * `deadline >= startDate` here, at the boundary, so the failure arrives as a parse error the
+ * form can render rather than as the `deadline_after_start` CHECK violation — which is a raw
+ * Postgres error, not an `AppError`, and therefore re-thrown by `actionResult` and redacted in
+ * production (lib/action-result.ts). The CHECK constraint stays as the backstop for every
+ * writer that does not come through this schema; this is a second gate, not a replacement.
+ *
+ * String comparison is correct for `YYYY-MM-DD`: the format is fixed-width and zero-padded, so
+ * lexicographic and chronological order are the same. No `Date` is constructed, which keeps
+ * the `no-direct-date` rule satisfied and the Dhaka-day semantics intact.
  */
-export const CreateProjectInput = z.object({
-  clientId: z.string().min(1),
-  name: z.string().min(1),
-  type: z.string().min(1),
-  startDate: z.iso.date(),
-  deadline: z.iso.date().optional(),
-});
+export const CreateProjectInput = z
+  .object({
+    clientId: z.string().min(1),
+    name: z.string().min(1),
+    type: z.string().min(1),
+    startDate: z.iso.date(),
+    deadline: z.iso.date().optional(),
+  })
+  .refine((v) => v.deadline === undefined || v.deadline >= v.startDate, {
+    message: 'Deadline must be on or after the start date',
+    path: ['deadline'],
+  });
 
 export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
 
@@ -65,6 +76,38 @@ export const UpdateProjectInput = z
       v.startDate !== undefined ||
       v.deadline !== undefined,
     { message: 'Provide at least one field to update' },
+  )
+  // The same ordering rule as create, but it can only be applied when the payload carries BOTH
+  // values. A partial edit that moves only the deadline has nothing to compare against — the
+  // other side of the comparison is the stored row, which a schema cannot see. Those cases fall
+  // through to the `deadline_after_start` CHECK, which remains the backstop.
+  //
+  // `null` is excluded deliberately: clearing the deadline can never violate the ordering.
+  .refine(
+    (v) =>
+      v.startDate === undefined ||
+      v.deadline === undefined ||
+      v.deadline === null ||
+      v.deadline >= v.startDate,
+    { message: 'Deadline must be on or after the start date', path: ['deadline'] },
   );
 
 export type UpdateProjectInput = z.infer<typeof UpdateProjectInput>;
+
+/** §13.3.4 input. */
+export const ArchiveProjectInput = z.object({
+  projectId: z.string().min(1),
+});
+
+export type ArchiveProjectInput = z.infer<typeof ArchiveProjectInput>;
+
+/**
+ * §13.3.4's reverse. Deliberately the same shape as archive and not a mirror of anything
+ * larger: un-archiving restores `status` and nothing else, and it has nothing to redistribute
+ * — the same reasoning as `ReactivateEmployeeInput`.
+ */
+export const UnarchiveProjectInput = z.object({
+  projectId: z.string().min(1),
+});
+
+export type UnarchiveProjectInput = z.infer<typeof UnarchiveProjectInput>;

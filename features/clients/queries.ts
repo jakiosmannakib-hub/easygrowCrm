@@ -7,25 +7,24 @@
 // the employees queries, the permission check lives at the call site (route guard / the
 // consuming action), not inside the read.
 
-import { asc, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { db } from '../../db';
-import { clients } from '../../db/schema';
+import { clients, projects } from '../../db/schema';
 import type { Executor } from '../../lib/mutation';
 
 /**
  * The live projects that block archiving a client (§13.2.3, `GATE:client_in_use`).
  *
- * **Shape is final; the data is not yet.** `projects` arrives with PUL-401, so no project can
- * reference a client today and the list is necessarily empty — a fact about the schema, not a
- * stub that lies. **PUL-401 fills the body in** with:
- *
- *   SELECT id, name FROM projects WHERE client_id = $clientId AND deleted_at IS NULL
- *   (and status <> 'archived', once project_status exists)
+ * "Live" is `status='active' AND deleted_at IS NULL`. Archived and soft-deleted projects do
+ * NOT block: the whole point of archiving a client is that its finished work stays on file, and
+ * a client whose every project is closed is exactly the client you archive. The `projects` FK
+ * to `clients` is NOT NULL and archiving is a soft delete, so those historical rows keep naming
+ * their client either way.
  *
  * `executor` is the FIRST argument, and `archiveClient` calls it with its `tx`. This is the
- * fix §17.7 #2 prescribes for `getDeactivationBlockers`, applied from day one: the usage check
- * and the `deleted_at` UPDATE must share one snapshot, or a project created against this client
- * in between would be left pointing at an archived client.
+ * fix §17.7 #2 prescribes for `getDeactivationBlockers`: the usage check and the `deleted_at`
+ * UPDATE must share one snapshot, or a project created against this client in between would be
+ * left pointing at an archived client.
  */
 export interface ClientProjectUsage {
   liveProjects: Array<{ projectId: string; name: string }>;
@@ -35,9 +34,19 @@ export async function getClientProjectUsage(
   executor: Executor,
   clientId: string,
 ): Promise<ClientProjectUsage> {
-  void executor; // in the signature from day one; PUL-401 is what starts reading them
-  void clientId;
-  return { liveProjects: [] };
+  const rows = await executor
+    .select({ projectId: projects.id, name: projects.name })
+    .from(projects)
+    .where(
+      and(
+        eq(projects.clientId, clientId),
+        eq(projects.status, 'active'),
+        isNull(projects.deletedAt),
+      ),
+    )
+    .orderBy(asc(projects.name));
+
+  return { liveProjects: rows };
 }
 
 /** The columns a client picker needs. */

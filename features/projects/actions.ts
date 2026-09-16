@@ -4,15 +4,15 @@
 // validate → authorize → withTx → writeAudit → notify, inside the PUL-111 `actionResult`
 // boundary.
 //
-// Stage 1 is §13.3.1 `createProject` (manual) and §13.3.3 `updateProject`. Still to come:
-// §13.3.4 `archiveProject` / `unarchiveProject` (Stage 2), §13.3.5 `deleteProject`, and
+// §13.3.1 createProject · §13.3.3 updateProject · §13.3.4 archiveProject / unarchiveProject.
+// Still to come: §13.3.5 `deleteProject` (SA only), and
 // §13.3.2 `createProjectFromTemplate` (PUL-506, the Start Project wizard).
 
 'use server';
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db } from '../../db';
-import { clients, projects, user as userTable } from '../../db/schema';
+import { clients, projectTasks, projects, user as userTable } from '../../db/schema';
 import { actionResult } from '../../lib/action-result';
 import { authorize } from '../../lib/authz';
 import { clock } from '../../lib/clock';
@@ -21,7 +21,12 @@ import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES } from '../employees/queries';
-import { CreateProjectInput, UpdateProjectInput } from './schema';
+import {
+  ArchiveProjectInput,
+  CreateProjectInput,
+  UnarchiveProjectInput,
+  UpdateProjectInput,
+} from './schema';
 
 /**
  * Resolve a client that a project may legally point at: it must exist AND not be archived.
@@ -75,9 +80,11 @@ async function managerRecipients(): Promise<string[]> {
  * `status` is left to the column default (`'active'`, §11.2) rather than written explicitly:
  * the default IS the spec, and repeating it here would create a second place to change it.
  *
- * `deadline >= start_date` is not checked in code. The `deadline_after_start` CHECK constraint
- * (migration 0005) enforces it for every writer, including SQL run by hand, and a duplicate
- * app-side check would be a second source of truth that can drift.
+ * `deadline >= start_date` is checked twice on purpose: `CreateProjectInput`'s `.refine()` so
+ * the caller gets a parse error it can render, and the `deadline_after_start` CHECK constraint
+ * (migration 0005) so every other writer — including SQL run by hand — is held to it too. The
+ * constraint is the authority; the refine exists because a raw CHECK violation is not an
+ * `AppError` and would reach the client as a redacted crash.
  *
  * Notify: `N:project_started` → all MGR (§13.3.1), enqueued AFTER the transaction commits
  * (§12.4 step 5) — a rolled-back project must not announce itself.
@@ -165,10 +172,14 @@ type EditableField = keyof ProjectEdit;
  * Changing `clientId` re-runs the live-client guard: a project may not be moved onto an
  * archived client any more than it may be created on one.
  *
- * No archived-project guard yet. §13.3.4 makes archived projects read-only everywhere, so once
- * `archiveProject` lands (Stage 2) this action must refuse a target whose `status='archived'`.
- * Today no action can set that status, so the guard would be unreachable — it arrives with the
- * action that makes it reachable.
+ * **Archived projects are content-read-only** (§13.3.4): the guard below refuses any edit to a
+ * project whose `status='archived'`, before the diff is computed. Only `unarchiveProject` may
+ * move such a project, and it changes `status` alone — so there is no ordering in which an
+ * archived project's content can be edited without an explicit un-archive first.
+ *
+ * It is a GATE rather than a FORBIDDEN because the caller's *role* is fine; it is the target's
+ * state that refuses, and `reason: 'project_archived'` lets the toast say so and offer the
+ * un-archive path (§14.15).
  *
  * Notify: none (§13.3.3).
  */
@@ -191,6 +202,15 @@ export async function updateProject(input: UpdateProjectInput) {
 
       if (!current) {
         throw new AppError('NOT_FOUND', 'Project not found');
+      }
+
+      // §13.3.4: archived projects are read-only everywhere. Checked BEFORE the diff, so an
+      // archived project cannot be edited even by a payload that happens to change nothing.
+      if (current.status === 'archived') {
+        throw new AppError('GATE', 'This project is archived and cannot be edited', {
+          reason: 'project_archived',
+          projectId: current.id,
+        });
       }
 
       const submitted: ProjectEdit = {
@@ -245,5 +265,166 @@ export async function updateProject(input: UpdateProjectInput) {
     });
 
     // 5. NOTIFY — none for this action (§13.3.3).
+  });
+}
+
+/**
+ * §13.3.4 `archiveProject` — MGR (`project.archive`).
+ *
+ * Archiving sets `status='archived'`; it is NOT a soft delete (`deleted_at` is §13.3.5's
+ * `deleteProject`). The row stays fully readable: archived projects drop out of pickers and
+ * default filters but remain in `projectsListQuery`, which is where a manager confirms the
+ * archive took.
+ *
+ * Guard `GATE:pending_reviews` (§13.3.4): no task on the project may be `submitted`. Archiving
+ * out from under a pending review would strand work that someone is waiting on a decision for —
+ * the review queue would hold a task belonging to a project that is read-only everywhere else.
+ * The error carries the blocking task's id AND title so the toast can name it rather than
+ * saying "some task"; §14.15 requires gate errors to name the specific blocker.
+ *
+ * Archiving an already-archived project is a no-op with no audit row — the audit log records
+ * things that happened, and a double-click must not manufacture a second "archived" event.
+ * Same reasoning as `archiveClient`.
+ *
+ * Notify: none (§13.3.4).
+ */
+export async function archiveProject(input: ArchiveProjectInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ArchiveProjectInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('project.archive');
+
+    // 3. TRANSACT — the guard and the write share one snapshot, so a task submitted between
+    // the check and the UPDATE cannot slip through.
+    return await withTx(async (tx) => {
+      const [current] = await tx
+        .select({ id: projects.id, name: projects.name, status: projects.status })
+        .from(projects)
+        .where(and(eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+        .limit(1);
+
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Project not found');
+      }
+
+      if (current.status === 'archived') {
+        return current;
+      }
+
+      const blockers = await tx
+        .select({ id: projectTasks.id, title: projectTasks.title })
+        .from(projectTasks)
+        .where(
+          and(
+            eq(projectTasks.projectId, parsed.projectId),
+            eq(projectTasks.status, 'submitted'),
+            isNull(projectTasks.deletedAt),
+          ),
+        );
+
+      if (blockers.length > 0) {
+        // Name the first blocker in the message — §14.15 r.3: a gate says which task, not
+        // "some task". The full list rides in details for a UI that wants to render them all.
+        const [first] = blockers;
+        throw new AppError(
+          'GATE',
+          blockers.length === 1
+            ? `"${first.title}" is awaiting review. Decide it before archiving.`
+            : `"${first.title}" and ${blockers.length - 1} other task(s) are awaiting review. Decide them before archiving.`,
+          {
+            reason: 'pending_reviews',
+            taskId: first.id,
+            taskTitle: first.title,
+            taskIds: blockers.map((b) => b.id),
+            tasks: blockers,
+          },
+        );
+      }
+
+      const [row] = await tx
+        .update(projects)
+        .set({ status: 'archived', updatedAt: clock.now() })
+        .where(eq(projects.id, parsed.projectId))
+        .returning({ id: projects.id, name: projects.name, status: projects.status });
+
+      // 4. AUDIT — same tx (§9.8 `project.archived`).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project.archived',
+        resourceType: 'project',
+        resourceId: parsed.projectId,
+        before: { status: 'active' },
+        after: { status: 'archived' },
+      });
+
+      return row;
+    });
+
+    // 5. NOTIFY — none for this action (§13.3.4).
+  });
+}
+
+/**
+ * §13.3.4's reverse — `unarchiveProject`, MGR (`project.unarchive`).
+ *
+ * §13.3.4 defines the action and its audience ("same actors") but §9.6 has no row for it, so
+ * `project.unarchive` was added to `lib/authz.ts` encoded exactly like `project.archive` —
+ * the same gap `employee.reactivate` already had, and §9.6 should gain both rows.
+ *
+ * No guard beyond existence. Archiving is what has a precondition; restoring a project to the
+ * working set cannot strand anything, and the tasks that were there are still there — nothing
+ * was deleted, only hidden from default filters.
+ *
+ * Un-archiving an already-active project is a no-op with no audit row, mirroring archive.
+ *
+ * Notify: none (§13.3.4 names none).
+ */
+export async function unarchiveProject(input: UnarchiveProjectInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = UnarchiveProjectInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('project.unarchive');
+
+    // 3. TRANSACT
+    return await withTx(async (tx) => {
+      const [current] = await tx
+        .select({ id: projects.id, name: projects.name, status: projects.status })
+        .from(projects)
+        .where(and(eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+        .limit(1);
+
+      if (!current) {
+        throw new AppError('NOT_FOUND', 'Project not found');
+      }
+
+      if (current.status === 'active') {
+        return current;
+      }
+
+      const [row] = await tx
+        .update(projects)
+        .set({ status: 'active', updatedAt: clock.now() })
+        .where(eq(projects.id, parsed.projectId))
+        .returning({ id: projects.id, name: projects.name, status: projects.status });
+
+      // 4. AUDIT — same tx (§9.8 covers "project create/archive/delete"; the reverse of an
+      // audited act is itself accountability-bearing, so it is audited too).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project.unarchived',
+        resourceType: 'project',
+        resourceId: parsed.projectId,
+        before: { status: 'archived' },
+        after: { status: 'active' },
+      });
+
+      return row;
+    });
+
+    // 5. NOTIFY — none for this action (§13.3.4).
   });
 }

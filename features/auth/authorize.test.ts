@@ -2,7 +2,9 @@
 //
 // §15.4 mandatory test — "every role × every action in the §9.6 table, allow and deny
 // cells both asserted". Done-check (PUL-104): the cell count here equals the cell count
-// in §9.6 — 51 actions × 5 roles = 255.
+// in §9.6 — 53 actions × 5 roles = 265. Two of the 53 are actions §13 defines but §9.6 has
+// no row for — `employee.reactivate` (§13.1.5) and `project.unarchive` (§13.3.4); both are
+// noted at their entries below, and §9.6 should gain the rows.
 //
 // DELIBERATE: this file does NOT import PERMISSIONS from lib/authz.ts. The grid below is a
 // second, independent transcription of the §9.6 tables, hand-typed from the PRD. Importing
@@ -38,6 +40,8 @@ const EXPECTED: Record<string, [Expected, Expected, Expected, Expected, Expected
   'project.read': ['allow', 'allow', 'allow', 'allow', 'allow'],
   'project.update': ['allow', 'allow', 'allow', 'deny', 'deny'],
   'project.archive': ['allow', 'allow', 'allow', 'deny', 'deny'],
+  // §9.6 has no unarchive row; §13.3.4 says "Reverse: unarchiveProject (same actors)".
+  'project.unarchive': ['allow', 'allow', 'allow', 'deny', 'deny'],
   'project.delete': ['allow', 'deny', 'deny', 'deny', 'deny'],
 
   // Project tasks
@@ -105,7 +109,7 @@ function userFor(role: Role): User {
 }
 
 describe('can() encodes the §9.6 permission table', () => {
-  it('asserts every cell of the matrix — 255 = 51 actions × 5 roles', () => {
+  it('asserts every cell of the matrix — 265 = 53 actions × 5 roles', () => {
     let cells = 0;
 
     for (const [name, row] of Object.entries(EXPECTED)) {
@@ -150,7 +154,7 @@ describe('can() encodes the §9.6 permission table', () => {
 
     // The done-check, made mechanical: if §9.6 grows and this fixture wasn't updated to
     // match, the count differs and CI fails rather than silently under-testing.
-    expect(cells, 'cell count must equal §9.6').toBe(260);
-    expect(Object.keys(EXPECTED)).toHaveLength(52);
+    expect(cells, 'cell count must equal §9.6').toBe(265);
+    expect(Object.keys(EXPECTED)).toHaveLength(53);
   });
 });

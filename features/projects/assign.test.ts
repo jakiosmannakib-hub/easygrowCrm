@@ -266,6 +266,38 @@ describe('assignTask (§13.4.3)', () => {
     expect((await taskRow(assignedTask())).assigneeId).toBeNull();
   });
 
+  it('re-assigning to the current holder is a no-op: no second audit row, no notification', async () => {
+    actAs(seed.projectManager.id);
+
+    // `tasks[1]` is seeded already assigned to employees[0]; assign them again.
+    const result = expectOk(
+      await assignTask({ taskId: assignedTask(), assigneeId: seed.employees[0].id }),
+    );
+
+    expect(result.assigneeId).toBe(seed.employees[0].id);
+
+    // The row is untouched — including `updated_at`, which a real assignment would move to the
+    // frozen NOW. seedMinimal wrote it at the wall clock, so an unchanged row proves no UPDATE
+    // ran rather than merely proving the column still holds the same assignee.
+    const row = await taskRow(assignedTask());
+    expect(row.assigneeId).toBe(seed.employees[0].id);
+    expect(row.updatedAt.toISOString()).not.toBe(NOW.toISOString());
+
+    expect(await auditFor(assignedTask())).toHaveLength(0);
+    expect(__sentNotifications()).toHaveLength(0);
+  });
+
+  it('re-unassigning an already-unassigned task is a silent no-op (null === null)', async () => {
+    actAs(seed.projectManager.id);
+
+    const result = expectOk(await assignTask({ taskId: unassignedTask(), assigneeId: null }));
+
+    expect(result.assigneeId).toBeNull();
+    expect((await taskRow(unassignedTask())).assigneeId).toBeNull();
+    expect(await auditFor(unassignedTask())).toHaveLength(0);
+    expect(__sentNotifications()).toHaveLength(0);
+  });
+
   it('rejects a deactivated assignee with GATE:inactive_assignee', async () => {
     await db.update(userTable).set({ active: false }).where(eq(userTable.id, seed.employees[1].id));
     actAs(seed.projectManager.id);

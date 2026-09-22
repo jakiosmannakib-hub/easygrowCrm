@@ -681,14 +681,16 @@ export async function createTask(input: CreateTaskInput) {
  * **No `version` bump and no optimistic lock** (§13.4.3 defines neither). `updated_at` still
  * moves, from the clock port.
  *
- * Unlike the other write actions in this slice, an assignment to the person who already holds
- * the task is NOT short-circuited into a no-op: the notification is the point of this action,
- * and a manager re-sending "this is yours" is a real act that should reach the assignee and the
- * audit log. `updateProject`'s no-op rule exists because a form posts every field back
- * unchanged; nobody submits this action by accident.
+ * **Idempotent on an unchanged assignee**, the same rule as `updateProject`, `archiveProject`
+ * and `reactivateEmployee`: assigning a task to the person who already holds it — or
+ * unassigning one that is already unassigned — writes nothing at all. No UPDATE, no
+ * `updated_at` bump, no audit row, no notification; the current row comes back unchanged. The
+ * audit log records things that happened, and a double-clicked dropdown must not manufacture a
+ * second "assigned" event or re-ping someone who was told days ago.
  *
- * Notify: `N:task_assigned` → the new assignee (§13.4.3), after commit. An unassign notifies
- * nobody — there is no one to tell, and the previous holder learns it from the board.
+ * Notify: `N:task_assigned` → the new assignee (§13.4.3), after commit, **only when the
+ * assignee actually changed**. An unassign notifies nobody — there is no one to tell, and the
+ * previous holder learns it from the board.
  */
 export async function assignTask(input: AssignTaskInput) {
   return actionResult(async () => {
@@ -732,6 +734,22 @@ export async function assignTask(input: AssignTaskInput) {
         });
       }
 
+      // Nothing actually moved: no UPDATE, no `updated_at` bump, no audit row — and the caller
+      // gets the current row back, exactly as `updateProject` / `archiveProject` /
+      // `reactivateEmployee` do. The audit log records things that HAPPENED, and re-assigning a
+      // task to the person who already holds it (or re-unassigning an unassigned one) is not an
+      // event. `null === null` counts as unchanged, which is why this compares the values rather
+      // than testing for null.
+      //
+      // Placed AFTER the archived-project gate deliberately: §13.3.4 makes an archived project
+      // refuse edits even when the payload happens to change nothing, which is the same ordering
+      // `updateProject` documents. It runs BEFORE the assignee guard, so a no-change request
+      // naming a since-deactivated current holder stays a no-op instead of failing a guard on
+      // state it is not trying to alter.
+      if (parsed.assigneeId === task.assigneeId) {
+        return { row: task, changed: false };
+      }
+
       if (parsed.assigneeId !== null) {
         await requireAssignableUser(tx, parsed.assigneeId);
       }
@@ -759,23 +777,28 @@ export async function assignTask(input: AssignTaskInput) {
         after: { assigneeId: parsed.assigneeId },
       });
 
-      return row;
+      return { row, changed: true };
     });
 
     // 5. NOTIFY — after commit, never inside the tx (§13.4.3 `N:task_assigned` → new assignee).
-    if (result.assigneeId !== null) {
+    //
+    // `changed` rides out of the transaction rather than being re-derived here, because the two
+    // silent cases are indistinguishable from the returned row alone: a no-op on an already-held
+    // task returns a row with a non-null `assigneeId`, exactly like a real assignment does. The
+    // flag is what keeps a no-op from re-pinging someone who was told days ago.
+    if (result.changed && result.row.assigneeId !== null) {
       await notify({
-        to: result.assigneeId,
+        to: result.row.assigneeId,
         type: 'task_assigned',
         data: {
-          taskId: result.id,
-          taskTitle: result.title,
-          projectId: result.projectId,
+          taskId: result.row.id,
+          taskTitle: result.row.title,
+          projectId: result.row.projectId,
           assignedBy: actor.id,
         },
       });
     }
 
-    return result;
+    return result.row;
   });
 }

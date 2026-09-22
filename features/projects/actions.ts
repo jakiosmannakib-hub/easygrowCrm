@@ -1672,8 +1672,8 @@ export async function deleteChecklistItem(input: DeleteChecklistItemInput) {
  *
  *   - the task's assignee, if set;
  *   - the latest submission's `submitted_by`, if the task was ever submitted;
- *   - the reviewer who acted — the latest `task_reviews.reviewer_id` if any review exists,
- *     else the latest submission's `reviewer_id` routing hint (§9.7: a hint, not a lock).
+ *   - the reviewer for the latest submission — the reviewer of THAT submission if it has been
+ *     reviewed, else its `reviewer_id` routing hint (§9.7: a hint, not a lock).
  *
  * Nulls dropped, duplicates collapsed, and **the author removed** — nobody is notified of
  * their own comment. Read on the caller's `tx`, so the audience matches the snapshot the
@@ -1685,23 +1685,32 @@ async function commentRecipients(
   authorId: string,
 ): Promise<string[]> {
   const [latestSubmission] = await executor
-    .select({ submittedBy: taskSubmissions.submittedBy, reviewerId: taskSubmissions.reviewerId })
+    .select({
+      id: taskSubmissions.id,
+      submittedBy: taskSubmissions.submittedBy,
+      reviewerId: taskSubmissions.reviewerId,
+    })
     .from(taskSubmissions)
     .where(eq(taskSubmissions.taskId, task.id))
     .orderBy(desc(taskSubmissions.createdAt))
     .limit(1);
 
-  const [latestReview] = await executor
-    .select({ reviewerId: taskReviews.reviewerId })
-    .from(taskReviews)
-    .where(eq(taskReviews.taskId, task.id))
-    .orderBy(desc(taskReviews.createdAt))
-    .limit(1);
+  // The review is scoped to the LATEST SUBMISSION, never the task as a whole. A revision that
+  // was resubmitted but not yet re-reviewed still has a task-level "latest review" — from the
+  // PREVIOUS round — and reading that would notify the old reviewer while skipping the one now
+  // routed the work. `one_review_per_submission` makes this at most one row.
+  const [latestSubmissionReview] = latestSubmission
+    ? await executor
+        .select({ reviewerId: taskReviews.reviewerId })
+        .from(taskReviews)
+        .where(eq(taskReviews.submissionId, latestSubmission.id))
+        .limit(1)
+    : [];
 
   const candidates = [
     task.assigneeId,
     latestSubmission?.submittedBy,
-    latestReview?.reviewerId ?? latestSubmission?.reviewerId,
+    latestSubmissionReview?.reviewerId ?? latestSubmission?.reviewerId,
   ];
 
   return [...new Set(candidates)].filter(

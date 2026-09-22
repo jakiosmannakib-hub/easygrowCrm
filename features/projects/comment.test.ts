@@ -326,6 +326,34 @@ describe('N:task_comment recipients', () => {
     expect(commentRecipients()).toEqual([seed.employees[0].id, seed.teamLeader.id].sort());
   });
 
+  it('a resubmitted revision notifies the NEW round\'s reviewer, not the previous round\'s', async () => {
+    // Round 1: submitted by the assignee, reviewed by R1 (TL) → revision requested.
+    const round1 = await seedSubmission(empTask(), {
+      submittedBy: seed.employees[0].id,
+      reviewerId: seed.teamLeader.id,
+      minutesAgo: 60,
+    });
+    await seedReview(empTask(), round1, {
+      reviewerId: seed.teamLeader.id,
+      submitterId: seed.employees[0].id,
+      minutesAgo: 30,
+    });
+    // Round 2: resubmitted, routed to R2 (PM), NOT reviewed yet. The task's latest review is
+    // still round 1's — the trap the scoping exists to avoid.
+    await seedSubmission(empTask(), {
+      submittedBy: seed.employees[0].id,
+      reviewerId: seed.projectManager.id,
+      minutesAgo: 5,
+    });
+    actAs(seed.employees[1].id);
+
+    expectOk(await addComment({ taskId: empTask(), body: 'Second pass looks good' }));
+
+    // Assignee (= submitter, deduped) + R2. Not R1.
+    expect(commentRecipients()).toEqual([seed.employees[0].id, seed.projectManager.id].sort());
+    expect(commentRecipients()).not.toContain(seed.teamLeader.id);
+  });
+
   it('uses the LATEST submission, not the first', async () => {
     await seedSubmission(empTask(), { submittedBy: seed.employees[1].id, minutesAgo: 60 });
     await seedSubmission(empTask(), { submittedBy: seed.employees[2].id, minutesAgo: 5 });

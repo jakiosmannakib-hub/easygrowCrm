@@ -6,6 +6,9 @@
 //
 // §13.3.1 createProject · §13.3.3 updateProject · §13.3.4 archiveProject / unarchiveProject.
 // §13.4.1 createTask · §13.4.3 assignTask (PUL-403) — the slice owns project-task actions too.
+// §13.4.4 changeTaskStatusOpen · §13.4.5 setTaskStatusProtected (PUL-404).
+// §13.4.9 addSubtask / toggleSubtask / deleteSubtask (PUL-405).
+// §13.4.10 toggleChecklistItem / addChecklistItem / deleteChecklistItem (PUL-405).
 // Still to come: §13.3.5 `deleteProject` (SA only) and §13.3.2 `createProjectFromTemplate`
 // (PUL-506, the Start Project wizard).
 
@@ -18,10 +21,11 @@ import {
   projectTasks,
   projects,
   taskChecklistItems,
+  taskSubtasks,
   user as userTable,
 } from '../../db/schema';
 import { actionResult } from '../../lib/action-result';
-import { authorize } from '../../lib/authz';
+import { authorize, type User } from '../../lib/authz';
 import { clock } from '../../lib/clock';
 import { AppError } from '../../lib/errors';
 import { withTx, type Executor } from '../../lib/mutation';
@@ -29,12 +33,18 @@ import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES } from '../employees/queries';
 import {
+  AddChecklistItemInput,
+  AddSubtaskInput,
   ArchiveProjectInput,
   AssignTaskInput,
   ChangeTaskStatusOpenInput,
   CreateProjectInput,
   CreateTaskInput,
+  DeleteChecklistItemInput,
+  DeleteSubtaskInput,
   SetTaskStatusProtectedInput,
+  ToggleChecklistItemInput,
+  ToggleSubtaskInput,
   UnarchiveProjectInput,
   UpdateProjectInput,
 } from './schema';
@@ -1149,5 +1159,500 @@ export async function setTaskStatusProtected(input: SetTaskStatusProtectedInput)
     }
 
     return result.row;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §13.4.9 subtasks (PUL-405).
+//
+// **Subtasks are informational only — they NEVER gate submission** (§13.4.9, §9.6 ⁷, §16.8).
+// Nothing in this block reads, writes or participates in a submission gate, and nothing should:
+// the checklist (§13.4.10, `task_checklist_items`) is the definition-of-done that `submitTask`
+// checks; subtasks exist only to help the assignee break the work down.
+//
+// No `version` / optimistic lock here. These actions write `task_subtasks` child rows, never
+// the `project_tasks` row, so there is no task version to race over — and §13.4.9 specifies
+// none.
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** The task fields the subtask and checklist guards decide on. */
+type ChildEditTask = {
+  id: string;
+  title: string;
+  projectId: string;
+  assigneeId: string | null;
+  status: (typeof projectTasks.$inferSelect)['status'];
+  /** The parent project's status — `archived` makes every child row read-only (§13.3.4). */
+  projectStatus: (typeof projects.$inferSelect)['status'];
+};
+
+/**
+ * Resolve a live task by id: NOT_FOUND when missing or soft-deleted. Joined to its project so
+ * the archived guard has the project's status without a second read.
+ *
+ * Takes the executor FIRST, the slice convention: called once on the global `db` for the
+ * pre-`authorize` subject read, and again on `tx` so the guards see the transaction's snapshot.
+ */
+async function requireLiveTask(executor: Executor, taskId: string): Promise<ChildEditTask> {
+  const [task] = await executor
+    .select({
+      id: projectTasks.id,
+      title: projectTasks.title,
+      projectId: projectTasks.projectId,
+      assigneeId: projectTasks.assigneeId,
+      status: projectTasks.status,
+      projectStatus: projects.status,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .where(and(eq(projectTasks.id, taskId), isNull(projectTasks.deletedAt)))
+    .limit(1);
+
+  if (!task) {
+    throw new AppError('NOT_FOUND', 'Task not found');
+  }
+
+  return task;
+}
+
+/**
+ * Resolve a subtask AND its live task. NOT_FOUND if the subtask is missing, or if its task is
+ * soft-deleted — a subtask of a deleted task is not something anyone can act on.
+ * (`task_subtasks` has no `deleted_at` of its own; removal is a hard delete.)
+ */
+async function requireSubtask(executor: Executor, subtaskId: string) {
+  const [subtask] = await executor
+    .select()
+    .from(taskSubtasks)
+    .where(eq(taskSubtasks.id, subtaskId))
+    .limit(1);
+
+  if (!subtask) {
+    throw new AppError('NOT_FOUND', 'Subtask not found');
+  }
+
+  const task = await requireLiveTask(executor, subtask.taskId);
+  return { subtask, task };
+}
+
+/**
+ * Archived projects are read-only everywhere (§13.3.4) → `GATE:project_archived`, the reason
+ * `createTask` / `assignTask` / `updateProject` already use. Applies to EVERY role — a manager
+ * cannot edit an archived project's tasks either; un-archiving is the way back.
+ *
+ * Standalone because the checklist add/delete actions need this guard WITHOUT the ownership
+ * and submitted-lock checks in `guardTaskChildEdit` (they are MGR-only and never locked).
+ */
+function guardProjectNotArchived(task: ChildEditTask): void {
+  if (task.projectStatus === 'archived') {
+    throw new AppError('GATE', 'This project is archived and its tasks cannot be edited', {
+      reason: 'project_archived',
+      projectId: task.projectId,
+      taskId: task.id,
+    });
+  }
+}
+
+/**
+ * The row-level guard for editing a task's child rows — subtasks (§13.4.9) and checklist
+ * toggles (§13.4.10). Call it INSIDE the transaction, on the tx-read task.
+ *
+ *   0. **Archived project** → `GATE:project_archived`, for every role (`guardProjectNotArchived`).
+ *   1. **Ownership.** A non-manager must be the task's assignee → `FORBIDDEN` `not_assignee`
+ *      (PUL-404's reason). `authorize()` already decided this from the pre-read; this re-check
+ *      on the transaction's snapshot closes the reassigned-mid-flight race, exactly as in
+ *      `changeTaskStatusOpen`.
+ *   2. **The post-submission lock.** A non-manager cannot edit while the task is `submitted`
+ *      → `GATE:locked` (§14.3.3 lock). Managers bypass BOTH: §13.4.9 "MGR edits remain
+ *      possible via the manager-override path and never retro-gate", and §4.3 lets a manager
+ *      override anything.
+ *
+ * "Manager" is `MANAGER_ROLES`, and the test is "not a manager" rather than "is an employee"
+ * so the guard fails closed: any role that is not manager-level gets both checks. (HR never
+ * reaches here — §9.6 denies it at `authorize`.)
+ *
+ * Subtasks are informational: this guard protects the ROWS from being edited, it does not
+ * gate submission — see the block comment above.
+ */
+function guardTaskChildEdit(actor: User, task: ChildEditTask): void {
+  // First, and before the manager early-return: archived binds managers too.
+  guardProjectNotArchived(task);
+
+  if ((MANAGER_ROLES as readonly string[]).includes(actor.role)) return;
+
+  if (task.assigneeId !== actor.id) {
+    throw new AppError('FORBIDDEN', 'This task is not assigned to you', {
+      reason: 'not_assignee',
+    });
+  }
+
+  if (task.status === 'submitted') {
+    throw new AppError('GATE', `"${task.title}" is awaiting review and is locked`, {
+      reason: 'locked',
+      status: task.status,
+      taskId: task.id,
+    });
+  }
+}
+
+/**
+ * §13.4.9 `addSubtask` — assignee or MGR (`project_task.subtask_manage`, §9.6 ⁷: SA / TL / PM
+ * allow, HR deny, EMP conditional `assignee`).
+ *
+ * The task is read before `authorize` because the EMP cell is conditional on its assignee —
+ * the same sanctioned pre-read as `changeTaskStatusOpen`. `position` is max + 1 for the task
+ * (0 for the first), so new subtasks land at the end of the list.
+ *
+ * Notify: none — §13.4.9 lists no notification.
+ */
+export async function addSubtask(input: AddSubtaskInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = AddSubtaskInput.parse(input);
+
+    // 1b. SUBJECT READ — decides nothing; the EMP cell needs the assignee.
+    const subject = await requireLiveTask(db, parsed.taskId);
+
+    // 2. AUTHORIZE
+    const actor = await authorize('project_task.subtask_manage', {
+      assigneeId: subject.assigneeId ?? undefined,
+    });
+
+    // 3. TRANSACT
+    const row = await withTx(async (tx) => {
+      const task = await requireLiveTask(tx, parsed.taskId);
+      guardTaskChildEdit(actor, task);
+
+      // `max()` comes back from the driver as a string or null; the coalesce makes the first
+      // subtask position 0, and Number() normalises the type.
+      const [{ next }] = await tx
+        .select({ next: sql<number>`coalesce(max(${taskSubtasks.position}), -1) + 1` })
+        .from(taskSubtasks)
+        .where(eq(taskSubtasks.taskId, task.id));
+
+      const [created] = await tx
+        .insert(taskSubtasks)
+        .values({
+          id: `ts_${crypto.randomUUID()}`,
+          taskId: task.id,
+          text: parsed.text,
+          done: false,
+          position: Number(next),
+          createdBy: actor.id,
+          createdAt: clock.now(),
+        })
+        .returning();
+
+      // 4. AUDIT — same tx. Keyed on the TASK, so the task's history shows its subtask edits.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.subtask_added',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: null,
+        after: created,
+      });
+
+      return created;
+    });
+
+    // 5. NOTIFY — none (§13.4.9).
+
+    return row;
+  });
+}
+
+/**
+ * §13.4.9 `toggleSubtask` — same permission and guards as `addSubtask`.
+ *
+ * `done` is the desired value (see `ToggleSubtaskInput`). When the row already holds it, the
+ * call is an idempotent no-op — no UPDATE, no audit row — the slice convention for no-ops.
+ * The no-op sits AFTER the guards, so a locked or foreign task is refused rather than
+ * silently "succeeding".
+ *
+ * Notify: none.
+ */
+export async function toggleSubtask(input: ToggleSubtaskInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ToggleSubtaskInput.parse(input);
+
+    // 1b. SUBJECT READ
+    const { task: subject } = await requireSubtask(db, parsed.subtaskId);
+
+    // 2. AUTHORIZE
+    const actor = await authorize('project_task.subtask_manage', {
+      assigneeId: subject.assigneeId ?? undefined,
+    });
+
+    // 3. TRANSACT
+    const row = await withTx(async (tx) => {
+      const { subtask, task } = await requireSubtask(tx, parsed.subtaskId);
+      guardTaskChildEdit(actor, task);
+
+      if (subtask.done === parsed.done) {
+        return subtask;
+      }
+
+      const [updated] = await tx
+        .update(taskSubtasks)
+        .set({ done: parsed.done })
+        .where(eq(taskSubtasks.id, subtask.id))
+        .returning();
+
+      // 4. AUDIT — same tx.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.subtask_toggled',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: { subtaskId: subtask.id, done: subtask.done },
+        after: { subtaskId: updated.id, done: updated.done },
+      });
+
+      return updated;
+    });
+
+    // 5. NOTIFY — none (§13.4.9).
+
+    return row;
+  });
+}
+
+/**
+ * §13.4.9 `deleteSubtask` — same permission and guards as `addSubtask`.
+ *
+ * A hard DELETE: `task_subtasks` has no `deleted_at` (§11.3.1). The removed row survives in
+ * the audit row's `before`, which is the record of what was there.
+ *
+ * Notify: none.
+ */
+export async function deleteSubtask(input: DeleteSubtaskInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = DeleteSubtaskInput.parse(input);
+
+    // 1b. SUBJECT READ
+    const { task: subject } = await requireSubtask(db, parsed.subtaskId);
+
+    // 2. AUTHORIZE
+    const actor = await authorize('project_task.subtask_manage', {
+      assigneeId: subject.assigneeId ?? undefined,
+    });
+
+    // 3. TRANSACT
+    const removed = await withTx(async (tx) => {
+      const { subtask, task } = await requireSubtask(tx, parsed.subtaskId);
+      guardTaskChildEdit(actor, task);
+
+      await tx.delete(taskSubtasks).where(eq(taskSubtasks.id, subtask.id));
+
+      // 4. AUDIT — same tx.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.subtask_removed',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: subtask,
+        after: null,
+      });
+
+      return subtask;
+    });
+
+    // 5. NOTIFY — none (§13.4.9).
+
+    return removed;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §13.4.10 checklist (PUL-405).
+//
+// The checklist is the definition-of-done, and the permission split says so (§9.6 ⁷):
+// employees COMPLETE it (`checklist_toggle`: assignee or MGR), managers DEFINE it
+// (`checklist_manage`: MGR only). It gates submission — but that gate is PUL-601's
+// `submitTask`, which consumes `checklistComplete` from queries.ts; nothing here gates anything.
+//
+// No `version` lock: these write `task_checklist_items` child rows, not the task row.
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a checklist item AND its live task. NOT_FOUND if the item is missing or its task is
+ * soft-deleted. (`task_checklist_items` has no `deleted_at`; removal is a hard delete.)
+ */
+async function requireChecklistItem(executor: Executor, itemId: string) {
+  const [item] = await executor
+    .select()
+    .from(taskChecklistItems)
+    .where(eq(taskChecklistItems.id, itemId))
+    .limit(1);
+
+  if (!item) {
+    throw new AppError('NOT_FOUND', 'Checklist item not found');
+  }
+
+  const task = await requireLiveTask(executor, item.taskId);
+  return { item, task };
+}
+
+/**
+ * §13.4.10 `toggleChecklistItem` — assignee or MGR (`project_task.checklist_toggle`, §9.6 ⁷:
+ * SA / TL / PM allow, HR deny, EMP conditional `assignee`).
+ *
+ * Guards are `guardTaskChildEdit`'s, the same as a subtask: archived project refused for all;
+ * a non-manager must be the assignee and is locked out while `submitted`.
+ *
+ * `done` is the desired value; a repeat is a no-op (no UPDATE, no audit row).
+ *
+ * Notify: none — §13.4.10 lists no notification.
+ */
+export async function toggleChecklistItem(input: ToggleChecklistItemInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ToggleChecklistItemInput.parse(input);
+
+    // 1b. SUBJECT READ — decides nothing; the EMP cell needs the assignee.
+    const { task: subject } = await requireChecklistItem(db, parsed.itemId);
+
+    // 2. AUTHORIZE
+    const actor = await authorize('project_task.checklist_toggle', {
+      assigneeId: subject.assigneeId ?? undefined,
+    });
+
+    // 3. TRANSACT
+    const row = await withTx(async (tx) => {
+      const { item, task } = await requireChecklistItem(tx, parsed.itemId);
+      guardTaskChildEdit(actor, task);
+
+      if (item.done === parsed.done) {
+        return item;
+      }
+
+      const [updated] = await tx
+        .update(taskChecklistItems)
+        .set({ done: parsed.done })
+        .where(eq(taskChecklistItems.id, item.id))
+        .returning();
+
+      // 4. AUDIT — same tx, keyed on the task.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.checklist_toggled',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: { itemId: item.id, done: item.done },
+        after: { itemId: updated.id, done: updated.done },
+      });
+
+      return updated;
+    });
+
+    // 5. NOTIFY — none (§13.4.10).
+
+    return row;
+  });
+}
+
+/**
+ * §13.4.10 `addChecklistItem` — MGR only (`project_task.checklist_manage`, §9.6 ⁷). Even the
+ * assignee is refused: employees complete the definition-of-done, they do not redefine it.
+ *
+ * Guards: the archived-project guard only. **No submitted lock** — a manager may add an item
+ * to a task that is already `submitted`, and doing so does **not** retro-gate that submission
+ * (§13.4.10, §13.4.2): the task's status and version are left alone, and the pending review
+ * proceeds. The new item binds the NEXT submit, should the task come back in revision.
+ *
+ * Notify: none.
+ */
+export async function addChecklistItem(input: AddChecklistItemInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = AddChecklistItemInput.parse(input);
+
+    // 2. AUTHORIZE — unconditional MGR cell, so no subject read is needed first.
+    const actor = await authorize('project_task.checklist_manage');
+
+    // 3. TRANSACT
+    const row = await withTx(async (tx) => {
+      const task = await requireLiveTask(tx, parsed.taskId);
+      guardProjectNotArchived(task);
+
+      const [{ next }] = await tx
+        .select({ next: sql<number>`coalesce(max(${taskChecklistItems.position}), -1) + 1` })
+        .from(taskChecklistItems)
+        .where(eq(taskChecklistItems.taskId, task.id));
+
+      const [created] = await tx
+        .insert(taskChecklistItems)
+        .values({
+          id: `tci_${crypto.randomUUID()}`,
+          taskId: task.id,
+          text: parsed.text,
+          done: false,
+          position: Number(next),
+          createdAt: clock.now(),
+        })
+        .returning();
+
+      // 4. AUDIT — same tx. Add and delete share `checklist_edited` (§13.4.10); `before: null`
+      // vs `after: null` tells them apart.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.checklist_edited',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: null,
+        after: created,
+      });
+
+      return created;
+    });
+
+    // 5. NOTIFY — none (§13.4.10).
+
+    return row;
+  });
+}
+
+/**
+ * §13.4.10 `deleteChecklistItem` — MGR only (`project_task.checklist_manage`).
+ *
+ * Guards: archived project only; no submitted lock (same reasoning as `addChecklistItem`).
+ * A hard DELETE — the removed row lives on in the audit row's `before`.
+ *
+ * Notify: none.
+ */
+export async function deleteChecklistItem(input: DeleteChecklistItemInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = DeleteChecklistItemInput.parse(input);
+
+    // 2. AUTHORIZE — unconditional MGR cell.
+    const actor = await authorize('project_task.checklist_manage');
+
+    // 3. TRANSACT
+    const removed = await withTx(async (tx) => {
+      const { item, task } = await requireChecklistItem(tx, parsed.itemId);
+      guardProjectNotArchived(task);
+
+      await tx.delete(taskChecklistItems).where(eq(taskChecklistItems.id, item.id));
+
+      // 4. AUDIT — same tx; shares `checklist_edited` with add (§13.4.10).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.checklist_edited',
+        resourceType: 'project_task',
+        resourceId: task.id,
+        before: item,
+        after: null,
+      });
+
+      return item;
+    });
+
+    // 5. NOTIFY — none (§13.4.10).
+
+    return removed;
   });
 }

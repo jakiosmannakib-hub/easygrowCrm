@@ -9,7 +9,8 @@
 
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { db } from '../../db';
-import { clients, projects } from '../../db/schema';
+import { clients, projects, taskChecklistItems } from '../../db/schema';
+import type { Executor } from '../../lib/mutation';
 
 /** The columns a project picker needs. Kept narrow — the client name is for disambiguation. */
 export interface PickableProject {
@@ -95,4 +96,28 @@ export async function projectsListQuery(): Promise<ProjectRow[]> {
     .innerJoin(clients, eq(projects.clientId, clients.id))
     .where(isNull(projects.deletedAt))
     .orderBy(asc(projects.name));
+}
+
+/**
+ * Is the task's checklist complete? True when the task has NO checklist items, or every one is
+ * `done` — i.e. false exactly when at least one item is still unchecked.
+ *
+ * **This is the predicate §13.4.6 `submitTask` (PUL-601, Phase 6) will consume as
+ * `GATE:checklist_incomplete`.** It is NOT a gate itself, and no submit gate is built here —
+ * PUL-405 only ships the predicate so the gate has one tested definition to call.
+ *
+ * Checklist only, deliberately: **subtasks never gate submission** (§9.6 ⁷, §16.8), so
+ * `task_subtasks` is not read here and must never be added.
+ *
+ * Executor FIRST, like the slice's action helpers, so `submitTask` can pass its `tx` and decide
+ * on the same snapshot it writes against.
+ */
+export async function checklistComplete(executor: Executor, taskId: string): Promise<boolean> {
+  const [unchecked] = await executor
+    .select({ id: taskChecklistItems.id })
+    .from(taskChecklistItems)
+    .where(and(eq(taskChecklistItems.taskId, taskId), eq(taskChecklistItems.done, false)))
+    .limit(1);
+
+  return unchecked === undefined;
 }

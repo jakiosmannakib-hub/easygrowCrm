@@ -725,10 +725,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > from a §11.9 number. Generated files are renamed to descriptive slugs (drizzle emits names like
 > `0006_hard_karma`), with the journal `tag` updated to match.
 
-> **Built in three stages on `feat/pul-401-project-side-tables`; NOT yet merged.** All four
-> subtasks are implemented and the full local gate is green (`tsc --noEmit`, ESLint, `vitest run`
-> 152 passing, `drizzle-kit check`, mandatory-test manifest). Per CONTRIBUTING, Jaki merges — the
-> boxes record the work, not the merge.
+> **Built in three stages on `feat/pul-401-project-side-tables`; merged in PR #27.** All four
+> subtasks are implemented and the full local gate was green (`tsc --noEmit`, ESLint, `vitest run`
+> 152 passing, `drizzle-kit check`, mandatory-test manifest).
 >
 > **No test file was added, and the manifest is unchanged at 13.** This ticket is schema +
 > fixtures, and §15.4 lists nothing for it; the constraint probes above were throwaway SQL, not
@@ -749,12 +748,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §13.3, §14.3 header · **Depends:** PUL-401
 
-- [ ] 402.1 Create-project action (client, name, type, start month) — the manual path; template path is Phase 5
-- [ ] 402.2 Edit-project action (name, dates)
-- [ ] 402.3 Archive action: `GATE:pending_reviews` when any task is `submitted`; archived projects read-only, out of default filters
-- [ ] 402.4 Tests: CRUD + archive gate + audit
+- [x] 402.1 Create-project action (client, name, type, start month) — the manual path; template path is Phase 5
+- [x] 402.2 Edit-project action (name, dates)
+- [x] 402.3 Archive action: `GATE:pending_reviews` when any task is `submitted`; archived projects read-only, out of default filters. Reverse `unarchiveProject` (§13.3.4) shipped alongside.
+- [x] 402.4 Tests: CRUD + archive gate + audit — `create-project`, `update-project`, `archive-project`, `unarchive-project` `.test.ts` in `features/projects/`
 
-**Done when:** archiving with a pending review is impossible and the toast names the task.
+**Done when:** ✅ archiving with a pending review is impossible and the toast names the task (the GATE message names the first `submitted` task; the full list rides in `meta.tasks`).
+
+> **Merged in PR #28.**
 
 ---
 
@@ -762,13 +763,15 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §13.4.1, §13.4.3 · **Depends:** PUL-401
 
-- [ ] 403.1 Create-task: full §13.4.1 field set; category pre-fill support
-- [ ] 403.2 Assign: active non-SA only; app check + DB trigger (401.3) both
-- [ ] 403.3 No self-claim exists anywhere (§13.4.3 — managers assign; verify no such action)
-- [ ] 403.4 Assignment notifies the assignee
-- [ ] 403.5 Test: `features/projects/assign.test.ts` (SA rejected at both layers) → CI manifest
+- [x] 403.1 Create-task: full §13.4.1 field set; category pre-fill support (server side: `category` is a free-text input; the pre-filled picker is UI and lands with the Task Detail / create-task UI)
+- [x] 403.2 Assign: active non-SA only; app check + DB trigger (401.3) both
+- [x] 403.3 No self-claim exists anywhere (§13.4.3 — managers assign; verify no such action) — verified and recorded in the `assignTask` docblock; `assign.test.ts` doubles as the proof
+- [x] 403.4 Assignment notifies the assignee
+- [x] 403.5 Test: `features/projects/assign.test.ts` (SA rejected at both layers) → CI manifest
 
-**Done when:** both enforcement layers proven in one test file.
+**Done when:** ✅ both enforcement layers proven in one test file.
+
+> **Merged in PR #29.** Also ships `create-task.test.ts`.
 
 ---
 
@@ -776,14 +779,21 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.2, §13.4.4, §13.4.6 · **Depends:** PUL-403
 
-- [ ] 404.1 Shared `<StatusPill>`: exact labels/colors per §14.3.2 (Approved gets the check-shield; Completed doesn't)
-- [ ] 404.2 Dropdown option sets per role; locked states read-only; "Done (Approved)" **absent** from the dropdown (`GATE:use_review`)
-- [ ] 404.3 MGR "Completed" = explicit QC bypass, audited as `status_overridden`
-- [ ] 404.4 Dependency guard: unresolved dependency renders Blocked + lock + tooltip naming the dependency; server rejects transitions on blocked tasks
-- [ ] 404.5 Revision requires a note (modal)
-- [ ] 404.6 Test: `features/projects/status-transitions.test.ts` — every legal + illegal transition per role → CI manifest
+- [ ] 404.1 Shared `<StatusPill>`: exact labels/colors per §14.3.2 (Approved gets the check-shield; Completed doesn't) — **not built** (no component exists yet)
+- [ ] 404.2 Dropdown option sets per role; locked states read-only; "Done (Approved)" **absent** from the dropdown (`GATE:use_review`) — **server half done:** `setTaskStatusProtected` refuses `approved` with `GATE:use_review`, and `changeTaskStatusOpen` refuses locked states with `GATE:locked`. The dropdown UI is not built.
+- [x] 404.3 MGR "Completed" = explicit QC bypass, audited as `status_overridden`
+- [ ] 404.4 Dependency guard: unresolved dependency renders Blocked + lock + tooltip naming the dependency; server rejects transitions on blocked tasks — **open on both layers.** `changeTaskStatusOpen` does not read `depends_on` today, and there is no UI yet. (The stored `blocked` status is a separate thing; the dependency lock is display-only and never stored. See the `OPEN_STATUSES` docblock.)
+- [ ] 404.5 Revision requires a note (modal) — **server half done:** `GATE:note_required` in `setTaskStatusProtected`. The modal is not built.
+- [x] 404.6 Test: `features/projects/status-transitions.test.ts` — every legal + illegal transition per role → CI manifest
 
-**Done when:** the transition test enumerates the full matrix.
+**Done when:** ✅ the transition test enumerates the full matrix (open §13.4.4 and protected §13.4.5, per role, plus the optimistic lock).
+
+> **Merged in PR #30 — server half only.** `changeTaskStatusOpen` (the reference optimistic-lock
+> implementation) and `setTaskStatusProtected` shipped with their mandatory test, so the "Done
+> when" is met. The ticket is **not** closed: the UI pieces (404.1, 404.2 dropdown, 404.4 render,
+> 404.5 modal) fit naturally into **PUL-407 Task Detail modal**, which depends on this ticket.
+> The **server-side dependency guard in 404.4 is a real gap**, not only UI, and must land before
+> PUL-601 `submitTask`, whose §13.4.6 gates include the dependency check.
 
 ---
 

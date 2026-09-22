@@ -5,14 +5,21 @@
 // boundary.
 //
 // §13.3.1 createProject · §13.3.3 updateProject · §13.3.4 archiveProject / unarchiveProject.
-// Still to come: §13.3.5 `deleteProject` (SA only), and
-// §13.3.2 `createProjectFromTemplate` (PUL-506, the Start Project wizard).
+// §13.4.1 createTask (PUL-403 Stage 1) — the slice owns project-task actions too.
+// Still to come: §13.3.5 `deleteProject` (SA only), §13.3.2 `createProjectFromTemplate`
+// (PUL-506, the Start Project wizard), and §13.4.3 `assignTask` (PUL-403 Stage 2).
 
 'use server';
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db } from '../../db';
-import { clients, projectTasks, projects, user as userTable } from '../../db/schema';
+import {
+  clients,
+  projectTasks,
+  projects,
+  taskChecklistItems,
+  user as userTable,
+} from '../../db/schema';
 import { actionResult } from '../../lib/action-result';
 import { authorize } from '../../lib/authz';
 import { clock } from '../../lib/clock';
@@ -24,6 +31,7 @@ import { MANAGER_ROLES } from '../employees/queries';
 import {
   ArchiveProjectInput,
   CreateProjectInput,
+  CreateTaskInput,
   UnarchiveProjectInput,
   UpdateProjectInput,
 } from './schema';
@@ -426,5 +434,195 @@ export async function unarchiveProject(input: UnarchiveProjectInput) {
     });
 
     // 5. NOTIFY — none for this action (§13.3.4).
+  });
+}
+
+/**
+ * §13.4.1 `createTask` — MGR (`project_task.create`, §9.6: SA / TL / PM allow, HR / EMP deny).
+ *
+ * The three §13.4.1 guards, in the order the transaction applies them:
+ *
+ *   1. **Project active.** Missing or soft-deleted → `NOT_FOUND`; `status='archived'` → `GATE`
+ *      with `reason: 'project_archived'` — the SAME reason string `updateProject` already
+ *      throws, not a second one, because it is the same rule: §13.3.4 makes archived projects
+ *      read-only everywhere, and adding work to one is exactly what archiving prevents.
+ *
+ *   2. **Assignee active and not SA.** Amendment E / §9.7-4: the super_admin is the CEO and
+ *      never executes delivery work. The `pt_no_sa_assignee` trigger (migration 0006) is the
+ *      belt and this check is the braces — and the check has to come FIRST, because a trigger
+ *      rejection surfaces as a raw Postgres error, which is not an `AppError` and so is
+ *      re-thrown by `actionResult` and redacted in production. Without the app-layer check the
+ *      manager would get an opaque digest instead of "pick someone else".
+ *
+ *   3. **`dependsOn` is a live task in the same project.** No cycle walk is needed here: the
+ *      task being created does not exist yet, so nothing can depend on it, so no edge added
+ *      now can close a loop — a cycle is structurally impossible at create time, and the
+ *      `no_self_dependency` CHECK backs the one-hop case. **The full chain walk belongs to
+ *      §13.4.2 `updateTaskFields`** (a later ticket), where an existing task with existing
+ *      dependents CAN acquire an edge that closes a cycle.
+ *
+ * Timestamps come from the clock port rather than the column defaults, so `created_at` and
+ * `updated_at` sit on one timeline under a frozen test clock — the same reason `createProject`
+ * and `createClient` do it.
+ *
+ * Notify: `N:task_assigned` → the assignee if one was named (§13.4.1), enqueued AFTER the
+ * transaction commits (§12.4 step 5) — a rolled-back task must not announce itself. The type
+ * is already in the `NotificationType` union (§13.9); nothing was added there.
+ */
+export async function createTask(input: CreateTaskInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = CreateTaskInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('project_task.create');
+
+    // 3. TRANSACT — every guard reads on `tx`, so the checks and the insert share one snapshot
+    // and a project archived (or an assignee deactivated) mid-flight cannot slip through.
+    const row = await withTx(async (tx) => {
+      // The same read `updateProject` uses: soft-deleted rows are invisible, then archived is
+      // a separate, more specific refusal.
+      const [project] = await tx
+        .select({ id: projects.id, status: projects.status })
+        .from(projects)
+        .where(and(eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+        .limit(1);
+
+      if (!project) {
+        throw new AppError('NOT_FOUND', 'Project not found');
+      }
+
+      if (project.status === 'archived') {
+        throw new AppError('GATE', 'This project is archived and cannot take new tasks', {
+          reason: 'project_archived',
+          projectId: project.id,
+        });
+      }
+
+      if (parsed.assigneeId !== undefined) {
+        const [assignee] = await tx
+          .select({ id: userTable.id, name: userTable.name, role: userTable.role, active: userTable.active })
+          .from(userTable)
+          .where(eq(userTable.id, parsed.assigneeId))
+          .limit(1);
+
+        if (!assignee) {
+          throw new AppError('NOT_FOUND', 'Assignee not found');
+        }
+
+        // `active` is checked before `role`: an offboarded teammate is the likelier mistake and
+        // "they are deactivated" is the more actionable sentence. Both are hard refusals, and
+        // a deactivated SA is refused either way.
+        if (!assignee.active) {
+          throw new AppError('GATE', `${assignee.name} is deactivated and cannot hold tasks`, {
+            reason: 'inactive_assignee',
+            assigneeId: assignee.id,
+          });
+        }
+
+        if (assignee.role === 'super_admin') {
+          throw new AppError('GATE', 'A super admin can never be assigned delivery work', {
+            reason: 'sa_assignee',
+            assigneeId: assignee.id,
+          });
+        }
+      }
+
+      if (parsed.dependsOn !== undefined) {
+        const [target] = await tx
+          .select({ id: projectTasks.id, projectId: projectTasks.projectId })
+          .from(projectTasks)
+          .where(and(eq(projectTasks.id, parsed.dependsOn), isNull(projectTasks.deletedAt)))
+          .limit(1);
+
+        // One refusal for "no such live task" and "lives in another project" alike: from the
+        // caller's side both mean the same thing — that id is not something this task may
+        // depend on. §13.4.1 names the rule as "same project", so the reason says that.
+        if (!target || target.projectId !== parsed.projectId) {
+          throw new AppError(
+            'GATE',
+            'A task can only depend on another task in the same project',
+            { reason: 'bad_dependency', dependsOn: parsed.dependsOn },
+          );
+        }
+      }
+
+      const id = `pt_${crypto.randomUUID()}`;
+      const now = clock.now();
+
+      const [created] = await tx
+        .insert(projectTasks)
+        .values({
+          id,
+          projectId: parsed.projectId,
+          title: parsed.title,
+          category: parsed.category,
+          month: parsed.month ?? null,
+          description: parsed.description ?? null,
+          assigneeId: parsed.assigneeId ?? null,
+          dueDate: parsed.dueDate ?? null,
+          // `numeric(6, 2)` is a STRING on the way in and out of drizzle, not a number — the
+          // column keeps more precision than an IEEE double does, so drizzle refuses to lose
+          // it silently. `.toFixed(2)` is the explicit conversion at the one place that has a
+          // number in hand.
+          estimatedHours:
+            parsed.estimatedHours !== undefined ? parsed.estimatedHours.toFixed(2) : null,
+          expectedOutput: parsed.expectedOutput ?? null,
+          sopUrl: parsed.sopUrl ?? null,
+          // Spread, not `?? 'medium'` / `?? true`: an absent key must leave the column DEFAULT
+          // to apply (§11.3), because restating those values here would make this a second
+          // place they are written down. `status` and `version` are never sent at all.
+          ...(parsed.priority !== undefined && { priority: parsed.priority }),
+          ...(parsed.qcRequired !== undefined && { qcRequired: parsed.qcRequired }),
+          ...(parsed.proofRequired !== undefined && { proofRequired: parsed.proofRequired }),
+          ...(parsed.clientVisible !== undefined && { clientVisible: parsed.clientVisible }),
+          dependsOn: parsed.dependsOn ?? null,
+          createdBy: actor.id,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+
+      // Seeds the INITIAL checklist only — `position` is the input's own order, which is the
+      // order the manager typed. Add / toggle / remove are §13.4.10 (PUL-405), and the
+      // post-submission lock that governs them is not this action's business.
+      if (parsed.checklist !== undefined && parsed.checklist.length > 0) {
+        await tx.insert(taskChecklistItems).values(
+          parsed.checklist.map((text, index) => ({
+            id: `tci_${crypto.randomUUID()}`,
+            taskId: id,
+            text,
+            done: false,
+            position: index,
+            createdAt: now,
+          })),
+        );
+      }
+
+      // 4. AUDIT — same tx (§9.8 `project_task.created`).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.created',
+        resourceType: 'project_task',
+        resourceId: id,
+        before: null,
+        after: created,
+      });
+
+      return created;
+    });
+
+    // 5. NOTIFY — after commit, never inside the tx (§13.4.1 `N:task_assigned` → assignee if
+    // set). An unassigned task notifies nobody: there is nobody to tell yet, and the managers
+    // who would care are the ones who just created it.
+    if (row.assigneeId !== null) {
+      await notify({
+        to: row.assigneeId,
+        type: 'task_assigned',
+        data: { taskId: row.id, taskTitle: row.title, projectId: row.projectId, assignedBy: actor.id },
+      });
+    }
+
+    return row;
   });
 }

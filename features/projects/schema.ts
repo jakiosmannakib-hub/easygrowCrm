@@ -7,6 +7,7 @@
 // gate (§9.5 rule 2: the UI hides, the API refuses).
 
 import { z } from 'zod';
+import { taskPriority } from '../../db/schema/enums';
 
 /**
  * §13.3.1 input — the manual create path. The template path is §13.3.2
@@ -111,3 +112,59 @@ export const UnarchiveProjectInput = z.object({
 });
 
 export type UnarchiveProjectInput = z.infer<typeof UnarchiveProjectInput>;
+
+/**
+ * §13.4.1 `createTask` input — the full field set, in contract order.
+ *
+ * `projectId`, `title` and `category` are the only required fields: §11.3 makes every other
+ * column nullable or defaulted, and the Board's "+ Add task" inside a category column supplies
+ * `category` as a pre-fill (PUL-403.1) rather than something the manager retypes.
+ *
+ * `dueDate` follows the same rule as the project dates above — a `YYYY-MM-DD` string end to
+ * end, never a `Date`. `due_date` is a bare `date` column read as an Asia/Dhaka calendar day
+ * (§11.0), and constructing a `Date` on this path is both how a due date silently slips a day
+ * for a UTC+6 office and what the `no-direct-date` rule exists to prevent.
+ *
+ * `priority` is bound to the `task_priority` DB enum so the two can never drift — the same
+ * reason `CreateEmployeeInput` binds `role` to `user_role`.
+ *
+ * `estimatedHours` arrives as a number and is capped to what `numeric(6, 2)` can physically
+ * hold. Past 9999.99 Postgres raises a numeric overflow, which is a raw driver error rather
+ * than an `AppError` — so `actionResult` re-throws it and production redacts it into an opaque
+ * digest. Bounding it here turns that crash into a `VALIDATION` the form can render, exactly
+ * as `CreateProjectInput`'s date `.refine()` does for the `deadline_after_start` CHECK.
+ *
+ * **The defaulted columns are optional on purpose.** `priority`, `qcRequired`, `proofRequired`
+ * and `clientVisible` all carry column defaults (§11.3: medium / true / false / false), as do
+ * `status` ('planned') and `version` (1) — neither of which is an input at all. A new task is
+ * always `planned`, and §13.4.4 owns every move after that. An absent key here means "take the
+ * column default", so §11.3 stays the single place those values are written down.
+ *
+ * `checklist` seeds the QC gate's initial items (§11.3.1). **It is not the subtask list** — a
+ * different table, a different permission and different behaviour: the checklist gates
+ * submission, subtasks never do (§9.6 ⁷, §16.8).
+ */
+export const CreateTaskInput = z.object({
+  projectId: z.string().min(1),
+  title: z.string().min(1),
+  category: z.string().min(1),
+  /** Retainer month number; absent for one-off work (§11.3). */
+  month: z.number().int().optional(),
+  description: z.string().optional(),
+  /** Absent = unassigned/claimable. Never a super_admin (Amendment E) — checked in the action. */
+  assigneeId: z.string().min(1).optional(),
+  dueDate: z.iso.date().optional(),
+  priority: z.enum(taskPriority.enumValues).optional(),
+  estimatedHours: z.number().nonnegative().max(9999.99).optional(),
+  expectedOutput: z.string().optional(),
+  sopUrl: z.string().optional(),
+  qcRequired: z.boolean().optional(),
+  proofRequired: z.boolean().optional(),
+  clientVisible: z.boolean().optional(),
+  /** Another live task in the SAME project (§13.4.1) — checked in the action. */
+  dependsOn: z.string().min(1).optional(),
+  /** Seeds `task_checklist_items`; add/toggle/remove are §13.4.10 (PUL-405). */
+  checklist: z.array(z.string().min(1)).optional(),
+});
+
+export type CreateTaskInput = z.infer<typeof CreateTaskInput>;

@@ -44,6 +44,12 @@ export const GATE_REASONS: Record<string, string> = {
   self_deactivate: 'You cannot deactivate your own account — ask another admin to do it.',
   sa_has_assignments: 'A super admin cannot hold task assignments.',
   use_review: 'Use the review screen to approve or return this task.',
+  // PUL-403 (§13.4.1). `project_archived` is thrown by `updateProject` (PUL-402) as well as by
+  // `createTask` — one reason string, one entry, shared by both gates.
+  project_archived: 'This project is archived. Un-archive it before adding or changing tasks.',
+  sa_assignee: 'A super admin can never be assigned delivery work. Pick someone else.',
+  inactive_assignee: 'That person is deactivated and cannot hold tasks. Pick an active teammate.',
+  bad_dependency: 'A task can only depend on another task in the same project.',
 };
 
 const FALLBACK: Record<string, string> = {

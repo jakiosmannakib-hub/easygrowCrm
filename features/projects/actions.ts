@@ -11,7 +11,7 @@
 
 'use server';
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import {
   clients,
@@ -31,8 +31,10 @@ import { MANAGER_ROLES } from '../employees/queries';
 import {
   ArchiveProjectInput,
   AssignTaskInput,
+  ChangeTaskStatusOpenInput,
   CreateProjectInput,
   CreateTaskInput,
+  SetTaskStatusProtectedInput,
   UnarchiveProjectInput,
   UpdateProjectInput,
 } from './schema';
@@ -795,6 +797,353 @@ export async function assignTask(input: AssignTaskInput) {
           taskTitle: result.row.title,
           projectId: result.row.projectId,
           assignedBy: actor.id,
+        },
+      });
+    }
+
+    return result.row;
+  });
+}
+
+/**
+ * The §13.4.4 open statuses — the ones a task may move OUT of through the pill.
+ *
+ * Note `revision_required` is exitable but not settable (see `ChangeTaskStatusOpenInput`): a
+ * task in revision gets back to work through this action, but only §13.4.7 / §13.4.5 put it
+ * there. Everything absent from this list — `submitted`, `approved`, `completed`, `cancelled` —
+ * is a locked state that §13.4.4 refuses to move at all.
+ *
+ * **`blocked` here is the REAL, STORED status** — the pill an employee sets when they are stuck
+ * on something external. It is NOT the §3.2.5 dependency lock, which is **display-only and
+ * never stored**: a task whose `depends_on` is unresolved RENDERS as blocked in the UI while
+ * its stored `status` stays whatever it actually is. Conflating the two would make the
+ * dependency lock a mutation, and re-resolving a dependency would then have to guess which
+ * status to restore.
+ */
+const OPEN_STATUSES = ['planned', 'in_progress', 'blocked', 'revision_required'] as const;
+
+/**
+ * §13.4.4 `changeTaskStatusOpen` — MGR anywhere; EMP only if assignee
+ * (`project_task.set_status_open`, §9.6: SA / TL / PM allow, HR deny, EMP conditional
+ * `assignee`).
+ *
+ * ── THE OPTIMISTIC-LOCK REFERENCE IMPLEMENTATION ─────────────────────────────────────────
+ * This is the first action to take a `version`, and later task mutations (§13.4.2
+ * `updateTaskFields`, §13.4.5 `setTaskStatusProtected`, §13.4.7 `reviewTask`) should copy the
+ * shape below rather than reinvent it. The three rules that make it correct:
+ *
+ *   1. **The version test lives in the UPDATE's WHERE clause, not in an `if`.** Reading the
+ *      row, comparing versions in JS, then updating is not a lock at all — two requests can
+ *      both read version 3 and both pass the comparison. Postgres evaluates the WHERE while
+ *      holding the row lock, so exactly one of two concurrent writers matches.
+ *   2. **Zero rows affected IS the conflict signal.** The row was read moments earlier inside
+ *      this same transaction, so it exists; if the UPDATE matches nothing, the only thing that
+ *      can have changed is `version`. That is a lost race, and it is a `CONFLICT`.
+ *   3. **Never re-read to "fix" a conflict.** Re-reading and retrying with the fresh version
+ *      would apply the caller's intent on top of a row they never saw — which is precisely the
+ *      lost update the lock exists to prevent. `CONFLICT` goes back to the client, whose toast
+ *      offers Refresh (§14.15 r.3); refetch-and-retry is the user's decision, not ours.
+ *
+ * ── Authorization ────────────────────────────────────────────────────────────────────────
+ * The EMP cell is the conditional `'assignee'` marker, so `can()` needs the subject to decide
+ * — and `authorize()` without a resource would deny every employee, including the rightful
+ * assignee. The task is therefore read BEFORE `authorize`, which `features/_example/actions.ts`
+ * and §9.8's own example both sanction: a read decides nothing, and the ESLint rule's contract
+ * is "authorize before `withTx`", not "authorize before any await".
+ *
+ * That pre-read is outside the transaction, so the ownership check is made again INSIDE it,
+ * against the transaction's snapshot — see the note at that check. Managers skip both: §9.6
+ * grants SA/TL/PM the unconditional cell, and §4.3 is explicit that managers can move anything.
+ *
+ * Notify: none — §13.4.4 lists no notification. (§13.4.5's manager override does notify the
+ * assignee; a self-driven pill change has nobody to tell.)
+ */
+export async function changeTaskStatusOpen(input: ChangeTaskStatusOpenInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = ChangeTaskStatusOpenInput.parse(input);
+
+    // 1b. SUBJECT READ — permitted before `authorize` because a read decides nothing, and
+    // required because the EMP cell is conditional on this row's assignee (see the docblock).
+    const [subject] = await db
+      .select({ id: projectTasks.id, assigneeId: projectTasks.assigneeId })
+      .from(projectTasks)
+      .where(and(eq(projectTasks.id, parsed.taskId), isNull(projectTasks.deletedAt)))
+      .limit(1);
+
+    if (!subject) {
+      throw new AppError('NOT_FOUND', 'Task not found');
+    }
+
+    // 2. AUTHORIZE — the security boundary, before any write (§9.5 rule 1).
+    const actor = await authorize('project_task.set_status_open', {
+      assigneeId: subject.assigneeId ?? undefined,
+    });
+
+    // 3. TRANSACT
+    const result = await withTx(async (tx) => {
+      const [task] = await tx
+        .select({
+          id: projectTasks.id,
+          title: projectTasks.title,
+          projectId: projectTasks.projectId,
+          assigneeId: projectTasks.assigneeId,
+          status: projectTasks.status,
+          version: projectTasks.version,
+          updatedAt: projectTasks.updatedAt,
+        })
+        .from(projectTasks)
+        .where(and(eq(projectTasks.id, parsed.taskId), isNull(projectTasks.deletedAt)))
+        .limit(1);
+
+      // Soft-deleted between the subject read and the transaction — rare, but the pre-read
+      // snapshot is not authoritative for anything.
+      if (!task) {
+        throw new AppError('NOT_FOUND', 'Task not found');
+      }
+
+      // ROW-LEVEL OWNERSHIP, re-checked on the transaction's snapshot. `authorize` already
+      // decided this from the pre-read, so in the ordinary case this is belt-and-braces; it
+      // earns its place in the race where the task is REASSIGNED between the two reads, which
+      // would otherwise let the old assignee move a task that is no longer theirs.
+      //
+      // Managers are exempt by §9.6 — the unconditional cell means "any task".
+      if (actor.role === 'employee' && task.assigneeId !== actor.id) {
+        throw new AppError('FORBIDDEN', 'This task is not assigned to you', {
+          reason: 'not_assignee',
+        });
+      }
+
+      // §13.4.4: the locked states are not exitable here. `submitted` waits on a review
+      // decision, and `approved` / `completed` / `cancelled` are terminal — moving out of any
+      // of them is a manager override (§13.4.5) or a review (§13.4.7), never a pill change.
+      if (!(OPEN_STATUSES as readonly string[]).includes(task.status)) {
+        throw new AppError('GATE', `"${task.title}" is ${task.status} and cannot be moved here`, {
+          reason: 'locked',
+          status: task.status,
+        });
+      }
+
+      // Idempotent no-op, matching the slice convention (`assignTask`, `updateProject`,
+      // `archiveProject`). Note this deliberately sits BEFORE the version check: a request that
+      // changes nothing has nothing to lose a race over, so a stale version on a no-op is not a
+      // conflict worth surfacing — there is no lost update when there is no update.
+      if (task.status === parsed.status) {
+        return { row: task, changed: false };
+      }
+
+      // ── The optimistic-locked UPDATE (the pattern described above) ───────────────────────
+      const updated = await tx
+        .update(projectTasks)
+        .set({
+          status: parsed.status,
+          version: sql`${projectTasks.version} + 1`,
+          updatedAt: clock.now(),
+        })
+        .where(
+          and(
+            eq(projectTasks.id, parsed.taskId),
+            eq(projectTasks.version, parsed.version),
+            isNull(projectTasks.deletedAt),
+          ),
+        )
+        .returning({
+          id: projectTasks.id,
+          title: projectTasks.title,
+          projectId: projectTasks.projectId,
+          assigneeId: projectTasks.assigneeId,
+          status: projectTasks.status,
+          version: projectTasks.version,
+        });
+
+      // Zero rows: the row exists (we just read it in this transaction), so `version` is the
+      // only predicate that can have failed. Someone else wrote first.
+      if (updated.length === 0) {
+        throw new AppError('CONFLICT', 'This task changed while you were looking at it', {
+          reason: 'stale_version',
+          expectedVersion: parsed.version,
+          actualVersion: task.version,
+        });
+      }
+
+      const [row] = updated;
+
+      // 4. AUDIT — same tx (§9.8 `project_task.status_changed`). The version pair is recorded
+      // alongside the status so the log shows which revision of the row moved.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.status_changed',
+        resourceType: 'project_task',
+        resourceId: parsed.taskId,
+        before: { status: task.status, version: task.version },
+        after: { status: row.status, version: row.version },
+      });
+
+      return { row, changed: true };
+    });
+
+    // 5. NOTIFY — none (§13.4.4).
+
+    return result.row;
+  });
+}
+
+/**
+ * §13.4.5 `setTaskStatusProtected` — MGR only (`project_task.set_status_protected`, §9.6:
+ * SA / TL / PM allow, HR and EMP deny).
+ *
+ * The manager override: the statuses an employee can never reach from the pill. **No row-level
+ * ownership check** — unlike §13.4.4, the §9.6 cell is unconditional for all three manager
+ * roles, and §4.3 is explicit that a manager may override any task, assigned to them or not.
+ *
+ * The optimistic lock is character-for-character the shape `changeTaskStatusOpen` establishes;
+ * read that action's docblock for why the version test lives in the WHERE clause and why a
+ * `CONFLICT` is never "fixed" by re-reading.
+ *
+ * Guards, in the order they run:
+ *
+ *   1. **`approved` is refused outright — `GATE:use_review`.** Approving a submitted task has
+ *      to go through §13.4.7 `reviewTask` (Phase 6) so that a `task_reviews` row exists. An
+ *      approval with no review row is an approval nobody signed, and the QC trail is the whole
+ *      point of the status. This is checked FIRST so the answer does not depend on the origin
+ *      status: direct-approve is wrong from everywhere.
+ *   2. **`revision_required` requires a `note` — `GATE:note_required`.** Sending work back
+ *      without saying why is the failure mode the note exists to prevent (§14.3.2's modal).
+ *   3. **Same status is a no-op**, matching the slice convention (`assignTask`,
+ *      `changeTaskStatusOpen`, `updateProject`). Note `approved → approved` never reaches this
+ *      branch — guard 1 already refused it — so the no-op covers the three reachable targets.
+ *
+ * **`cancelled` from `submitted` is allowed, and resolves the open submission implicitly.**
+ * There is no orphan to clean up: the submission row simply never receives a review, and the
+ * review queue reads only `status = 'submitted'` (the `pt_review_q_idx` predicate, §11.3), so
+ * a cancelled task drops out of it cleanly. Deleting or back-filling the submission would
+ * destroy the record that the work WAS submitted, which is exactly what the QC trail is for.
+ *
+ * **`completed` from a non-terminal state is the QC bypass, and it is allowed on purpose**
+ * (§4.2) — that is what the status is for. What makes it safe is that it is loud: the audit row
+ * is written with the DISTINCT action `project_task.status_overridden`, never
+ * `status_changed`, so "how often did we bypass QC?" is one grep rather than a judgement call.
+ *
+ * Notify: `N:task_status_changed` → the assignee (§13.4.5), after commit, only when the status
+ * actually moved. An unassigned task notifies nobody.
+ */
+export async function setTaskStatusProtected(input: SetTaskStatusProtectedInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = SetTaskStatusProtectedInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1). No resource: the §9.6 cell is
+    // unconditional for every role that holds this permission, so there is nothing to scope.
+    const actor = await authorize('project_task.set_status_protected');
+
+    // 3. TRANSACT
+    const result = await withTx(async (tx) => {
+      const [task] = await tx
+        .select({
+          id: projectTasks.id,
+          title: projectTasks.title,
+          projectId: projectTasks.projectId,
+          assigneeId: projectTasks.assigneeId,
+          status: projectTasks.status,
+          version: projectTasks.version,
+        })
+        .from(projectTasks)
+        .where(and(eq(projectTasks.id, parsed.taskId), isNull(projectTasks.deletedAt)))
+        .limit(1);
+
+      if (!task) {
+        throw new AppError('NOT_FOUND', 'Task not found');
+      }
+
+      // Guard 1 — direct approve is never allowed here (§13.4.5).
+      if (parsed.status === 'approved') {
+        throw new AppError('GATE', 'Approve this task from the review screen, not the status menu', {
+          reason: 'use_review',
+          taskId: task.id,
+        });
+      }
+
+      // Guard 2 — a revision has to say why (§13.4.5).
+      if (parsed.status === 'revision_required' && parsed.note === undefined) {
+        throw new AppError('GATE', 'Say what needs changing before sending this back', {
+          reason: 'note_required',
+          taskId: task.id,
+        });
+      }
+
+      // Guard 3 — idempotent no-op, the slice convention. Deliberately after the two gates: a
+      // malformed override is refused on its own terms even when it would change nothing.
+      if (task.status === parsed.status) {
+        return { row: task, changed: false };
+      }
+
+      // ── The optimistic-locked UPDATE — the pattern from `changeTaskStatusOpen` ───────────
+      const updated = await tx
+        .update(projectTasks)
+        .set({
+          status: parsed.status,
+          // §13.4.5 carries a note for the revision case; §11.3 keeps the latest one on the row
+          // as a denormalized convenience, with the full trail living in `task_reviews`.
+          ...(parsed.note !== undefined && { revisionNote: parsed.note }),
+          version: sql`${projectTasks.version} + 1`,
+          updatedAt: clock.now(),
+        })
+        .where(
+          and(
+            eq(projectTasks.id, parsed.taskId),
+            eq(projectTasks.version, parsed.version),
+            isNull(projectTasks.deletedAt),
+          ),
+        )
+        .returning({
+          id: projectTasks.id,
+          title: projectTasks.title,
+          projectId: projectTasks.projectId,
+          assigneeId: projectTasks.assigneeId,
+          status: projectTasks.status,
+          version: projectTasks.version,
+        });
+
+      if (updated.length === 0) {
+        throw new AppError('CONFLICT', 'This task changed while you were looking at it', {
+          reason: 'stale_version',
+          expectedVersion: parsed.version,
+          actualVersion: task.version,
+        });
+      }
+
+      const [row] = updated;
+
+      // 4. AUDIT — same tx, and under its OWN action name (§13.4.5). `status_overridden` rather
+      // than `status_changed` is what makes the QC bypass greppable: the two paths must never
+      // share an action string, or "was this approved or waved through?" stops being answerable.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.status_overridden',
+        resourceType: 'project_task',
+        resourceId: parsed.taskId,
+        before: { status: task.status, version: task.version },
+        after: {
+          status: row.status,
+          version: row.version,
+          ...(parsed.note !== undefined && { note: parsed.note }),
+        },
+      });
+
+      return { row, changed: true };
+    });
+
+    // 5. NOTIFY — after commit (§13.4.5 `N:task_status_changed` → assignee). Skipped on a no-op
+    // for the same reason as `assignTask`: nothing happened, so there is nothing to announce.
+    if (result.changed && result.row.assigneeId !== null) {
+      await notify({
+        to: result.row.assigneeId,
+        type: 'task_status_changed',
+        data: {
+          taskId: result.row.id,
+          taskTitle: result.row.title,
+          status: result.row.status,
+          changedBy: actor.id,
         },
       });
     }

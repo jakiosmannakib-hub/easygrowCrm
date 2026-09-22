@@ -246,3 +246,35 @@ export const SetTaskStatusProtectedInput = z.object({
 });
 
 export type SetTaskStatusProtectedInput = z.infer<typeof SetTaskStatusProtectedInput>;
+
+/**
+ * §13.4.9 `addSubtask` input. `text` matches the `task_subtasks.text` column (§11.3.1).
+ *
+ * Subtasks are informational only — they never gate submission (§9.6 ⁷, §16.8). This is NOT
+ * the checklist, which is §13.4.10 and a different table with a different permission.
+ */
+export const AddSubtaskInput = z.object({
+  taskId: z.string().min(1),
+  text: z.string().min(1),
+});
+
+export type AddSubtaskInput = z.infer<typeof AddSubtaskInput>;
+
+/**
+ * §13.4.9 `toggleSubtask` input. `done` is the DESIRED value, not a blind flip: a flip is not
+ * idempotent, so a double-click or a retried request would undo itself. Sending the target
+ * value makes a repeat a no-op instead.
+ */
+export const ToggleSubtaskInput = z.object({
+  subtaskId: z.string().min(1),
+  done: z.boolean(),
+});
+
+export type ToggleSubtaskInput = z.infer<typeof ToggleSubtaskInput>;
+
+/** §13.4.9 `deleteSubtask` input. */
+export const DeleteSubtaskInput = z.object({
+  subtaskId: z.string().min(1),
+});
+
+export type DeleteSubtaskInput = z.infer<typeof DeleteSubtaskInput>;

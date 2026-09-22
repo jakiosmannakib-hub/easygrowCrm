@@ -278,3 +278,33 @@ export const DeleteSubtaskInput = z.object({
 });
 
 export type DeleteSubtaskInput = z.infer<typeof DeleteSubtaskInput>;
+
+/**
+ * §13.4.10 `toggleChecklistItem` input — assignee or MGR (`project_task.checklist_toggle`).
+ * `done` is the desired value, not a flip, for the same idempotency reason as
+ * `ToggleSubtaskInput`.
+ *
+ * Unlike subtasks, the checklist IS the definition-of-done: every item must be done before
+ * `submitTask` (§13.4.6, PUL-601) will send the task for review.
+ */
+export const ToggleChecklistItemInput = z.object({
+  itemId: z.string().min(1),
+  done: z.boolean(),
+});
+
+export type ToggleChecklistItemInput = z.infer<typeof ToggleChecklistItemInput>;
+
+/** §13.4.10 `addChecklistItem` input — MGR only (`project_task.checklist_manage`). */
+export const AddChecklistItemInput = z.object({
+  taskId: z.string().min(1),
+  text: z.string().min(1),
+});
+
+export type AddChecklistItemInput = z.infer<typeof AddChecklistItemInput>;
+
+/** §13.4.10 `deleteChecklistItem` input — MGR only (`project_task.checklist_manage`). */
+export const DeleteChecklistItemInput = z.object({
+  itemId: z.string().min(1),
+});
+
+export type DeleteChecklistItemInput = z.infer<typeof DeleteChecklistItemInput>;

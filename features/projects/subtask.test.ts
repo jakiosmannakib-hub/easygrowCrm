@@ -16,7 +16,13 @@
 import { asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { auditLog, projectTasks, taskSubtasks, user as userTable } from '../../db/schema';
+import {
+  auditLog,
+  projectTasks,
+  projects,
+  taskSubtasks,
+  user as userTable,
+} from '../../db/schema';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { expectFail, expectOk } from '../../tests/expect-result';
@@ -318,6 +324,29 @@ describe('the submitted lock', () => {
   it('the seeded submitted task (pt_seed_3, TL-assigned) is editable by its TL assignee', async () => {
     actAs(seed.teamLeader.id);
     expectOk(await addSubtask({ taskId: seed.tasks[2].id, text: 'TL is a manager' }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// Archived projects are read-only everywhere (§13.3.4) — back-filled by guardTaskChildEdit.
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('archived project', () => {
+  it('refuses all three actions with GATE:project_archived — managers included', async () => {
+    const subtaskId = await seedSubtask(empTask());
+    await db.update(projects).set({ status: 'archived' }).where(eq(projects.id, seed.project.id));
+
+    for (const who of [assignee().id, seed.projectManager.id]) {
+      actAs(who);
+      expectFail(await addSubtask({ taskId: empTask(), text: 'x' }), 'GATE', 'project_archived');
+      expectFail(await toggleSubtask({ subtaskId, done: true }), 'GATE', 'project_archived');
+      expectFail(await deleteSubtask({ subtaskId }), 'GATE', 'project_archived');
+    }
+
+    const rows = await subtasksOf(empTask());
+    expect(rows).toHaveLength(1);
+    expect(rows[0].done).toBe(false);
+    expect(await auditFor(empTask())).toHaveLength(0);
   });
 });
 

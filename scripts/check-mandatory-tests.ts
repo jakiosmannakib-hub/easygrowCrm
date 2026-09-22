@@ -20,6 +20,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/employees/action-result-boundary.test.ts', // PUL-111
   'features/clients/clients.test.ts', // PUL-207.4
   'features/auth/oauth-link-provisioned.test.ts', // ACCOUNT_NOT_LINKED regression (PUL-202 "Done when")
+  'features/projects/assign.test.ts', // PUL-403.5 — SA never assignable, app + DB trigger
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

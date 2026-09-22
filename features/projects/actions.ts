@@ -9,18 +9,22 @@
 // §13.4.4 changeTaskStatusOpen · §13.4.5 setTaskStatusProtected (PUL-404).
 // §13.4.9 addSubtask / toggleSubtask / deleteSubtask (PUL-405).
 // §13.4.10 toggleChecklistItem / addChecklistItem / deleteChecklistItem (PUL-405).
+// §13.4.11 addComment (PUL-406).
 // Still to come: §13.3.5 `deleteProject` (SA only) and §13.3.2 `createProjectFromTemplate`
 // (PUL-506, the Start Project wizard).
 
 'use server';
 
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import {
   clients,
   projectTasks,
   projects,
   taskChecklistItems,
+  taskComments,
+  taskReviews,
+  taskSubmissions,
   taskSubtasks,
   user as userTable,
 } from '../../db/schema';
@@ -34,6 +38,7 @@ import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES } from '../employees/queries';
 import {
   AddChecklistItemInput,
+  AddCommentInput,
   AddSubtaskInput,
   ArchiveProjectInput,
   AssignTaskInput,
@@ -1654,5 +1659,124 @@ export async function deleteChecklistItem(input: DeleteChecklistItemInput) {
     // 5. NOTIFY — none (§13.4.10).
 
     return removed;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §13.4.11 comments (PUL-406).
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Who hears about a new comment on a task (§13.4.11 `N:task_comment` → "assignee + task's
+ * latest submitter/reviewer if ≠ author"):
+ *
+ *   - the task's assignee, if set;
+ *   - the latest submission's `submitted_by`, if the task was ever submitted;
+ *   - the reviewer who acted — the latest `task_reviews.reviewer_id` if any review exists,
+ *     else the latest submission's `reviewer_id` routing hint (§9.7: a hint, not a lock).
+ *
+ * Nulls dropped, duplicates collapsed, and **the author removed** — nobody is notified of
+ * their own comment. Read on the caller's `tx`, so the audience matches the snapshot the
+ * comment was written against; the sends themselves happen after commit.
+ */
+async function commentRecipients(
+  executor: Executor,
+  task: { id: string; assigneeId: string | null },
+  authorId: string,
+): Promise<string[]> {
+  const [latestSubmission] = await executor
+    .select({ submittedBy: taskSubmissions.submittedBy, reviewerId: taskSubmissions.reviewerId })
+    .from(taskSubmissions)
+    .where(eq(taskSubmissions.taskId, task.id))
+    .orderBy(desc(taskSubmissions.createdAt))
+    .limit(1);
+
+  const [latestReview] = await executor
+    .select({ reviewerId: taskReviews.reviewerId })
+    .from(taskReviews)
+    .where(eq(taskReviews.taskId, task.id))
+    .orderBy(desc(taskReviews.createdAt))
+    .limit(1);
+
+  const candidates = [
+    task.assigneeId,
+    latestSubmission?.submittedBy,
+    latestReview?.reviewerId ?? latestSubmission?.reviewerId,
+  ];
+
+  return [...new Set(candidates)].filter(
+    (id): id is string => typeof id === 'string' && id !== authorId,
+  );
+}
+
+/**
+ * §13.4.11 `addComment` — anyone with read access (`project_task.comment`, §9.6: every role
+ * allowed, non-assignee employees and HR included). The widest actor set of any task write.
+ *
+ * Unlike every other task mutation, in three deliberate ways:
+ *
+ *   1. **It NEVER locks on task status.** §3.2.3 "comments never lock", §9.6 ⁷ "`comment` is
+ *      the only action that stays open in every status". A `submitted`, `approved`,
+ *      `completed` or `cancelled` task still takes comments — that is how a reviewer and an
+ *      assignee talk about work under review. So this action does NOT call
+ *      `guardTaskChildEdit` and must not grow a status / submitted check. Do not "add" one.
+ *   2. **The only refusal is an archived project** (`GATE:project_archived`, §13.3.4 — archived
+ *      projects are read-only everywhere). That is a project-level freeze, not a task lock.
+ *   3. **It writes NO audit row** — see the note at step 4.
+ *
+ * No subject read before `authorize`: the §9.6 cell is unconditional for every role, so there
+ * is no resource to decide on — the same shape as `addChecklistItem`. The task is read inside
+ * the transaction instead.
+ *
+ * Notify: `N:task_comment` to `commentRecipients` (author excluded), after commit.
+ */
+export async function addComment(input: AddCommentInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = AddCommentInput.parse(input);
+
+    // 2. AUTHORIZE — unconditional cell for every role (§9.6).
+    const actor = await authorize('project_task.comment');
+
+    // 3. TRANSACT
+    const { row, recipients } = await withTx(async (tx) => {
+      const task = await requireLiveTask(tx, parsed.taskId);
+
+      // The ONE guard. Deliberately NOT `guardTaskChildEdit` — no ownership check (anyone with
+      // read access may comment) and no status lock (comments never lock, §3.2.3).
+      guardProjectNotArchived(task);
+
+      const [created] = await tx
+        .insert(taskComments)
+        .values({
+          id: `tcm_${crypto.randomUUID()}`,
+          taskId: task.id,
+          authorId: actor.id,
+          body: parsed.body,
+          createdAt: clock.now(),
+        })
+        .returning();
+
+      // 4. AUDIT — NONE, deliberately. §13.4.11 specifies "Audit: none", and comments are absent
+      // from §9.8's audit list. This is a documented exception to "every task mutation audits":
+      // a comment is its own permanent, attributed record (author + timestamp, never edited or
+      // deleted — there is no edit/delete action), so an audit row would only duplicate it. Do
+      // NOT add a writeAudit here without amending §13.4.11 first.
+
+      const recipients = await commentRecipients(tx, task, actor.id);
+
+      return { row: created, recipients };
+    });
+
+    // 5. NOTIFY — after commit (§12.4 step 5).
+    for (const to of recipients) {
+      await notify({
+        to,
+        type: 'task_comment',
+        data: { taskId: row.taskId, commentId: row.id, authorId: actor.id },
+      });
+    }
+
+    return row;
   });
 }

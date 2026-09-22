@@ -217,3 +217,32 @@ export const ChangeTaskStatusOpenInput = z.object({
 });
 
 export type ChangeTaskStatusOpenInput = z.infer<typeof ChangeTaskStatusOpenInput>;
+
+/**
+ * §13.4.5 `setTaskStatusProtected` input — the manager overrides.
+ *
+ * The four settable values are exactly §13.4.5's list, and like `ChangeTaskStatusOpenInput`
+ * the enum is written out rather than derived from `taskStatus.enumValues`. Same reason: this
+ * is a deliberate SUBSET, and a schema that widened automatically when the DB enum gained a
+ * value would hand managers a status the contract never granted.
+ *
+ * Note `approved` is in the list even though the action always refuses it (`GATE:use_review`).
+ * That is intentional — the payload is *well-formed*, it is the ACT that is refused, and the
+ * distinction matters: a caller that sends it deserves the specific "use the review screen"
+ * sentence, not a shape error. §13.4.5 lists it, so the schema lists it.
+ *
+ * `note` is optional here and required conditionally in the action, not by a `.refine()`: it is
+ * required only for `revision_required`, and §13.4.5 gives that failure its own gate reason
+ * (`GATE:note_required`) rather than a validation error. A `.refine()` would collapse it into a
+ * Zod rejection — which, per PUL-111, throws across the boundary instead of returning a typed
+ * result the modal can act on.
+ */
+export const SetTaskStatusProtectedInput = z.object({
+  taskId: z.string().min(1),
+  version: z.number().int().positive(),
+  status: z.enum(['approved', 'completed', 'cancelled', 'revision_required']),
+  /** Required when `status` is `revision_required` — enforced in the action (§13.4.5). */
+  note: z.string().min(1).optional(),
+});
+
+export type SetTaskStatusProtectedInput = z.infer<typeof SetTaskStatusProtectedInput>;

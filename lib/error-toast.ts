@@ -53,6 +53,9 @@ export const GATE_REASONS: Record<string, string> = {
   // PUL-404 (§13.4.4). The locked states — submitted, approved, completed, cancelled — are not
   // exitable from the status pill; moving out of one is a review or a manager override.
   locked: 'This task is locked at its current status and cannot be moved from here.',
+  // PUL-404 Stage 2 (§13.4.5). `use_review` was already seeded above from the PRD's own list;
+  // this is the note gate that goes with it.
+  note_required: 'Say what needs changing before you send this task back for revision.',
 };
 
 const FALLBACK: Record<string, string> = {

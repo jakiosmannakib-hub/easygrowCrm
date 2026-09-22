@@ -3,20 +3,24 @@
 // §15.4 MANDATORY test — "all legal + all illegal transitions per role" (PUL-404.6), and the
 // contract test for §13.4.4 `changeTaskStatusOpen`.
 //
-// ── SCOPE, AND WHAT THIS FILE STILL OWES ─────────────────────────────────────────────────
-// PUL-404 Stage 1 built `changeTaskStatusOpen` only, so this file currently enumerates the
-// OPEN half of the matrix: every stored status as an origin, crossed with every status the
-// pill can set, per role. The other half — §13.4.5 `setTaskStatusProtected` (the manager
-// override, `GATE:use_review`, `GATE:note_required`) and §13.4.6 `submitTask` — is not built
-// yet, and PUL-404's "Done when: the transition test enumerates the full matrix" is NOT
-// satisfied until those rows are added here. The file is registered in the mandatory manifest
-// now because it exists and is load-bearing; the ticket should not close on it as it stands.
+// ── SCOPE ────────────────────────────────────────────────────────────────────────────────
+// This file spans BOTH halves of the task status matrix, each enumerated origin × target:
+//
+//   §13.4.4 `changeTaskStatusOpen`      — 8 origins × 3 pill statuses   (PUL-404 Stage 1)
+//   §13.4.5 `setTaskStatusProtected`    — 8 origins × 4 override statuses (PUL-404 Stage 2)
+//
+// plus the per-role reachability of each, the shared optimistic lock, and the two gates that
+// only exist on the protected path (`use_review`, `note_required`).
+//
+// STILL OWED: §13.4.6 `submitTask` is the third and last way a task's status moves, and it is
+// not built yet (its own ticket). When it lands, its transitions belong HERE rather than in a
+// new file — the point of a matrix test is that one file answers "can X move from A to B?".
 //
 // Rig: the real easygrowcrm_test database, no DB mocks, no mocked `authorize()` (§15.8) — the
 // role matrix is a thing under contract here, so mocking it would test nothing. The only stub
 // is `auth.api.getSession`. Time is frozen through the clock port.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import { auditLog, projectTasks, user as userTable } from '../../db/schema';
@@ -31,7 +35,7 @@ const getSession = vi.fn();
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }));
 vi.mock('../../lib/auth', () => ({ auth: { api: { getSession: () => getSession() } } }));
 
-const { changeTaskStatusOpen } = await import('./actions');
+const { changeTaskStatusOpen, setTaskStatusProtected } = await import('./actions');
 
 const NOW = new Date('2026-09-15T04:00:00.000Z');
 
@@ -40,6 +44,9 @@ const SETTABLE = ['planned', 'in_progress', 'blocked'] as const;
 
 /** §13.4.4's exitable values — what a task may be moved OUT of here. */
 const OPEN = ['planned', 'in_progress', 'blocked', 'revision_required'] as const;
+
+/** §13.4.5's settable values — the manager overrides. */
+const PROTECTED = ['approved', 'completed', 'cancelled', 'revision_required'] as const;
 
 let seed: FullSeed;
 
@@ -428,5 +435,367 @@ describe('changeTaskStatusOpen — the rest of the contract', () => {
     // The important half: it failed BEFORE the lock, so nothing was touched.
     expect((await taskRow(subject())).status).toBe('planned');
     expect(await auditFor(subject())).toHaveLength(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// §13.4.5 setTaskStatusProtected — the manager overrides.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+
+describe('the protected-status transition matrix (§13.4.5)', () => {
+  for (const from of taskStatus.enumValues) {
+    for (const to of PROTECTED) {
+      // `approved` is refused from everywhere — the guard runs before the origin is consulted.
+      const verdict =
+        to === 'approved' ? 'GATE:use_review' : from === to ? 'no-op' : 'allowed (override)';
+
+      it(`${from} → ${to} is ${verdict}`, async () => {
+        await putTaskAt(subject(), { status: from });
+        actAs(seed.projectManager.id);
+
+        const before = await taskRow(subject());
+        const result = await setTaskStatusProtected({
+          taskId: subject(),
+          version: before.version,
+          status: to,
+          // The note gate is exercised on its own below; supply one here so this loop measures
+          // the TRANSITION rather than re-testing a missing note 8 times.
+          ...(to === 'revision_required' && { note: 'Headings are still H3.' }),
+        });
+
+        if (to === 'approved') {
+          expectFail(result, 'GATE', 'use_review');
+          expect((await taskRow(subject())).status).toBe(from);
+          expect(await auditFor(subject())).toHaveLength(0);
+          return;
+        }
+
+        const row = expectOk(result);
+        expect(row.status).toBe(to);
+
+        const stored = await taskRow(subject());
+        expect(stored.status).toBe(to);
+
+        if (from === to) {
+          expect(stored.version).toBe(before.version);
+          expect(await auditFor(subject())).toHaveLength(0);
+        } else {
+          expect(stored.version).toBe(before.version + 1);
+          // Every protected move is audited as the override, never as a plain status change.
+          const audit = await auditFor(subject());
+          expect(audit).toHaveLength(1);
+          expect(audit[0].action).toBe('project_task.status_overridden');
+        }
+      });
+    }
+  }
+});
+
+describe('the QC bypass is loud (§4.2, §13.4.5)', () => {
+  it('completed from a non-terminal state is ALLOWED and audited as status_overridden', async () => {
+    // This is the bypass §4.2 deliberately permits: a manager marking work done without it
+    // passing through review. What makes it acceptable is that the audit names it as an
+    // override, so "how often did we skip QC?" is one grep.
+    await putTaskAt(subject(), { status: 'in_progress' });
+    actAs(seed.projectManager.id);
+
+    const before = await taskRow(subject());
+    const row = expectOk(
+      await setTaskStatusProtected({
+        taskId: subject(),
+        version: before.version,
+        status: 'completed',
+      }),
+    );
+
+    expect(row.status).toBe('completed');
+
+    const audit = await auditFor(subject());
+    expect(audit).toHaveLength(1);
+    // THE assertion this ticket turns on — the distinct action string.
+    expect(audit[0].action).toBe('project_task.status_overridden');
+    expect(audit[0].action).not.toBe('project_task.status_changed');
+    expect(audit[0]).toMatchObject({
+      actorId: seed.projectManager.id,
+      resourceType: 'project_task',
+      before: { status: 'in_progress', version: 1 },
+      after: { status: 'completed', version: 2 },
+    });
+  });
+
+  it('the two paths never share an action string', async () => {
+    // Move the same task twice — once by the pill, once by the override — and the audit log
+    // must distinguish them. If either path were renamed to match the other, the bypass would
+    // become invisible in exactly the query that exists to find it.
+    actAs(seed.projectManager.id);
+
+    expectOk(await changeTaskStatusOpen({ taskId: subject(), version: 1, status: 'in_progress' }));
+    expectOk(
+      await setTaskStatusProtected({ taskId: subject(), version: 2, status: 'completed' }),
+    );
+
+    const actions = (await auditFor(subject())).map((a) => a.action);
+    expect(actions).toEqual(['project_task.status_changed', 'project_task.status_overridden']);
+  });
+});
+
+describe('the protected gates (§13.4.5)', () => {
+  it('direct approve is refused with GATE:use_review from every non-terminal state', async () => {
+    actAs(seed.projectManager.id);
+
+    for (const from of ['planned', 'in_progress', 'blocked', 'revision_required', 'submitted'] as const) {
+      await putTaskAt(subject(), { status: from });
+      const before = await taskRow(subject());
+
+      expectFail(
+        await setTaskStatusProtected({
+          taskId: subject(),
+          version: before.version,
+          status: 'approved',
+        }),
+        'GATE',
+        'use_review',
+      );
+
+      expect((await taskRow(subject())).status, `origin ${from}`).toBe(from);
+    }
+
+    expect(await auditFor(subject())).toHaveLength(0);
+  });
+
+  it('revision_required without a note is refused with GATE:note_required', async () => {
+    await putTaskAt(subject(), { status: 'submitted' });
+    actAs(seed.projectManager.id);
+
+    const before = await taskRow(subject());
+
+    expectFail(
+      await setTaskStatusProtected({
+        taskId: subject(),
+        version: before.version,
+        status: 'revision_required',
+      }),
+      'GATE',
+      'note_required',
+    );
+
+    expect((await taskRow(subject())).status).toBe('submitted');
+    expect(await auditFor(subject())).toHaveLength(0);
+  });
+
+  it('revision_required WITH a note is allowed, and the note lands in the audit payload', async () => {
+    await putTaskAt(subject(), { status: 'submitted' });
+    actAs(seed.projectManager.id);
+
+    const before = await taskRow(subject());
+    const row = expectOk(
+      await setTaskStatusProtected({
+        taskId: subject(),
+        version: before.version,
+        status: 'revision_required',
+        note: 'Meta descriptions are missing on four pages.',
+      }),
+    );
+
+    expect(row.status).toBe('revision_required');
+
+    const audit = await auditFor(subject());
+    expect(audit).toHaveLength(1);
+    expect(audit[0].after).toMatchObject({
+      status: 'revision_required',
+      note: 'Meta descriptions are missing on four pages.',
+    });
+
+    // §11.3 keeps the latest note on the row as a denormalized convenience.
+    expect((await taskRow(subject())).revisionNote).toBe(
+      'Meta descriptions are missing on four pages.',
+    );
+  });
+
+  it('cancelling a submitted task resolves the submission by dropping out of the queue', async () => {
+    // §13.4.5: no orphan handling is needed. The review queue reads only `status = 'submitted'`
+    // (the pt_review_q_idx predicate), so a cancelled task simply disappears from it and the
+    // submission record survives as proof the work WAS submitted.
+    const task = seed.tasks[2].id; // seeded submitted
+    actAs(seed.projectManager.id);
+
+    const queueBefore = await db
+      .select({ id: projectTasks.id })
+      .from(projectTasks)
+      .where(and(eq(projectTasks.status, 'submitted'), isNull(projectTasks.deletedAt)));
+    expect(queueBefore.map((t) => t.id)).toContain(task);
+
+    const before = await taskRow(task);
+    const row = expectOk(
+      await setTaskStatusProtected({
+        taskId: task,
+        version: before.version,
+        status: 'cancelled',
+      }),
+    );
+
+    expect(row.status).toBe('cancelled');
+
+    const queueAfter = await db
+      .select({ id: projectTasks.id })
+      .from(projectTasks)
+      .where(and(eq(projectTasks.status, 'submitted'), isNull(projectTasks.deletedAt)));
+    expect(queueAfter.map((t) => t.id)).not.toContain(task);
+
+    // The row itself is still there — cancelled, not deleted.
+    expect(await taskRow(task)).toBeDefined();
+  });
+});
+
+describe('setTaskStatusProtected is MGR-only (§9.6)', () => {
+  it('a plain employee is denied', async () => {
+    actAs(seed.employees[1].id);
+
+    expectFail(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      'FORBIDDEN',
+    );
+
+    expect((await taskRow(subject())).status).toBe('planned');
+    expect(await auditFor(subject())).toHaveLength(0);
+  });
+
+  it('even the ASSIGNEE is denied — there is no row-level path into this action', async () => {
+    // The contrast with §13.4.4 is the point: being the assignee buys an employee the pill,
+    // never the override. §9.6's cell here is a flat deny, not the conditional `assignee`.
+    const task = seed.tasks[1].id; // assigned to employees[0]
+    actAs(seed.employees[0].id);
+
+    const before = await taskRow(task);
+    expect(before.assigneeId).toBe(seed.employees[0].id);
+
+    expectFail(
+      await setTaskStatusProtected({
+        taskId: task,
+        version: before.version,
+        status: 'completed',
+      }),
+      'FORBIDDEN',
+    );
+
+    expect((await taskRow(task)).status).toBe(before.status);
+  });
+
+  it('HR is denied', async () => {
+    await db
+      .update(userTable)
+      .set({ role: 'admin_hr' })
+      .where(eq(userTable.id, seed.employees[0].id));
+    actAs(seed.employees[0].id);
+
+    expectFail(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
+      'FORBIDDEN',
+    );
+  });
+
+  it('MUTATION PROOF: the employee deny is the matrix, not an accident of the fixture', async () => {
+    await db
+      .update(userTable)
+      .set({ role: 'project_manager' })
+      .where(eq(userTable.id, seed.employees[1].id));
+    actAs(seed.employees[1].id);
+
+    const row = expectOk(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+    );
+
+    expect(row.status).toBe('completed');
+  });
+});
+
+describe('setTaskStatusProtected — lock, notify and the rest', () => {
+  it('reuses the optimistic lock: a stale version is a CONFLICT and changes nothing', async () => {
+    actAs(seed.projectManager.id);
+
+    await db.update(projectTasks).set({ version: 2 }).where(eq(projectTasks.id, subject()));
+
+    expectFail(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      'CONFLICT',
+      'stale_version',
+    );
+
+    const after = await taskRow(subject());
+    expect(after.status).toBe('planned');
+    expect(after.version).toBe(2);
+    expect(await auditFor(subject())).toHaveLength(0);
+  });
+
+  it('notifies the assignee with task_status_changed on an override', async () => {
+    const task = seed.tasks[1].id; // assigned to employees[0]
+    actAs(seed.projectManager.id);
+
+    const before = await taskRow(task);
+    expectOk(
+      await setTaskStatusProtected({
+        taskId: task,
+        version: before.version,
+        status: 'completed',
+      }),
+    );
+
+    const sent = __sentNotifications();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      to: seed.employees[0].id,
+      type: 'task_status_changed',
+      data: { taskId: task, status: 'completed' },
+    });
+  });
+
+  it('notifies nobody when the task is unassigned', async () => {
+    actAs(seed.projectManager.id); // `subject()` is unassigned
+
+    expectOk(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+    );
+
+    expect(__sentNotifications()).toHaveLength(0);
+  });
+
+  it('notifies nobody on a no-op', async () => {
+    await putTaskAt(subject(), { status: 'cancelled', assigneeId: seed.employees[0].id });
+    actAs(seed.projectManager.id);
+
+    const before = await taskRow(subject());
+    expectOk(
+      await setTaskStatusProtected({
+        taskId: subject(),
+        version: before.version,
+        status: 'cancelled',
+      }),
+    );
+
+    expect(await auditFor(subject())).toHaveLength(0);
+    expect(__sentNotifications()).toHaveLength(0);
+  });
+
+  it('rejects a missing task with NOT_FOUND', async () => {
+    actAs(seed.projectManager.id);
+
+    expectFail(
+      await setTaskStatusProtected({
+        taskId: 'pt_does_not_exist',
+        version: 1,
+        status: 'completed',
+      }),
+      'NOT_FOUND',
+    );
+  });
+
+  it('rejects a soft-deleted task with NOT_FOUND', async () => {
+    await db.update(projectTasks).set({ deletedAt: NOW }).where(eq(projectTasks.id, subject()));
+    actAs(seed.projectManager.id);
+
+    expectFail(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      'NOT_FOUND',
+    );
   });
 });

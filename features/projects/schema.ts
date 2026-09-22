@@ -190,3 +190,30 @@ export const AssignTaskInput = z.object({
 });
 
 export type AssignTaskInput = z.infer<typeof AssignTaskInput>;
+
+/**
+ * §13.4.4 `changeTaskStatusOpen` input — the employee-reachable pill statuses.
+ *
+ * The three settable values are exactly §13.4.4's list. **`revision_required` is deliberately
+ * not among them**: it is a status a task can move *out of* here (the "back to work" path) but
+ * never *into* — putting a task into revision is a review decision, and it arrives through
+ * §13.4.7 `reviewTask` or §13.4.5's manager override, both of which record a note and a review
+ * row. Letting an employee set it from the pill would manufacture a revision nobody requested.
+ *
+ * The enum is written out rather than derived from `taskStatus.enumValues`, because it is a
+ * deliberate SUBSET of the DB enum — the locked states (`submitted`, `approved`, `completed`,
+ * `cancelled`) plus `revision_required` are excluded by contract, and a schema that widened
+ * automatically when the DB enum gained a value would silently grant more than §13.4.4 allows.
+ *
+ * `version` carries the row version the client last read. It is `.positive()` because §11.3
+ * starts every row at 1 — a 0 or negative version is a malformed client, not a stale one, and
+ * it should fail as `VALIDATION` here rather than as a `CONFLICT` that tells the user to
+ * refresh a page that will never help.
+ */
+export const ChangeTaskStatusOpenInput = z.object({
+  taskId: z.string().min(1),
+  version: z.number().int().positive(),
+  status: z.enum(['planned', 'in_progress', 'blocked']),
+});
+
+export type ChangeTaskStatusOpenInput = z.infer<typeof ChangeTaskStatusOpenInput>;

@@ -50,6 +50,9 @@ export const GATE_REASONS: Record<string, string> = {
   sa_assignee: 'A super admin can never be assigned delivery work. Pick someone else.',
   inactive_assignee: 'That person is deactivated and cannot hold tasks. Pick an active teammate.',
   bad_dependency: 'A task can only depend on another task in the same project.',
+  // PUL-404 (§13.4.4). The locked states — submitted, approved, completed, cancelled — are not
+  // exitable from the status pill; moving out of one is a review or a manager override.
+  locked: 'This task is locked at its current status and cannot be moved from here.',
 };
 
 const FALLBACK: Record<string, string> = {

@@ -308,3 +308,14 @@ export const DeleteChecklistItemInput = z.object({
 });
 
 export type DeleteChecklistItemInput = z.infer<typeof DeleteChecklistItemInput>;
+
+/**
+ * §13.4.11 `addComment` input. Comments are open to anyone with read access and never lock on
+ * task status (§3.2.3) — the one task write that stays open at every status.
+ */
+export const AddCommentInput = z.object({
+  taskId: z.string().min(1),
+  body: z.string().min(1),
+});
+
+export type AddCommentInput = z.infer<typeof AddCommentInput>;

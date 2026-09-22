@@ -168,3 +168,25 @@ export const CreateTaskInput = z.object({
 });
 
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
+
+/**
+ * §13.4.3 `assignTask` input — `{ taskId, assigneeId | null }`, where **null means unassign**.
+ *
+ * `assigneeId` is `.nullable()` but NOT `.optional()`: every payload must state the intent.
+ * An absent key would be indistinguishable from "unassign" once it reached the UPDATE, and
+ * those are opposite requests — one leaves the current assignee alone, the other clears them.
+ * Making the field required forces the caller to say which.
+ *
+ * **No `version` field, deliberately.** §13.4.3's input is exactly these two fields; the
+ * optimistic lock belongs to §13.4.2 `updateTaskFields`, whose whole point is that two managers
+ * may be editing the same task's content at once. Re-assignment is last-writer-wins on a single
+ * column, and adding a lock §13.4.3 does not specify would make the action reject a stale-form
+ * assign that the contract says should succeed.
+ */
+export const AssignTaskInput = z.object({
+  taskId: z.string().min(1),
+  /** `null` unassigns — the task returns to the Board's "Unassigned" group (§13.4.3). */
+  assigneeId: z.string().min(1).nullable(),
+});
+
+export type AssignTaskInput = z.infer<typeof AssignTaskInput>;

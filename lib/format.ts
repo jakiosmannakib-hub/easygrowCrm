@@ -58,10 +58,12 @@ export function fmtDate(dateStr: string | null): string {
  * sums stay exact; this is the UI edge.
  *
  * Rounds to the nearest whole minute FIRST, then splits, so 1.999 renders `2h`, not `1h 60m`.
- * `null` (nothing logged / no estimate) → `''`. A negative value keeps its sign on the front.
+ * `null` (nothing logged / no estimate) → `—` (em dash), unlike `fmtDate(null)`'s `''`: an
+ * hours cell reads as a column value, where a blank looks like a render bug. A negative value
+ * keeps its sign on the front.
  */
 export function fmtHM(hours: number | null): string {
-  if (hours === null || !Number.isFinite(hours)) return '';
+  if (hours === null || !Number.isFinite(hours)) return '—';
   const total = Math.round(Math.abs(hours) * 60);
   const sign = hours < 0 && total > 0 ? '-' : '';
   const h = Math.floor(total / 60);

@@ -81,7 +81,7 @@ describe('fmtHM', () => {
     expect(fmtHM(0.9999)).toBe('1h');
   });
 
-  it('returns "" for null', () => {
-    expect(fmtHM(null)).toBe('');
+  it('returns an em dash for null', () => {
+    expect(fmtHM(null)).toBe('—');
   });
 });

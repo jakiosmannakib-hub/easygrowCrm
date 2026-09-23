@@ -38,7 +38,7 @@ import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
 import { taskCapabilities } from './capabilities';
-import { getTaskDetail } from './queries';
+import { getFilteredTasks, getProjectHeader, getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
   AddCommentInput,
@@ -50,6 +50,9 @@ import {
   CreateTaskInput,
   DeleteChecklistItemInput,
   DeleteSubtaskInput,
+  LoadFilteredTasksInput,
+  LoadNewTaskContextInput,
+  LoadProjectHeaderInput,
   LoadTaskDetailInput,
   SetTaskStatusProtectedInput,
   ToggleChecklistItemInput,
@@ -1857,6 +1860,109 @@ export async function loadTaskDetail(input: LoadTaskDetailInput) {
       // payload that is a list of other people, and §13.4.3's permission is what gates knowing
       // it. `null` (not `[]`) so the client distinguishes "not allowed" from "nobody eligible".
       assignable: canAssign ? await assignableUsersQuery() : null,
+    };
+  });
+}
+
+/**
+ * §14.3 / PUL-408.3 — the filter bar's read. Wraps `getFilteredTasks` so a client component can
+ * re-run it when a dropdown changes, the same reason `loadTaskDetail` exists: actions.ts is the
+ * only module in this slice a client may import (queries.ts is server-only, and a file carrying
+ * `'use server'` may export nothing but async functions).
+ *
+ * A read, so: no `withTx`, no audit row, no notification. §13's "no audit rows for reads" —
+ * the four-step shape collapses to validate → authorize → read.
+ *
+ * `project.read` is open to every role (§9.6), so this authorizes rather than scopes: it proves
+ * an active, signed-in user and stops there. Which tasks a role may *act* on is decided by the
+ * mutation behind each control, not by narrowing this list.
+ */
+export async function loadFilteredTasks(input: LoadFilteredTasksInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadFilteredTasksInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line.
+    await authorize('project.read');
+
+    return getFilteredTasks(parsed);
+  });
+}
+
+/**
+ * §14.3 / PUL-408.2 — the project header's read, mirroring `loadTaskDetail`.
+ *
+ * Here rather than called directly because the header is a client component (it refetches after
+ * New Task and Archive) and a client may not import server-only `queries.ts`.
+ *
+ * A read: validate → authorize → read. No `withTx`, no audit row, no notification.
+ *
+ * Returns the viewer's two header capabilities alongside the data, computed from the SAME
+ * authorized request rather than threaded down as props. §14.3 puts "+ New Task" and "Archive"
+ * behind MGR, and `project_task.create` / `project.archive` are the §9.6 cells that say so —
+ * asking `can()` here means the button and the action can't disagree about who is a manager.
+ * Rendering only: both actions re-authorize (§9.5 r.2 — the UI hides, the API refuses).
+ */
+export async function loadProjectHeader(input: LoadProjectHeaderInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadProjectHeaderInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line.
+    const actor = await authorize('project.read');
+
+    const header = await getProjectHeader(parsed.projectId);
+    if (header === null) return null;
+
+    const viewer: User = { id: actor.id, role: actor.role, active: true };
+
+    return {
+      header,
+      viewer: {
+        // An archived project takes no new tasks (`createTask` throws GATE:project_archived),
+        // so the button is hidden rather than offered and then refused.
+        canCreateTask: can(viewer, 'project_task.create') && header.status === 'active',
+        // Archiving an already-archived project is a no-op the action absorbs; hiding the item
+        // is what stops it being offered as if it would do something.
+        canArchive: can(viewer, 'project.archive') && header.status === 'active',
+      },
+    };
+  });
+}
+
+/**
+ * §14.3.8 — everything the New Task modal's pickers need, in one round trip (PUL-408.2).
+ *
+ * Fetched when the modal OPENS rather than with the page: the assignee roster and the
+ * dependency list are only meaningful once someone is actually creating a task, and paying for
+ * them on every /projects render would be two queries nobody looks at.
+ *
+ * Authorized on `project_task.create`, not `project.read` — this payload exists only to fill a
+ * create form, and its assignee roster is a list of other people. Someone who cannot create a
+ * task has no business being handed either list.
+ */
+export async function loadNewTaskContext(input: LoadNewTaskContextInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadNewTaskContextInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line.
+    await authorize('project_task.create');
+
+    const [assignable, tasks] = await Promise.all([
+      // Active, non-super_admin — §14.3.8: "assignee ▾ excludes SA and inactive users".
+      assignableUsersQuery(),
+      // Dependency ▾ candidates. Reuses the canonical filtered read scoped to this project,
+      // which already excludes soft-deleted tasks and the terminal statuses — close enough to
+      // §13.4.1's "another LIVE task in the same project" that a second query would only be a
+      // way for the two definitions to drift. The action re-checks same-project membership and
+      // rejects a cycle regardless (§13.4.1); this list is convenience, not the gate.
+      getFilteredTasks({ projectId: parsed.projectId }),
+    ]);
+
+    return {
+      assignable,
+      dependencyOptions: tasks.map((t) => ({ id: t.id, title: t.title })),
     };
   });
 }

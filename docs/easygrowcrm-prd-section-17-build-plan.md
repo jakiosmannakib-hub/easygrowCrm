@@ -755,7 +755,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** ✅ archiving with a pending review is impossible and the toast names the task (the GATE message names the first `submitted` task; the full list rides in `meta.tasks`).
 
-> **Merged in PR #28.**
+> **Merged in PR #28.** 402.3's **UI landed in PUL-408.2** — Archive sits in the project header's
+> ⋯ overflow (MGR only, hidden rather than disabled), and `GATE:pending_reviews` reaches the user
+> through `showErrorToast` verbatim, since the action's message already names the blocking task.
+> `unarchiveProject` still has no UI: nothing surfaces archived projects yet, because
+> `activeProjectsQuery` keeps them out of every picker by design.
 
 ---
 
@@ -886,11 +890,78 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §14.3 · **Depends:** PUL-402, PUL-110
 
-- [ ] 408.1 Filter bar: Client ▾ · Project ▾ (client-scoped) · Month ▾ · Assignee ▾; state in the upfront-declared store (§16.10 — no lazy init)
-- [ ] 408.2 Header: breadcrumb `📁 Client › Project · type · Month N`, progress `9/21 · 43%` + bar, health chip (whole-project calc per §14.3), **+ New Task** (MGR), Archive in overflow (→ 402.3)
-- [ ] 408.3 Filters drive one canonical filtered-tasks query shared by all tabs
+- [x] 408.1 Filter bar: Client ▾ · Project ▾ (client-scoped) · Month ▾ · Assignee ▾; state in the upfront-declared store (§16.10 — no lazy init) — one `FilterState` object, all five keys (the four filters + `tab`) declared with real values from the first render. Every field is a **string**, including `month`, so the one string↔number conversion happens at the query boundary (`toFilters`) rather than in each handler. Cascade: client resets project + month, project resets month.
+- [x] 408.2 Header: breadcrumb `📁 Client › Project · type · Month N`, progress `9/21 · 43%` + bar, health chip (whole-project calc per §14.3), **+ New Task** (MGR), Archive in overflow (→ 402.3) — `getProjectHeader(projectId)` takes a **projectId, not a `TaskFilters`**, so the header cannot drift onto the filtered set. New Task modal is §14.3.8's, reusing `CreateTaskInput` rather than restating it.
+- [x] 408.3 Filters drive one canonical filtered-tasks query shared by all tabs — `getFilteredTasks(filters)` in `features/projects/queries.ts`.
 
-**Done when:** filter changes update every tab identically.
+**Done when:** filter changes update every tab identically — **not yet demonstrable: there are no tabs.** The query is shared *by construction* (one function, one call site, `tab` deliberately excluded from the refetch effect's dependencies so switching tabs cannot re-read), but "identically across tabs" becomes provable only once PUL-409/410/411 render it. The assertion belongs in PUL-409, not here.
+
+> **Built in two stages** (`6730885` query + filter bar + page shell → `a9052b7` header + New Task
+> modal + Archive overflow).
+>
+> **`getFilteredTasks` is the canonical list read** — a LIST shape only (no description, comments
+> or submissions; a board renders every task at once, so anything added is paid for N times for
+> something nobody can read without clicking through). Subtask counts come from a **grouped
+> subquery**, not a join onto `task_subtasks`, which would multiply every task row by its subtask
+> count. `dependencyBlocked` reuses `DEPENDENCY_SATISFIED_STATUSES` so the board and the pill
+> cannot disagree about whether `cancelled` satisfies a dependency (it does not).
+>
+> **Flagged decision — `completed` and `cancelled` are excluded from the default result.** Both
+> are terminal and the board shows active work. `approved` is deliberately **not** excluded: it is
+> the normal end of the QC path and a manager needs to see this month's approved work in its
+> column. The consequence is that a `completed` task vanishes from every tab with **no "show
+> closed" affordance**. If PUL-409/410 needs one it belongs here as an `includeTerminal?` filter
+> key, not a second query.
+>
+> **The §3.1 / §3.1.3 formulas are transcriptions, and two of them are not where you would look
+> for them.** §3.1 gives the progress *format* (`X/Y · N%`) but never says which statuses count;
+> the binding definition is **§4.1** — "`status === "Completed" || status === "Approved"` is the
+> 'done' check throughout the code" — and, for the denominator, §4.1's Cancelled row ("excluded
+> from progress and workload"), repeated by §4.2 ("Excluded from progress and health calcs").
+> §14.3's printed example `9/21 · 43%` pins **rounding** rather than truncation (9/21 = 42.857…;
+> truncating prints 42% and would contradict the spec). §3.1.3's health chain is an **if/elif and
+> the order is load-bearing** — 5 overdue + 4 awaiting review is Critical, not At Risk — so it
+> ships as an early-return chain with a test on exactly that case. Overdue counts **open tasks
+> only** and the comparison is strictly `<`, so a task due today is not overdue.
+>
+> **`currentMonth` is derived, per §11.2 ("nobody increments it; it's computed").**
+> `retainerMonth(startDate, today)` is pure, takes both as `YYYY-MM-DD` Asia/Dhaka strings and
+> constructs no `Date`. Month 1 is the start month and the boundary is the **start day, not the
+> 1st** (§13.8's anchor). The **day-clamp is handled and is the case that would otherwise be
+> wrong**: Jan 31 has no Feb 31, so Month 2 begins Feb 28/29 — comparing against the raw start day
+> strands that project in Month 1 for all of February and then jumps it to Month 3 on Mar 31.
+>
+> **Shared machinery for PUL-409/410/411**, all pure and node-lane tested, in `display.ts`:
+> `monthLabel()` (Month ▾ labels), `retainerMonth()`, `progressPct()`, `projectHealth()` +
+> `HEALTH_DISPLAY`, and `DONE_STATUSES`. `DONE_STATUSES` is **deliberately not shared with
+> `DEPENDENCY_SATISFIED_STATUSES`** although both hold `['approved','completed']` today: they
+> answer different questions ("does this count as finished" vs "may the downstream task start")
+> and agree by coincidence, not by rule.
+>
+> **Spec conflict found, resolved conservatively, needs a ruling.** §1–§8 line 208 says the
+> assignee filter shows "employees see only themselves". **§14.3 does not restate it, and §13.8
+> says the opposite for reads** — "all roles read all active projects (open model)". Per this
+> file's precedence (§9–§17 over §1–§8), it shipped as a **picker convenience only**: an
+> employee's Assignee ▾ lists All / Unassigned / themselves, while `getFilteredTasks` stays open
+> and is **not** scoped by role. Making it a real scope would contradict §13.8 and should be a
+> PRD amendment, not a quiet implementation choice.
+>
+> **Also landed:** `projectMonthsQuery()` — Month ▾'s option *set* comes from the tasks, only the
+> *label* from `start_date`, because no "retainer length" is stored and deriving one from
+> months-elapsed would offer Month 7 on a project whose tasks stop at Month 3. `startDate` added
+> to `PickableProject`. `components/ui/menu.tsx` — a Base UI `Menu` wrapper for the ⋯ overflow
+> (no new dependency; `@base-ui/react/menu` was already in the lockfile), styled from `select.tsx`.
+> `assignableUsersQuery` is used for Assignee ▾ rather than `activeUsersQuery`, since the SA can
+> never hold a task and would be an option that matches no row.
+>
+> **Two judgement calls for QA to confirm:** the header renders **only when one project is
+> selected** (with "all", none of the four crumb parts has a meaning and progress would average
+> unrelated engagements — the bar says so instead of drawing em dashes); and an **archived project
+> still returns a header**, carrying `status`, so a manager can see what they archived while the
+> write affordances hide.
+>
+> **Still open:** the `/projects` body is scaffolding — a dashed `"N tasks match"` block, commented
+> for PUL-409 to delete. The Weekly/Monthly export buttons render **inert** (PUL-413).
 
 ---
 
@@ -901,9 +972,18 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 409.1 Kanban by status, columns top-bordered in status color + count chips
 - [ ] 409.2 Card: title · category tag · priority · avatar · **date with year** · **`☑ 2/4` subtask badge** (hidden at zero) · red overdue line
 - [ ] 409.3 Unassigned group pinned on top (managers assign from here)
-- [ ] 409.4 Card → Task Detail; per-column + Add task (MGR)
+- [ ] 409.4 Card → Task Detail; per-column + Add task (MGR) — **`NewTaskModal` already takes a `defaultCategory` prop** for exactly this (§14.3.8: "category pre-filled when opened from a category group"); reuse it rather than building a second create form.
 
 **Done when:** board matches §14.3.1 pixel-for-behavior.
+
+> **Start here:** delete the dashed `"N tasks match"` block in `projects-filter-bar.tsx` — it is
+> scaffolding PUL-408 left so `getFilteredTasks` was verifiable in a browser before any view
+> existed. The rows it counts are already the right shape: `FilteredTaskRow` carries
+> `subtaskDone`/`subtaskTotal` for 409.2's `☑ 2/4` badge (hidden at zero) and `dependencyBlocked`
+> for the padlock, so no new query is needed.
+>
+> **PUL-408's "Done when" was deferred to this ticket** — "filter changes update every tab
+> identically" could not be demonstrated with no tabs built. The assertion lands here.
 
 ---
 
@@ -950,10 +1030,16 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 **Budget:** M · **Reads:** §13.8, §14.3 · **Depends:** PUL-408
 
 - [ ] 413.1 Server-side client-safe exports (columns per §13.8 — internal fields excluded)
-- [ ] 413.2 Buttons in the filter bar (MGR only)
+- [ ] 413.2 Buttons in the filter bar (MGR only) — **the slot already exists.** PUL-408.1 renders both buttons MGR-only and **inert** (`disabled`, titled "Exports land in PUL-413"), so this is a wiring change, not a layout change.
 - [ ] 413.3 Test: export rows byte-match on-screen rows for a fixed range
 
 **Done when:** a manager downloads a client-sendable Excel from staging.
+
+> **Note for 413.1's "on-screen rows":** the on-screen set comes from `getFilteredTasks`, which
+> **excludes `completed` and `cancelled`** (PUL-408's flagged decision). §3.1.7's client-safe rule
+> is "only completed/approved/in-progress" — so the export's row set is *deliberately not* the
+> board's, and 413.3's byte-match must compare against an explicitly-scoped query rather than
+> assuming the two agree.
 
 ---
 

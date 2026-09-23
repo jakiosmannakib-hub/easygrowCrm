@@ -245,3 +245,203 @@ export function statusMenuOptions(
 export function isProtectedStatus(status: TaskStatus): boolean {
   return (PROTECTED_SETTABLE_STATUSES as readonly TaskStatus[]).includes(status);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3 Month ▾ labels (PUL-408.2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+/**
+ * A retainer month number → `Month 3 — March`, calendar-anchored to the project's start date
+ * (§1–§8 "Month dropdown … calendar-anchored via the project's start date"; the same anchor
+ * §13.8's due-date computation uses — "Month k start = `startDate` + (k−1) calendar months").
+ *
+ * Deliberately string arithmetic on the `YYYY-MM-DD` and NOT a `Date`: a bare `date` column is
+ * an Asia/Dhaka calendar day (§11.0), and `new Date('2026-01-01')` is UTC midnight, which is
+ * how a project that starts on the 1st renders as starting in December. The month index is all
+ * this needs, and it is right there in characters 6–7.
+ *
+ * **Day-clamping does not apply here, and that is not an oversight.** §13.8 clamps the day when
+ * it computes a due *date* (Jan 31 + 1 month = Feb 28, not Mar 3). A month *name* is unaffected
+ * by the clamp: adding k calendar months always lands in month index `start + k` whichever day
+ * the clamp picks. Clamping here would be dead code that implies a subtlety that isn't there.
+ *
+ * Falls back to a bare `Month N` if the start date is malformed — a label with no month name is
+ * degraded, but a wrong month name is a manager filtering to the wrong cycle.
+ */
+export function monthLabel(startDate: string, month: number): string {
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);
+  if (!parsed || !Number.isInteger(month) || month < 1) return `Month ${month}`;
+
+  // `month` is 1-based (Month 1 IS the start month), so the offset from the start is month - 1.
+  const index = (Number(parsed[2]) - 1 + (month - 1)) % 12;
+  return `Month ${month} — ${MONTH_NAMES[index]}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3 project header — progress, health, current month (PUL-408.2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The "done" set, §4.1 verbatim: *"`status === "Completed" || status === "Approved"` is the
+ * 'done' check throughout the code"*. Both close a task; `approved` came through QC and
+ * `completed` is the manager override, and §4.1 is explicit that they are "treated identically
+ * in all reporting math".
+ *
+ * **Deliberately NOT shared with `DEPENDENCY_SATISFIED_STATUSES`,** which today holds the same
+ * two values. They answer different questions — "does this count as finished for progress" vs
+ * "may the downstream task start" — and they agree by coincidence, not by rule. Collapsing them
+ * into one constant would mean a future change to either silently moves the other.
+ */
+export const DONE_STATUSES: readonly TaskStatus[] = ['approved', 'completed'];
+
+/**
+ * Statuses excluded from the progress DENOMINATOR and from the health calculation.
+ *
+ * §4.1's status table: `Cancelled` is *"Scope-cut; excluded from progress and workload"*, and
+ * §4.2's transition row repeats it — *"Excluded from progress and health calcs"*. A cancelled
+ * task is not incomplete work, so counting it in the total would make a project that cut scope
+ * look permanently behind.
+ */
+export const PROGRESS_EXCLUDED_STATUSES: readonly TaskStatus[] = ['cancelled'];
+
+/**
+ * §3.1.3's "open tasks" — the pool the health score is computed from: *"Computed from open
+ * tasks (excludes Completed, Approved, Cancelled)"*.
+ */
+export const OPEN_STATUSES_FOR_HEALTH: readonly TaskStatus[] = [
+  'planned',
+  'in_progress',
+  'blocked',
+  'submitted',
+  'revision_required',
+];
+
+export type ProjectHealth = 'on_track' | 'at_risk' | 'delayed' | 'critical';
+
+/**
+ * §3.1.3's health score, transcribed rather than interpreted:
+ *
+ * ```
+ * if   overdue_count >= 4                         → "Critical"
+ * elif overdue_count >= 2                         → "Delayed"
+ * elif overdue_count == 1 or waiting_review >= 3  → "At Risk"
+ * else                                            → "On Track"
+ * ```
+ *
+ * Note the ORDER is load-bearing and the branches are not mutually exclusive on their own: a
+ * project with 5 overdue tasks and 4 awaiting review is Critical, not At Risk, because the
+ * overdue tests come first. Written as an early-return chain for exactly that reason — a
+ * refactor into independent `if`s would change the answer.
+ *
+ * `overdueCount` counts OPEN tasks with `due_date < today` (§3.1.3's first line scopes the whole
+ * block to open tasks); `waitingReview` counts `submitted`. Both are supplied by the caller,
+ * which is what keeps this a pure function the thresholds can be swept exhaustively.
+ */
+export function projectHealth(overdueCount: number, waitingReview: number): ProjectHealth {
+  if (overdueCount >= 4) return 'critical';
+  if (overdueCount >= 2) return 'delayed';
+  if (overdueCount === 1 || waitingReview >= 3) return 'at_risk';
+  return 'on_track';
+}
+
+/** Label + chip colors for each health state. Hexes are §3.1.3's, kept as the source of truth. */
+export const HEALTH_DISPLAY = {
+  on_track: {
+    label: 'On Track',
+    // #16A34A — Tailwind green-600, so the palette carries the spec's hex rather than a
+    // hand-written arbitrary value.
+    className: 'bg-green-600/10 text-green-700 border-green-600/30 dark:text-green-400',
+  },
+  at_risk: {
+    label: 'At Risk',
+    // #D97706 — amber-600.
+    className: 'bg-amber-600/10 text-amber-700 border-amber-600/30 dark:text-amber-400',
+  },
+  delayed: {
+    label: 'Delayed',
+    // #EA580C — orange-600.
+    className: 'bg-orange-600/10 text-orange-700 border-orange-600/30 dark:text-orange-400',
+  },
+  critical: {
+    label: 'Critical',
+    // #DC2626 — red-600.
+    className: 'bg-red-600/10 text-red-700 border-red-600/30 dark:text-red-400',
+  },
+} as const satisfies Record<ProjectHealth, { label: string; className: string }>;
+
+/**
+ * §3.1 / §14.3's progress: `X/Y · N%`.
+ *
+ * `done` = tasks in `DONE_STATUSES`; `total` = every task on the project EXCEPT cancelled ones
+ * (§4.1). The percentage rounds to the nearest whole number, which §14.3's own example pins:
+ * `9/21 · 43%` — 9/21 is 42.857…, so it rounds rather than truncating (truncation would print
+ * 42%).
+ *
+ * A project with no countable tasks is 0%, not `NaN%`: an empty project has made no progress,
+ * and 0/0 must not reach the bar as a division by zero.
+ */
+export function progressPct(done: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((done / total) * 100);
+}
+
+/** Days in a Gregorian month. Pure arithmetic — no `Date`, per the `no-direct-date` rule. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 30;
+}
+
+/**
+ * §11.2's `currentMonth`, derived rather than stored: *"months elapsed since `start_date` in
+ * Asia/Dhaka (resolves review issue 'who increments it' — nobody; it's computed)"*.
+ *
+ * Both arguments are `YYYY-MM-DD` Asia/Dhaka calendar days and neither becomes a `Date`. The
+ * caller supplies `today` (from `dhakaToday()`, which reads the clock port) rather than this
+ * function reaching for it, which is what makes the month arithmetic testable at fixed dates
+ * without freezing a clock.
+ *
+ * **Month 1 IS the start month**, and the boundary is the start DAY, not the 1st: a project
+ * starting Jan 15 is in Month 1 until Feb 14 and enters Month 2 on Feb 15. That matches §13.8's
+ * due-date anchor ("Month k start = `startDate` + (k−1) calendar months, day-clamped").
+ *
+ * The day-clamp is the subtle case and it is handled: a project starting Jan 31 has no Feb 31,
+ * so Month 2 begins on Feb 28 (or 29). Comparing against the raw start day alone would keep
+ * that project in Month 1 for the whole of February and then jump it to Month 3 on Mar 31.
+ *
+ * Clamped to a minimum of 1 — a project whose `start_date` is in the future has not reached
+ * Month 1 yet, but "Month 0" and "Month -2" are not things the §14.3 crumb can render.
+ */
+export function retainerMonth(startDate: string, today: string): number {
+  const start = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);
+  const now = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today);
+  if (!start || !now) return 1;
+
+  const [startYear, startMonth, startDay] = start.slice(1).map(Number) as [number, number, number];
+  const [nowYear, nowMonth, nowDay] = now.slice(1).map(Number) as [number, number, number];
+
+  let elapsed = (nowYear - startYear) * 12 + (nowMonth - startMonth);
+
+  // The anniversary day in the CURRENT month, clamped to that month's length.
+  const anchorDay = Math.min(startDay, daysInMonth(nowYear, nowMonth));
+  if (nowDay < anchorDay) elapsed -= 1;
+
+  return Math.max(1, elapsed + 1);
+}

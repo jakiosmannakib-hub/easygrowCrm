@@ -779,21 +779,26 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.2, §13.4.4, §13.4.6 · **Depends:** PUL-403
 
-- [ ] 404.1 Shared `<StatusPill>`: exact labels/colors per §14.3.2 (Approved gets the check-shield; Completed doesn't) — **not built** (no component exists yet)
-- [ ] 404.2 Dropdown option sets per role; locked states read-only; "Done (Approved)" **absent** from the dropdown (`GATE:use_review`) — **server half done:** `setTaskStatusProtected` refuses `approved` with `GATE:use_review`, and `changeTaskStatusOpen` refuses locked states with `GATE:locked`. The dropdown UI is not built.
+- [x] 404.1 Shared `<StatusPill>`: exact labels/colors per §14.3.2 (Approved gets the check-shield; Completed doesn't) — **built in PUL-407** (`features/projects/components/status-pill.tsx`; label/color map in `display.ts`, typed `as const satisfies Record<TaskStatus, …>` so an unlabelled status is a compile error)
+- [x] 404.2 Dropdown option sets per role; locked states read-only; "Done (Approved)" **absent** from the dropdown (`GATE:use_review`) — **server half in PR #30, UI in PUL-407.** `statusMenuOptions()` in `display.ts` is the pure per-role option table (unit-tested); the locked states return `[]` so the pill renders read-only.
 - [x] 404.3 MGR "Completed" = explicit QC bypass, audited as `status_overridden`
-- [ ] 404.4 Dependency guard: unresolved dependency renders Blocked + lock + tooltip naming the dependency; server rejects transitions on blocked tasks — **open on both layers.** `changeTaskStatusOpen` does not read `depends_on` today, and there is no UI yet. (The stored `blocked` status is a separate thing; the dependency lock is display-only and never stored. See the `OPEN_STATUSES` docblock.)
-- [ ] 404.5 Revision requires a note (modal) — **server half done:** `GATE:note_required` in `setTaskStatusProtected`. The modal is not built.
+- [ ] 404.4 Dependency guard: unresolved dependency renders Blocked + lock + tooltip naming the dependency; server rejects transitions on blocked tasks — **UI half done in PUL-407** (`<StatusPill dependencyBlocked>` renders the Blocked color + lock icon + a tooltip naming the upstream task, driven by `DEPENDENCY_SATISFIED_STATUSES`). **The server half is still open and is the real gap:** `changeTaskStatusOpen` does not read `depends_on`, and §13.4.6's dependency gate must land before PUL-601 `submitTask`. (The stored `blocked` status is a separate thing; the dependency lock is display-only and never stored. See the `OPEN_STATUSES` docblock.)
+- [x] 404.5 Revision requires a note (modal) — **server half in PR #30, modal in PUL-407.** `RevisionNoteDialog` collects the note; empty is blocked client-side and `GATE:note_required` remains the enforcement.
 - [x] 404.6 Test: `features/projects/status-transitions.test.ts` — every legal + illegal transition per role → CI manifest
 
 **Done when:** ✅ the transition test enumerates the full matrix (open §13.4.4 and protected §13.4.5, per role, plus the optimistic lock).
 
 > **Merged in PR #30 — server half only.** `changeTaskStatusOpen` (the reference optimistic-lock
 > implementation) and `setTaskStatusProtected` shipped with their mandatory test, so the "Done
-> when" is met. The ticket is **not** closed: the UI pieces (404.1, 404.2 dropdown, 404.4 render,
-> 404.5 modal) fit naturally into **PUL-407 Task Detail modal**, which depends on this ticket.
-> The **server-side dependency guard in 404.4 is a real gap**, not only UI, and must land before
-> PUL-601 `submitTask`, whose §13.4.6 gates include the dependency check.
+> when" is met.
+>
+> **UI half landed in PUL-407**, as predicted: 404.1 (`StatusPill`), 404.2 (per-role dropdown),
+> 404.4's *render*, and 404.5's modal all shipped with the Task Detail modal.
+>
+> **404.4's server guard is the one thing still open on this ticket** — `changeTaskStatusOpen`
+> still does not read `depends_on`. It must land before PUL-601 `submitTask`, whose §13.4.6 gates
+> include the dependency check. Until then the dependency lock is display-only: the modal shows a
+> blocked pill, but nothing server-side refuses a transition on an unmet dependency.
 
 ---
 
@@ -801,13 +806,18 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §14.3.3, §16.8 · **Depends:** PUL-403
 
-- [ ] 405.1 Subtasks: add / toggle / remove (assignee + MGR); audited (`subtask_added/_toggled/_removed`)
-- [ ] 405.2 Checklist: toggle (assignee/MGR), add/delete (MGR only); audited
-- [ ] 405.3 Both locked while `submitted`
-- [ ] 405.4 **Checklist gates submission; subtasks never do** — the distinction from §14.3.3, asserted in tests
-- [ ] 405.5 Integration tests for all six actions + locks
+- [x] 405.1 Subtasks: add / toggle / remove (assignee + MGR); audited (`subtask_added/_toggled/_removed`) — actions in PR #31; UI in PUL-407 Stage 3b
+- [x] 405.2 Checklist: toggle (assignee/MGR), add/delete (MGR only); audited — actions in PR #31; UI in PUL-407 Stage 3b (the add/delete affordances are **hidden**, not merely disabled, for anyone without `checklist_manage`)
+- [x] 405.3 Both locked while `submitted` — enforced by `guardTaskChildEdit` (`GATE:locked`) and mirrored in the UI by `taskCapabilities()`. **Managers are deliberately exempt** from the lock; non-managers are not.
+- [ ] 405.4 **Checklist gates submission; subtasks never do** — the distinction from §14.3.3, asserted in tests — **half done.** `checklistComplete()` (the predicate §13.4.6 will consume) shipped with tests, and no subtask ever gates anything. The *gate itself* cannot be asserted until PUL-601 `submitTask` exists.
+- [x] 405.5 Integration tests for all six actions + locks — `features/projects/subtask.test.ts` (22 cases) and `checklist.test.ts` (22 cases), covering permissions, the submitted lock and archived projects
 
 **Done when:** the gate/informational distinction is proven by a test that submits with unchecked subtasks (passes) and unchecked checklist (refused).
+
+> **Actions merged in PR #31; UI in PUL-407 Stage 3b.** Everything on this ticket is done except
+> **405.4's submit-gate assertion, which is blocked on PUL-601** — there is no `submitTask` to
+> call, so the "Done when" test cannot be written yet. Leave this ticket open until PUL-601 lands
+> and that test is added; the predicate and both actions are ready for it.
 
 ---
 
@@ -815,11 +825,15 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §14.3.3 · **Depends:** PUL-403
 
-- [ ] 406.1 Add-comment action — **always open regardless of status** (the one thing never locked)
-- [ ] 406.2 Notifies assignee when commenter ≠ assignee
-- [ ] 406.3 Tests: comment on a `submitted` task succeeds; notification asserted
+- [x] 406.1 Add-comment action — **always open regardless of status** (the one thing never locked) — UI composer in PUL-407 Stage 3b
+- [x] 406.2 Notifies assignee when commenter ≠ assignee — plus the latest submission's reviewer (scoped in `c1b0d00`)
+- [x] 406.3 Tests: comment on a `submitted` task succeeds; notification asserted — `features/projects/comment.test.ts` (20 cases)
 
-**Done when:** comments post on locked tasks; assignee is notified.
+**Done when:** comments post on locked tasks; assignee is notified. ✅
+
+> **Merged in PR #32; UI in PUL-407 Stage 3b.** The one state that *does* close comments is an
+> **archived project** — `addComment`'s only guard is `guardProjectNotArchived`, so the composer is
+> replaced by an explanation there. That is not a status lock and does not contradict 406.1.
 
 ---
 
@@ -827,13 +841,44 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.3, §14.15 r.2 & 11 · **Depends:** PUL-404…PUL-406
 
-- [ ] 407.1 Header: title, project · category · month, pill, priority, **`Due: Aug 8, 2026 · Today`** (`fmtDate` — build the helper here, it's the canonical one), assignee + MGR Assign ▾
-- [ ] 407.2 Sections in §14.3.3 order: description/SOP/expected output → checklist `(3/5)` → subtasks `(2/4)` + inline "+ Add subtask" (Enter adds) → actual `HMInput` → proof → comments → submission & review history
-- [ ] 407.3 `submitted` lock banner exact copy: _"Awaiting review — checklist, subtasks and hours are locked. Comments stay open."_
-- [ ] 407.4 `CONFLICT` on stale write → refresh toast
-- [ ] 407.5 Manual QA: assignee, non-assignee EMP, MGR, dependency-blocked
+- [x] 407.1 Header: title, project · category · month, pill, priority, **`Due: Aug 8, 2026 · Today`** (`fmtDate` — build the helper here, it's the canonical one), assignee + MGR Assign ▾ — `lib/format.ts` (`fmtDate` / `fmtHM`, unit-tested with a frozen clock) is the canonical helper. "Month N" is omitted entirely when `month` is null.
+- [x] 407.2 Sections in §14.3.3 order: description/SOP/expected output → checklist `(3/5)` → subtasks `(2/4)` + inline "+ Add subtask" (Enter adds) → actual `HMInput` → proof → comments → submission & review history — **all sections render; two stay READ-ONLY by design:** actual time and proof. `logActualHours` and the Submit modal are PUL-601, so the `HMInput` and the proof input are deliberately **not** built here (there is no task-level proof column — proof belongs to a submission).
+- [x] 407.3 `submitted` lock banner exact copy: _"Awaiting review — checklist, subtasks and hours are locked. Comments stay open."_
+- [x] 407.4 `CONFLICT` on stale write → refresh toast — every mutation runs through one `run()` helper that re-fetches on success **and** on CONFLICT, so the held `version` stays current (without it, a second status change in a row would conflict against a row nobody else touched).
+- [ ] 407.5 Manual QA: assignee, non-assignee EMP, MGR, dependency-blocked — **in progress.** `app/dev/task-detail` + `qa-states.sql` (prod-guarded, throwaway until PUL-409) arrange every state: submitted, approved, completed, cancelled, unmet dependency, unassigned and an archived project. First QA pass found the Assign trigger rendering a user **id** instead of a name (`6a83f54`).
 
 **Done when:** every §14.3.3 behavior demonstrable from this one modal.
+
+> **Built in four commits across three stages** (`ee19db9` query + formatters → `fa9e0a6` read-only
+> shell → `f17fb2c` header controls → `4159fa5` body controls, plus `6a83f54` QA fix).
+>
+> **It absorbed the UI half of three earlier tickets**, as PUL-404's note predicted: 404.1/404.2/
+> 404.4-render/404.5, all of 405.1–405.3's UI, and 406.1's composer.
+>
+> **Two pieces of shared machinery came out of it**, both pure and unit-tested in the node lane,
+> and both intended for Board/List/Calendar to reuse rather than re-derive:
+> - `features/projects/display.ts` — the §14.3.2 label/color map, the per-role dropdown option
+>   sets, and `isManagerRole()`.
+> - `features/projects/capabilities.ts` — `taskCapabilities()`, the four body booleans, **derived
+>   from `can()`** rather than restating §9.6, with only the two row-state locks (archived,
+>   post-submission) layered on. Computed server-side inside `loadTaskDetail`, because `lib/authz`
+>   reaches `next/headers` and the db client and must not enter a client bundle.
+>
+> **Base UI gotchas worth not re-learning** (both cost a QA cycle): a controlled `Dialog` never
+> fires `onOpenChange` on the way *in*, so the fetch hangs off a body that mounts-and-keys instead;
+> and `Select.Value` left bare renders `String(value)` — the raw id — unless given a children
+> function. The second shipped as a visible bug (fixed here and in `offboarding-dialog.tsx`, which
+> had the identical user-id leak).
+>
+> **Known open defect, same root cause, not fixed here:** five bare `<SelectValue />` call sites
+> still render a raw enum value instead of its label — `add-employee-dialog.tsx:156` and
+> `employee-detail-sheet.tsx:343` (show `project_manager`, not "Project Manager"),
+> `employees-grid.tsx:138` and `clients-section.tsx:110` (show `active`, not "Active").
+> `employees-grid.tsx:121` is harmless (value === label). Each is a one-line
+> `{(v) => LABELS[v]}` fix in another ticket's surface; needs a home in Phase 8 polish.
+>
+> **Still open:** 407.5 manual QA, and the 404.4 **server** dependency guard, which this ticket
+> did not close and PUL-601 depends on.
 
 ---
 
@@ -1299,6 +1344,13 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 809.2 CI step; test-PR with a violation is blocked
 
 **Done when:** the banned words are mechanically unshippable.
+
+> **Do not widen the "Completed" glob to `features/**`.** PUL-407 ships a deliberate,
+> **manager-only** menu label `"Done (Completed)"` in `features/projects/display.ts`
+> (`statusMenuLabel`), which §14.3.2 specifies verbatim to distinguish it from "Done (Approved)".
+> CLAUDE.md's rule is scoped to *employee-facing* labels, and this is the manager choosing an
+> explicit QC bypass — exactly who should see the word. The two globs above are correct as
+> written; widening them would either break CI or invite someone to "fix" a correct label.
 
 ---
 

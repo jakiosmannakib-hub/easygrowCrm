@@ -162,8 +162,11 @@ export const STATUS_CHANGEABLE_FROM = [
  *
  * This is a MANAGER-only control. CLAUDE.md's "'Completed' never appears as an employee-facing
  * label" is scoped to what employees see; the manager choosing an explicit QC bypass is exactly
- * who should see the word. If PUL-809's forbidden-words grep is written naively it will flag
- * this line — the grep needs to scope to employee-facing surfaces, not the string alone.
+ * who should see the word.
+ *
+ * PUL-809's forbidden-words grep does NOT cover this file — §17 scopes the "Completed" glob to
+ * `features/attendance/**` and `features/daily-plan/**`, and §17's PUL-809 note now says not to
+ * widen it to `features/**` for exactly this reason.
  */
 export function statusMenuLabel(status: TaskStatus): string {
   return status === 'completed' ? 'Done (Completed)' : STATUS_DISPLAY[status].label;

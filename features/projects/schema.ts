@@ -350,3 +350,24 @@ export const LoadFilteredTasksInput = z.object({
 });
 
 export type LoadFilteredTasksInput = z.infer<typeof LoadFilteredTasksInput>;
+
+/**
+ * §14.3 project-header input, as the `loadProjectHeader` read action takes it (PUL-408.2).
+ *
+ * A read has an input schema for the same reason a write does: the id crosses the server-action
+ * boundary from a client component, so it is untrusted until parsed.
+ */
+export const LoadProjectHeaderInput = z.object({
+  projectId: z.string().min(1),
+});
+
+export type LoadProjectHeaderInput = z.infer<typeof LoadProjectHeaderInput>;
+
+/**
+ * §14.3.8 New Task modal context input (PUL-408.2) — the pickers the modal needs on open.
+ */
+export const LoadNewTaskContextInput = z.object({
+  projectId: z.string().min(1),
+});
+
+export type LoadNewTaskContextInput = z.infer<typeof LoadNewTaskContextInput>;

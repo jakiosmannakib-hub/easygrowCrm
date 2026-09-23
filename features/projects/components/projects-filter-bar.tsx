@@ -23,6 +23,7 @@ import {
 import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
 import { monthLabel } from '../display';
+import { ProjectHeader } from './project-header';
 import type { PickableClient } from '../../clients/queries';
 import type { FilteredTaskRow, PickableProject, ProjectMonths, TaskFilters } from '../queries';
 
@@ -174,6 +175,16 @@ export function ProjectsFilterBar({
    */
   const latestRequest = useRef(0);
 
+  /**
+   * Bumped by the project header after New Task / Archive, to re-read the task list.
+   *
+   * A counter rather than a boolean, for the same reason as the header's own nonce: two
+   * mutations in quick succession must each trigger a fetch, and a flag already `true` would
+   * swallow the second. It sits alongside the filters in the effect's dependency list, so a
+   * mutation and a filter change take exactly the same refetch path.
+   */
+  const [taskNonce, setTaskNonce] = useState(0);
+
   useEffect(() => {
     const token = ++latestRequest.current;
 
@@ -194,7 +205,7 @@ export function ProjectsFilterBar({
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `state.tab` must NOT refetch.
-  }, [state.clientId, state.projectId, state.month, state.assigneeId]);
+  }, [state.clientId, state.projectId, state.month, state.assigneeId, taskNonce]);
 
   return (
     <div className="space-y-4">
@@ -312,6 +323,27 @@ export function ProjectsFilterBar({
           </div>
         ) : null}
       </div>
+
+      {/*
+        §14.3's project header — only when ONE project is selected.
+
+        The breadcrumb is `Client › Project · type · Month N`, and none of those four parts has
+        a meaning across a mixed set: two projects have two start dates, so "Month N" is not one
+        number, and progress would be an average of unrelated engagements. Rather than render a
+        header full of em dashes, the bar says what to do to get one. Keyed by project id so
+        switching projects remounts it — mounting is the reset, same rule as the modals.
+      */}
+      {selectedProject === null ? (
+        <p className="text-muted-foreground text-xs">
+          Select a project to see its progress, health and task actions.
+        </p>
+      ) : (
+        <ProjectHeader
+          key={selectedProject.id}
+          projectId={selectedProject.id}
+          onChanged={() => setTaskNonce((n) => n + 1)}
+        />
+      )}
 
       {/* §14.3's tabs. Board / List / Calendar are PUL-409 / 410 / 411; Review, Workload and
           Manager QA (PUL-412) are not offered until their queries exist. */}

@@ -24,7 +24,14 @@ import {
 } from '../../db/schema';
 import type { Executor } from '../../lib/mutation';
 import { getSessionUser } from '../../lib/session';
-import { DEPENDENCY_SATISFIED_STATUSES } from './display';
+import { dhakaToday } from '../../lib/format';
+import {
+  DEPENDENCY_SATISFIED_STATUSES,
+  progressPct,
+  projectHealth,
+  retainerMonth,
+  type ProjectHealth,
+} from './display';
 
 /** The columns a project picker needs. Kept narrow — the client name is for disambiguation. */
 export interface PickableProject {
@@ -646,4 +653,101 @@ export async function projectMonthsQuery(): Promise<ProjectMonths[]> {
   }
 
   return [...byProject].map(([projectId, months]) => ({ projectId, months }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getProjectHeader — §14.3's project header (PUL-408.2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+export interface ProjectHeader {
+  id: string;
+  name: string;
+  type: string;
+  status: (typeof projects.$inferSelect)['status'];
+  client: { name: string };
+  /** §11.2's derived `currentMonth` — never stored, never incremented by anyone. */
+  currentMonth: number;
+  /** §3.1 / §14.3's `X/Y · N%`. */
+  progress: { done: number; total: number; pct: number };
+  health: ProjectHealth;
+}
+
+/**
+ * §14.3's project header, computed over the **WHOLE project**.
+ *
+ * That is the one thing about this query that is easy to get wrong, and §14.3 calls it out
+ * explicitly for the health chip — "computed over the whole project, not the filtered month".
+ * It therefore takes a `projectId` and NOT a `TaskFilters`: a header that moved with the filter
+ * bar would tell a manager who filtered to Month 1 that the project is On Track when Months 2–3
+ * are on fire. Progress is whole-project for the same reason — `9/21` is the engagement, not
+ * the current view.
+ *
+ * Requires an authenticated, ACTIVE user; no per-role filter beyond that (`project.read` is open
+ * to every role, §9.6). `null` when the project is missing or soft-deleted — as a value rather
+ * than a throw, matching `getTaskDetail`, because a read has no action boundary to convert it.
+ *
+ * **Archived projects still return a header.** `getFilteredTasks` hides their tasks from the
+ * default board, but a manager who reaches an archived project must be able to see what they
+ * archived — and `status` rides along so the UI can say so and hide the write affordances.
+ *
+ * The counting is done in SQL in one pass rather than by fetching the tasks and counting in JS:
+ * a project's task list is the one thing here that grows without bound, and the header needs
+ * four integers from it. The §3.1.3 thresholds and the §3.1 percentage are then applied by the
+ * pure helpers in display.ts, so the formulas are unit-testable without a database.
+ */
+export async function getProjectHeader(projectId: string): Promise<ProjectHeader | null> {
+  await getSessionUser();
+
+  const [head] = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      type: projects.type,
+      status: projects.status,
+      startDate: projects.startDate,
+      clientName: clients.name,
+    })
+    .from(projects)
+    .innerJoin(clients, eq(clients.id, projects.clientId))
+    .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+    .limit(1);
+
+  if (!head) return null;
+
+  // `dhakaToday()` reads the clock port, so a frozen test clock moves "today" here too — and
+  // both the overdue comparison and the month derivation use the SAME string, so they cannot
+  // disagree about what day it is mid-query.
+  const today = dhakaToday();
+
+  const [counts] = await db
+    .select({
+      // §4.1: `approved` and `completed` are both "done", treated identically for reporting.
+      done: sql<number>`count(*) filter (where ${projectTasks.status} in ('approved','completed'))::int`,
+      // §4.1 / §4.2: cancelled is scope-cut and leaves the denominator entirely.
+      total: sql<number>`count(*) filter (where ${projectTasks.status} <> 'cancelled')::int`,
+      // §3.1.3: overdue is counted over OPEN tasks only (the block excludes completed,
+      // approved and cancelled), and `due_date` is a bare date compared as a string.
+      overdue: sql<number>`count(*) filter (
+        where ${projectTasks.status} not in ('approved','completed','cancelled')
+          and ${projectTasks.dueDate} is not null
+          and ${projectTasks.dueDate} < ${today}
+      )::int`,
+      waitingReview: sql<number>`count(*) filter (where ${projectTasks.status} = 'submitted')::int`,
+    })
+    .from(projectTasks)
+    .where(and(eq(projectTasks.projectId, projectId), isNull(projectTasks.deletedAt)));
+
+  const done = Number(counts?.done ?? 0);
+  const total = Number(counts?.total ?? 0);
+
+  return {
+    id: head.id,
+    name: head.name,
+    type: head.type,
+    status: head.status,
+    client: { name: head.clientName },
+    currentMonth: retainerMonth(head.startDate, today),
+    progress: { done, total, pct: progressPct(done, total) },
+    health: projectHealth(Number(counts?.overdue ?? 0), Number(counts?.waitingReview ?? 0)),
+  };
 }

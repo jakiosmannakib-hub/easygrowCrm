@@ -1,4 +1,4 @@
--- app/dev/task-detail/qa-states.sql — PUL-407 Stage 2, throwaway QA scaffolding
+-- app/dev/task-detail/qa-states.sql — PUL-407 Stages 2–3b, throwaway QA scaffolding
 --
 -- The §14.3.3 modal has states no fixture reaches. `tests/seed.ts` is TEST-database only
 -- (`assertTestDb` refuses any DATABASE_URL whose database name lacks "test"), so it cannot
@@ -18,7 +18,8 @@
 --
 -- ── Fully self-contained ─────────────────────────────────────────────────────────────────
 -- A hand-seeded dev DB has only the super_admin from seed-admin.sql: no clients, no projects,
--- and no non-SA user. So this file CREATES ITS OWN — `qa_client`, `qa_project`, `qa_assignee` —
+-- and no non-SA user. So this file CREATES ITS OWN — `qa_client`, `qa_project`, `qa_archived_project`
+-- and `qa_assignee` —
 -- and depends on nothing but an empty schema. It must not reference `seed_tl` / `seed_pm` /
 -- `proj_seed`: those are test-DB fixtures and do not exist in dev.
 --
@@ -50,7 +51,7 @@ DELETE FROM task_subtasks        WHERE task_id LIKE 'qa%';
 DELETE FROM task_checklist_items WHERE task_id LIKE 'qa%';
 UPDATE project_tasks SET depends_on = NULL WHERE id LIKE 'qa%';
 DELETE FROM project_tasks        WHERE id LIKE 'qa%';
-DELETE FROM projects             WHERE id = 'qa_project';
+DELETE FROM projects             WHERE id IN ('qa_project', 'qa_archived_project');
 DELETE FROM clients              WHERE id = 'qa_client';
 DELETE FROM "user"               WHERE id = 'qa_assignee';
 
@@ -138,6 +139,43 @@ SELECT
   'qa_assignee', CURRENT_DATE, 'submitted', 'high', 4.5, ctx.actor_id
 FROM qa_ctx ctx;
 
+-- ── The archived project (PUL-407 Stage 3b) ──────────────────────────────────────────────
+-- Archived is read-only EVERYWHERE and for EVERY role, managers included (§13.3.4,
+-- `guardProjectNotArchived`). It is the one state that closes the comment box too, because
+-- `addComment`'s only guard is that same check — so this task is how you QA the hardest branch
+-- of `taskCapabilities`: all four booleans false even for a super_admin.
+--
+-- Its task is `in_progress` and ASSIGNED, deliberately: without the archive it would be fully
+-- editable, so anything still interactive on it is a bug rather than a status effect.
+INSERT INTO projects (id, client_id, name, type, status, start_date, deadline, created_by)
+SELECT 'qa_archived_project', 'qa_client', 'QA Project (archived)', 'Retainer', 'archived',
+       CURRENT_DATE - 120, CURRENT_DATE - 10, ctx.actor_id
+FROM qa_ctx ctx;
+
+INSERT INTO project_tasks
+  (id, project_id, month, category, title, description, assignee_id, due_date,
+   status, priority, actual_hours, created_by)
+SELECT
+  'qa_archived_task', 'qa_archived_project', 1, 'QA', 'QA — Archived project (all read-only)',
+  'Everything must be read-only, for every role: no checklist toggle, no subtask edits, no × , and the comment box replaced by "This project is archived — commenting is closed."',
+  'qa_assignee', CURRENT_DATE - 5, 'in_progress', 'medium', 1.5, ctx.actor_id
+FROM qa_ctx ctx;
+
+-- Children on the archived task too, so there is something visibly frozen rather than an empty
+-- section that proves nothing.
+INSERT INTO task_checklist_items (id, task_id, text, done, position)
+VALUES
+  ('qac_a1', 'qa_archived_task', 'Done before the archive',   true,  1),
+  ('qac_a2', 'qa_archived_task', 'Never finished',            false, 2);
+
+INSERT INTO task_subtasks (id, task_id, text, done, position, created_by)
+SELECT 'qas_a1', 'qa_archived_task', 'Frozen subtask', false, 1, ctx.actor_id FROM qa_ctx ctx;
+
+INSERT INTO task_comments (id, task_id, author_id, body, created_at)
+SELECT 'qacm_a1', 'qa_archived_task', ctx.actor_id,
+       'Archiving this — nothing further needed.', now() - interval '3 days'
+FROM qa_ctx ctx;
+
 -- ── Children ─────────────────────────────────────────────────────────────────────────────
 -- So the (done/total) counts AND the empty states are both exercised: qa_submitted gets a
 -- part-done checklist and subtasks; every other task deliberately gets none.
@@ -177,7 +215,7 @@ COMMIT;
 --   DELETE FROM task_checklist_items WHERE task_id LIKE 'qa%';
 --   UPDATE project_tasks SET depends_on = NULL WHERE id LIKE 'qa%';
 --   DELETE FROM project_tasks        WHERE id LIKE 'qa%';
---   DELETE FROM projects             WHERE id = 'qa_project';
+--   DELETE FROM projects             WHERE id IN ('qa_project', 'qa_archived_project');
 --   DELETE FROM clients              WHERE id = 'qa_client';
 --   DELETE FROM "user"               WHERE id = 'qa_assignee';
 --   COMMIT;

@@ -1,19 +1,28 @@
-// features/projects/components/task-detail-modal.tsx — PUL-407 Stage 2, §14.3.3
+// features/projects/components/task-detail-modal.tsx — PUL-407, §14.3.3
 //
-// The Task Detail modal SHELL: every §14.3.3 section, rendered READ-ONLY.
+// The Task Detail modal: every §14.3.3 section, in order.
 //
-// **Stage 2 is deliberately inert.** Every control below is disabled and nothing here calls a
-// mutation. Stage 3 wires the checklist/subtask toggles, the Assign ▾, the status dropdown and
-// the actual-time input; Phase 6 adds the Submit and Review modals. The sections exist now — in
-// §14.3.3's order, against the final `getTaskDetail` shape — so those tickets fill in behavior
-// without re-laying out the modal, and so the read can be QA'd against real data first.
+// Built in three passes, which the comments below still distinguish because the reasoning
+// differs per pass:
+//   Stage 2  — the shell, every section read-only against the real `getTaskDetail` shape.
+//   Stage 3a — the header: status dropdown (§14.3.2), revision-note modal, Assign ▾, plus the
+//              `run()` → re-fetch plumbing and CONFLICT handling everything else now reuses.
+//   Stage 3b — the body: checklist, subtasks and comments, gated on the four server-computed
+//              capabilities (`features/projects/capabilities.ts`).
 //
-// There is deliberately NO version-conflict handling (§14.3.3's CONFLICT toast): nothing here
-// writes, so there is no `version` to lose a race with yet.
+// STILL READ-ONLY, deliberately: **actual time** and **proof**. `logActualHours` and the Submit
+// modal are Phase 6 (PUL-601) — do not add inputs for them here.
+//
+// Every mutation goes through `run()`, which is not optimistic (§14.15 r.5: accountability
+// actions wait for the server), re-reads on success so the held `version` stays current, and
+// routes failures to `showErrorToast` — including `CONFLICT`'s "refresh" toast (§14.3.3).
+//
+// The capability booleans decide what to DRAW. The server's `authorize()` + `guardTaskChildEdit`
+// decide what HAPPENS (§9.5 r.2, §16: the client displays, the server decides).
 
 'use client';
 
-import { CheckIcon, TriangleAlertIcon } from 'lucide-react';
+import { CheckIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -33,15 +42,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import type { ActionResult } from '@/lib/action-result';
 import { fmtDate, fmtHM } from '@/lib/format';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { initials } from '@/features/employees/display';
 import {
+  addChecklistItem,
+  addComment,
+  addSubtask,
   assignTask,
   changeTaskStatusOpen,
+  deleteChecklistItem,
+  deleteSubtask,
   loadTaskDetail,
   setTaskStatusProtected,
+  toggleChecklistItem,
+  toggleSubtask,
 } from '../actions';
 import {
   DEPENDENCY_SATISFIED_STATUSES,
@@ -72,6 +89,7 @@ type LoadedTask = NonNullable<
 type TaskDetailData = LoadedTask['detail'];
 type Viewer = LoadedTask['viewer'];
 type Assignable = NonNullable<LoadedTask['assignable']>[number];
+type Capabilities = LoadedTask['capabilities'];
 
 type DetailComment = TaskDetailData['comments'][number];
 type DetailSubmission = TaskDetailData['submissions'][number];
@@ -117,6 +135,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [assignable, setAssignable] = useState<Assignable[] | null>(null);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   /** `'loading'` → `'loaded'` | `'missing'` (task gone) | `'failed'` (the read itself failed). */
   const [phase, setPhase] = useState<'loading' | 'loaded' | 'missing' | 'failed'>('loading');
 
@@ -165,6 +184,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
       setDetail(result.data.detail);
       setViewer(result.data.viewer);
       setAssignable(result.data.assignable);
+      setCapabilities(result.data.capabilities);
       setPhase('loaded');
     })();
 
@@ -300,6 +320,20 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
 
   const doneSubtasks = detail.subtasks.filter((s) => s.done).length;
 
+  /**
+   * The four §14.3.3 body capabilities, computed SERVER-SIDE by `taskCapabilities` and returned
+   * with the data (Stage 3b). The fallback is all-false: if the payload somehow lacks them, the
+   * body renders read-only rather than optimistically enabled.
+   *
+   * These decide what to DRAW. Every control they enable is re-authorized by its action.
+   */
+  const caps = capabilities ?? {
+    canToggleChecklist: false,
+    canManageChecklist: false,
+    canManageSubtasks: false,
+    canComment: false,
+  };
+
   return (
     <>
       <DialogHeader>
@@ -398,8 +432,8 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           ) : null}
         </Section>
 
-        {/* The definition-of-done, and the §13.4.6 submit gate. Toggling is Stage 3
-            (`project_task.checklist_toggle`); add/delete are MGR-only and also Stage 3. */}
+        {/* The definition-of-done, and the §13.4.6 submit gate (PUL-601). Toggling is the
+            assignee's or a manager's; add/delete are MGR-only (§13.4.10). */}
         <Section
           title="Checklist"
           count={
@@ -413,14 +447,36 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           ) : (
             <ul className="flex flex-col gap-1.5">
               {detail.checklist.map((item) => (
-                <CheckRow key={item.id} text={item.text} done={item.done} />
+                <CheckRow
+                  key={item.id}
+                  text={item.text}
+                  done={item.done}
+                  disabled={!caps.canToggleChecklist || busy}
+                  onToggle={(done) => void run(() => toggleChecklistItem({ itemId: item.id, done }))}
+                  // HIDDEN, not disabled, when the viewer can't manage: an employee should never
+                  // see a × they may not use (§14.1 curated visibility).
+                  onDelete={
+                    caps.canManageChecklist
+                      ? () => void run(() => deleteChecklistItem({ itemId: item.id }))
+                      : undefined
+                  }
+                />
               ))}
             </ul>
           )}
+
+          {caps.canManageChecklist ? (
+            <AddRow
+              placeholder="Add a checklist item"
+              busy={busy}
+              onAdd={(text) => run(() => addChecklistItem({ taskId, text }))}
+            />
+          ) : null}
         </Section>
 
         {/* Subtasks are NOT a submission gate (§9.6 ⁷, §16.8) — they only help the assignee
-            break the work down. Never add a gate here. */}
+            break the work down. Never add a gate here. Add/toggle/delete share ONE permission
+            (`project_task.subtask_manage`), unlike the checklist's split. */}
         <Section
           title="Subtasks"
           count={
@@ -434,10 +490,31 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           ) : (
             <ul className="flex flex-col gap-1.5">
               {detail.subtasks.map((subtask) => (
-                <CheckRow key={subtask.id} text={subtask.text} done={subtask.done} />
+                <CheckRow
+                  key={subtask.id}
+                  text={subtask.text}
+                  done={subtask.done}
+                  disabled={!caps.canManageSubtasks || busy}
+                  onToggle={(done) =>
+                    void run(() => toggleSubtask({ subtaskId: subtask.id, done }))
+                  }
+                  onDelete={
+                    caps.canManageSubtasks
+                      ? () => void run(() => deleteSubtask({ subtaskId: subtask.id }))
+                      : undefined
+                  }
+                />
               ))}
             </ul>
           )}
+
+          {caps.canManageSubtasks ? (
+            <AddRow
+              placeholder="Add a subtask"
+              busy={busy}
+              onAdd={(text) => run(() => addSubtask({ taskId, text }))}
+            />
+          ) : null}
         </Section>
 
         <Section title="Actual time">
@@ -456,8 +533,10 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           )}
         </Section>
 
-        {/* Comments never lock, at any status (§3.2.3). Oldest first — a conversation reads top
-            to bottom. Posting is Stage 3; `addComment` (§13.4.11) already exists. */}
+        {/* Comments never lock, at any status (§3.2.3) — the box stays live on a submitted or
+            approved task, which is exactly what the lock banner promises. The ONLY thing that
+            closes it is an archived project (§13.3.4), which is `canComment`'s one false case.
+            Oldest first — a conversation reads top to bottom. */}
         <Section title="Comments">
           {detail.comments.length === 0 ? (
             <Empty>No comments yet.</Empty>
@@ -467,6 +546,17 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
                 <CommentRow key={comment.id} comment={comment} />
               ))}
             </ul>
+          )}
+
+          {caps.canComment ? (
+            <CommentComposer
+              busy={busy}
+              onPost={(body) => run(() => addComment({ taskId, body }))}
+            />
+          ) : (
+            <p className="text-muted-foreground">
+              This project is archived — commenting is closed.
+            </p>
           )}
         </Section>
 
@@ -700,22 +790,156 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One checklist or subtask row. `disabled` this stage for everyone, not conditionally: Stage 3
- * introduces the real rule, which is per-permission and per-status (§9.6 ⁷ + the submitted
- * lock), and a half-applied version of it now would be worse than an honest read-only.
+ * One checklist or subtask row.
+ *
+ * `disabled` and `onDelete` express the two different ways a viewer can lack a right, and the
+ * difference is deliberate (§14.1 curated visibility):
+ *   - **Disabled** checkbox: the row is still information the viewer should see, they just may
+ *     not change it. A greyed checkbox reads as "not yours", which is true.
+ *   - **Absent** ×: `onDelete` omitted removes the button entirely rather than greying it. A
+ *     delete affordance an employee may never use is noise that invites a pointless click and a
+ *     FORBIDDEN toast.
  */
-function CheckRow({ text, done }: { text: string; done: boolean }) {
+function CheckRow({
+  text,
+  done,
+  disabled,
+  onToggle,
+  onDelete,
+}: {
+  text: string;
+  done: boolean;
+  disabled: boolean;
+  onToggle: (done: boolean) => void;
+  /** Omit to hide the × entirely — see the docblock. */
+  onDelete?: () => void;
+}) {
   return (
-    <li className="flex items-center gap-2">
+    <li className="group/row flex items-center gap-2">
       <input
         type="checkbox"
         checked={done}
-        disabled
-        readOnly
-        className="size-3.5 shrink-0 accent-primary"
+        disabled={disabled}
+        onChange={(event) => onToggle(event.target.checked)}
+        className="accent-primary size-3.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <span className={done ? 'text-muted-foreground line-through' : undefined}>{text}</span>
+      <span className={done ? 'text-muted-foreground flex-1 line-through' : 'flex-1'}>{text}</span>
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={disabled}
+          aria-label={`Remove "${text}"`}
+          className="text-muted-foreground hover:text-destructive shrink-0 opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed"
+        >
+          <XIcon className="size-3" />
+        </button>
+      ) : null}
     </li>
+  );
+}
+
+/**
+ * The inline "+ Add …" row under the checklist and the subtask list.
+ *
+ * ENTER submits (§14.3.3 "Enter to add"), which is the whole point of an inline adder — a
+ * manager entering five checklist items should never touch the mouse. The button is the same
+ * action for anyone who does.
+ *
+ * Clears itself on success only: a failed add keeps the text so it isn't retyped.
+ */
+function AddRow({
+  placeholder,
+  busy,
+  onAdd,
+}: {
+  placeholder: string;
+  busy: boolean;
+  onAdd: (text: string) => Promise<boolean>;
+}) {
+  const [text, setText] = useState('');
+  const trimmed = text.trim();
+
+  async function submit() {
+    if (trimmed === '' || busy) return;
+    const ok = await onAdd(trimmed);
+    if (ok) setText('');
+  }
+
+  return (
+    <div className="mt-1 flex items-center gap-2">
+      <Input
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void submit();
+          }
+        }}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        disabled={busy}
+        className="h-7 flex-1 text-xs"
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={trimmed === '' || busy}
+        onClick={() => void submit()}
+      >
+        Add
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The comment box. Deliberately NOT Enter-to-submit, unlike `AddRow`: a comment is prose that
+ * routinely wants a line break, and a stray Enter posting a half-written thought is worse than
+ * one extra click. The add-rows are single-line values where the opposite is true.
+ *
+ * Posting is not optimistic — §14.15 r.5 reserves optimistic UI for pill changes and reads; a
+ * comment is a permanent attributed record, so it waits for the server and then re-reads.
+ */
+function CommentComposer({
+  busy,
+  onPost,
+}: {
+  busy: boolean;
+  onPost: (body: string) => Promise<boolean>;
+}) {
+  const [body, setBody] = useState('');
+  const trimmed = body.trim();
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      <textarea
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        rows={2}
+        aria-label="Add a comment"
+        placeholder="Add a comment…"
+        disabled={busy}
+        className="border-input bg-input/20 focus-visible:border-ring focus-visible:ring-ring/30 dark:bg-input/30 w-full rounded-md border px-2 py-1.5 text-xs/relaxed outline-none focus-visible:ring-2 disabled:opacity-50"
+      />
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          size="sm"
+          disabled={trimmed === '' || busy}
+          onClick={() => {
+            void (async () => {
+              const ok = await onPost(trimmed);
+              if (ok) setBody('');
+            })();
+          }}
+        >
+          {busy ? 'Posting…' : 'Post'}
+        </Button>
+      </div>
+    </div>
   );
 }
 

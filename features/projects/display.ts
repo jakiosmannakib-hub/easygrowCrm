@@ -183,12 +183,24 @@ export interface StatusMenuViewer {
   role: Role;
 }
 
-/** §9.6's manager-level roles, as the menu uses them. Mirrors `MANAGER_ROLES`. */
+/**
+ * §9.6's manager-level roles. Mirrors `MANAGER_ROLES` in features/employees/queries.ts, which
+ * cannot be imported here: that module pulls in the db client, and this one is consumed by
+ * client components.
+ */
 export const MENU_MANAGER_ROLES: readonly Role[] = [
   'super_admin',
   'team_leader',
   'project_manager',
 ];
+
+/**
+ * Is this role manager-level? The one predicate behind both the §14.3.2 menu and the §14.3.3
+ * post-submission lock, so the two can't disagree about who a "manager" is.
+ */
+export function isManagerRole(role: Role): boolean {
+  return MENU_MANAGER_ROLES.includes(role);
+}
 
 /**
  * The §14.3.2 option set for one viewer looking at one task, and the single place that decides
@@ -213,7 +225,7 @@ export function statusMenuOptions(
 ): TaskStatus[] {
   if (!(STATUS_CHANGEABLE_FROM as readonly TaskStatus[]).includes(status)) return [];
 
-  if (MENU_MANAGER_ROLES.includes(viewer.role)) {
+  if (isManagerRole(viewer.role)) {
     return [...OPEN_SETTABLE_STATUSES, ...PROTECTED_SETTABLE_STATUSES];
   }
 

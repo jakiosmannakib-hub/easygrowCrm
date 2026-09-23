@@ -37,6 +37,7 @@ import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
+import { taskCapabilities } from './capabilities';
 import { getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
@@ -1843,6 +1844,15 @@ export async function loadTaskDetail(input: LoadTaskDetailInput) {
     return {
       detail,
       viewer: { id: actor.id, role: actor.role, canAssign },
+      // The §14.3.3 body's four booleans (PUL-407 Stage 3b), computed from the same authorized
+      // read. Server-side because `taskCapabilities` imports `can()` from lib/authz, which
+      // pulls in `next/headers` and the db client and must not cross into a client bundle.
+      // Mirrors the guards; the guards still decide (§9.5 r.2).
+      capabilities: taskCapabilities({
+        viewer: { id: actor.id, role: actor.role },
+        task: { status: detail.task.status, assigneeId: detail.task.assigneeId },
+        project: { status: detail.project.status },
+      }),
       // Fetched only for someone who may actually assign: the picker is the one part of this
       // payload that is a list of other people, and §13.4.3's permission is what gates knowing
       // it. `null` (not `[]`) so the client distinguishes "not allowed" from "nobody eligible".

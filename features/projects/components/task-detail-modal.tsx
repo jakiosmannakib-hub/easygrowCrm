@@ -379,12 +379,25 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           picker's existence is a server decision, not a client role guess.
         */}
         {assignable !== null ? (
-          <AssignPicker
-            assignable={assignable}
-            currentAssigneeId={task.assigneeId}
-            disabled={busy}
-            onSelect={(assigneeId) => void run(() => assignTask({ taskId, assigneeId }))}
-          />
+          <span className="flex items-center gap-1.5">
+            {/* The avatar stays OUTSIDE the trigger: `Select.Value` renders a bare text label,
+                and a manager should still see the same face everyone else does. */}
+            {assignee ? (
+              <Avatar size="sm">
+                {assignee.image ? <AvatarImage src={assignee.image} alt="" /> : null}
+                <AvatarFallback>{initials(assignee.name)}</AvatarFallback>
+              </Avatar>
+            ) : null}
+            <AssignPicker
+              assignable={assignable}
+              currentAssigneeId={task.assigneeId}
+              // The stored assignee, which is NOT necessarily in `assignable` — see the
+              // component's docblock.
+              currentAssignee={assignee}
+              disabled={busy}
+              onSelect={(assigneeId) => void run(() => assignTask({ taskId, assigneeId }))}
+            />
+          </span>
         ) : assignee ? (
           <span className="flex items-center gap-1.5">
             <Avatar size="sm">
@@ -659,14 +672,49 @@ const UNASSIGN = '__unassign__';
 function AssignPicker({
   assignable,
   currentAssigneeId,
+  currentAssignee,
   disabled,
   onSelect,
 }: {
   assignable: Assignable[];
   currentAssigneeId: string | null;
+  /**
+   * The person actually on the task, from `getTaskDetail` — which reads the `user` row directly
+   * and therefore returns someone `assignable` may not contain.
+   *
+   * That gap is real, not theoretical: `assignableUsersQuery` returns only ACTIVE non-SA users,
+   * so a task still held by someone since deactivated has an assignee who is deliberately not a
+   * selectable option. The trigger must name them anyway — the same rule §14.3.2 states for the
+   * status pill ("current status always shown even if outside the option set"), for the same
+   * reason: hiding the current value makes the control lie about the row.
+   */
+  currentAssignee: { id: string; name: string } | null;
   disabled: boolean;
   onSelect: (assigneeId: string | null) => void;
 }) {
+  /**
+   * What the trigger shows for a given selected value.
+   *
+   * `Select.Value` must be given a children FUNCTION. Left bare it calls Base UI's
+   * `resolveSelectedLabel(value, items, …)`, and because this Select passes no `items` map to
+   * the Root, that falls through to `String(value)` — which is the user's database ID. That is
+   * exactly the bug QA hit: the trigger read `qa_assignee` instead of "QA Assignee".
+   */
+  function labelFor(value: string | null): string {
+    if (value === null || value === UNASSIGN) return 'Unassigned';
+
+    const candidate = assignable.find((person) => person.id === value);
+    if (candidate) return candidate.name;
+
+    // Not in the option set — the deactivated-holder case above.
+    if (currentAssignee && currentAssignee.id === value) return currentAssignee.name;
+
+    // Defensive only: a provisioned account always has a name (`user.name` is NOT NULL and
+    // HR-owned, §PUL-203), so this is unreachable rather than a real fallback. Better a vague
+    // word than a raw id if it ever is reached.
+    return 'Unassigned';
+  }
+
   return (
     <Select
       value={currentAssigneeId ?? UNASSIGN}
@@ -680,7 +728,9 @@ function AssignPicker({
       }}
     >
       <SelectTrigger size="sm" aria-label="Assign to" disabled={disabled}>
-        <SelectValue placeholder="Unassigned" />
+        <SelectValue placeholder="Unassigned">
+          {(value: string | null) => labelFor(value)}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={UNASSIGN}>Unassigned</SelectItem>

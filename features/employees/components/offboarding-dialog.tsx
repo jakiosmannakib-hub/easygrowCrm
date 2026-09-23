@@ -322,7 +322,20 @@ function BlockerSection({
                 onValueChange={(next: string | null) => onChange(row.taskId, next ?? '')}
               >
                 <SelectTrigger aria-label={placeholder} className="w-44">
-                  <SelectValue placeholder={placeholder} />
+                  {/*
+                    The children FUNCTION is required, not decoration. Left bare, `Select.Value`
+                    resolves its label via `resolveSelectedLabel(value, items, …)`, and since no
+                    `items` map is passed to the Root that falls through to `String(value)` — the
+                    raw user ID. Picking "Alia Rahman" would then make the trigger read `usr_7f3…`.
+                    (Same bug and same fix as the Task Detail Assign ▾, PUL-407.)
+                  */}
+                  <SelectValue placeholder={placeholder}>
+                    {(selected: string | null) => {
+                      if (selected === null || selected === '') return placeholder;
+                      if (selected === CANCEL) return 'Cancel the task';
+                      return users.find((u) => u.id === selected)?.name ?? placeholder;
+                    }}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {allowCancel ? <SelectItem value={CANCEL}>Cancel the task</SelectItem> : null}

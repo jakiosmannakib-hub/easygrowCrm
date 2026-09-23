@@ -10,6 +10,7 @@
 // §13.4.9 addSubtask / toggleSubtask / deleteSubtask (PUL-405).
 // §13.4.10 toggleChecklistItem / addChecklistItem / deleteChecklistItem (PUL-405).
 // §13.4.11 addComment (PUL-406).
+// §13.8 loadTaskDetail (PUL-407) — a READ, here because client components can't import queries.
 // Still to come: §13.3.5 `deleteProject` (SA only) and §13.3.2 `createProjectFromTemplate`
 // (PUL-506, the Start Project wizard).
 
@@ -29,13 +30,15 @@ import {
   user as userTable,
 } from '../../db/schema';
 import { actionResult } from '../../lib/action-result';
-import { authorize, type User } from '../../lib/authz';
+import { authorize, can, type User } from '../../lib/authz';
 import { clock } from '../../lib/clock';
 import { AppError } from '../../lib/errors';
 import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { MANAGER_ROLES } from '../employees/queries';
+import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
+import { taskCapabilities } from './capabilities';
+import { getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
   AddCommentInput,
@@ -47,6 +50,7 @@ import {
   CreateTaskInput,
   DeleteChecklistItemInput,
   DeleteSubtaskInput,
+  LoadTaskDetailInput,
   SetTaskStatusProtectedInput,
   ToggleChecklistItemInput,
   ToggleSubtaskInput,
@@ -1787,5 +1791,72 @@ export async function addComment(input: AddCommentInput) {
     }
 
     return row;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §13.8 getTaskDetail — the Task Detail modal's read (PUL-407 Stage 2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the §14.3.3 Task Detail modal renders, in one authorized round trip.
+ *
+ * A **read** living in actions.ts, for the same reason as `loadOffboardingContext` (PUL-206):
+ * a client component cannot import `queries.ts` (server-only, no `'use server'`), and the modal
+ * fetches on open rather than shipping every task's detail with the board. Living here also
+ * means the `authorize-first` ESLint rule applies, which is right — `project.read` is open to
+ * every role (§9.6), but "open to every role" is a decision the permission table should state,
+ * not something a read quietly assumes.
+ *
+ * No `withTx`, no audit, no notify: it writes nothing. Reading a task is not an
+ * accountability-bearing event and §9.8 lists no audit row for it.
+ *
+ * Returns `null` (inside `{ ok: true }`) for a missing or soft-deleted task rather than
+ * NOT_FOUND, carrying `getTaskDetail`'s own contract through unchanged: the modal distinguishes
+ * "this task is gone" — a normal outcome when a board is stale — from "the read failed", and
+ * shows a different thing for each.
+ */
+export async function loadTaskDetail(input: LoadTaskDetailInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadTaskDetailInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line. `getTaskDetail` re-reads the session itself; this is
+    //    the permission check, not a substitute for it.
+    const actor = await authorize('project.read');
+
+    const detail = await getTaskDetail(parsed.taskId);
+    if (detail === null) return null;
+
+    // Who is looking, resolved SERVER-SIDE and returned with the data (PUL-407 Stage 3a).
+    //
+    // The modal needs the viewer's role and id to decide which §14.3.2 menu to draw, and the
+    // assignee cell is conditional on `viewer.id === task.assigneeId`. Returning it here rather
+    // than threading it as a prop keeps the two from disagreeing: the role that chose the menu
+    // is the same DB read that produced the task, from the same request. A prop would let a
+    // stale board pass a role the user no longer has.
+    //
+    // This is for RENDERING ONLY. Every option it enables is re-authorized by the action behind
+    // it — `can()` here decides what to draw, `authorize()` there decides what happens
+    // (§16: the client displays, the server decides).
+    const canAssign = can(actor, 'project_task.assign');
+
+    return {
+      detail,
+      viewer: { id: actor.id, role: actor.role, canAssign },
+      // The §14.3.3 body's four booleans (PUL-407 Stage 3b), computed from the same authorized
+      // read. Server-side because `taskCapabilities` imports `can()` from lib/authz, which
+      // pulls in `next/headers` and the db client and must not cross into a client bundle.
+      // Mirrors the guards; the guards still decide (§9.5 r.2).
+      capabilities: taskCapabilities({
+        viewer: { id: actor.id, role: actor.role },
+        task: { status: detail.task.status, assigneeId: detail.task.assigneeId },
+        project: { status: detail.project.status },
+      }),
+      // Fetched only for someone who may actually assign: the picker is the one part of this
+      // payload that is a list of other people, and §13.4.3's permission is what gates knowing
+      // it. `null` (not `[]`) so the client distinguishes "not allowed" from "nobody eligible".
+      assignable: canAssign ? await assignableUsersQuery() : null,
+    };
   });
 }

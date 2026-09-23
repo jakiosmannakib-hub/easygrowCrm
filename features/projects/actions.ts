@@ -38,7 +38,7 @@ import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
 import { taskCapabilities } from './capabilities';
-import { getTaskDetail } from './queries';
+import { getFilteredTasks, getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
   AddCommentInput,
@@ -50,6 +50,7 @@ import {
   CreateTaskInput,
   DeleteChecklistItemInput,
   DeleteSubtaskInput,
+  LoadFilteredTasksInput,
   LoadTaskDetailInput,
   SetTaskStatusProtectedInput,
   ToggleChecklistItemInput,
@@ -1858,5 +1859,30 @@ export async function loadTaskDetail(input: LoadTaskDetailInput) {
       // it. `null` (not `[]`) so the client distinguishes "not allowed" from "nobody eligible".
       assignable: canAssign ? await assignableUsersQuery() : null,
     };
+  });
+}
+
+/**
+ * §14.3 / PUL-408.3 — the filter bar's read. Wraps `getFilteredTasks` so a client component can
+ * re-run it when a dropdown changes, the same reason `loadTaskDetail` exists: actions.ts is the
+ * only module in this slice a client may import (queries.ts is server-only, and a file carrying
+ * `'use server'` may export nothing but async functions).
+ *
+ * A read, so: no `withTx`, no audit row, no notification. §13's "no audit rows for reads" —
+ * the four-step shape collapses to validate → authorize → read.
+ *
+ * `project.read` is open to every role (§9.6), so this authorizes rather than scopes: it proves
+ * an active, signed-in user and stops there. Which tasks a role may *act* on is decided by the
+ * mutation behind each control, not by narrowing this list.
+ */
+export async function loadFilteredTasks(input: LoadFilteredTasksInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadFilteredTasksInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line.
+    await authorize('project.read');
+
+    return getFilteredTasks(parsed);
   });
 }

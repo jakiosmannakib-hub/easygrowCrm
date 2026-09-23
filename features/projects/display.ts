@@ -245,3 +245,49 @@ export function statusMenuOptions(
 export function isProtectedStatus(status: TaskStatus): boolean {
   return (PROTECTED_SETTABLE_STATUSES as readonly TaskStatus[]).includes(status);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3 Month ▾ labels (PUL-408.2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+/**
+ * A retainer month number → `Month 3 — March`, calendar-anchored to the project's start date
+ * (§1–§8 "Month dropdown … calendar-anchored via the project's start date"; the same anchor
+ * §13.8's due-date computation uses — "Month k start = `startDate` + (k−1) calendar months").
+ *
+ * Deliberately string arithmetic on the `YYYY-MM-DD` and NOT a `Date`: a bare `date` column is
+ * an Asia/Dhaka calendar day (§11.0), and `new Date('2026-01-01')` is UTC midnight, which is
+ * how a project that starts on the 1st renders as starting in December. The month index is all
+ * this needs, and it is right there in characters 6–7.
+ *
+ * **Day-clamping does not apply here, and that is not an oversight.** §13.8 clamps the day when
+ * it computes a due *date* (Jan 31 + 1 month = Feb 28, not Mar 3). A month *name* is unaffected
+ * by the clamp: adding k calendar months always lands in month index `start + k` whichever day
+ * the clamp picks. Clamping here would be dead code that implies a subtlety that isn't there.
+ *
+ * Falls back to a bare `Month N` if the start date is malformed — a label with no month name is
+ * degraded, but a wrong month name is a manager filtering to the wrong cycle.
+ */
+export function monthLabel(startDate: string, month: number): string {
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);
+  if (!parsed || !Number.isInteger(month) || month < 1) return `Month ${month}`;
+
+  // `month` is 1-based (Month 1 IS the start month), so the offset from the start is month - 1.
+  const index = (Number(parsed[2]) - 1 + (month - 1)) % 12;
+  return `Month ${month} — ${MONTH_NAMES[index]}`;
+}

@@ -18,6 +18,7 @@ import {
   PROTECTED_SETTABLE_STATUSES,
   STATUS_DISPLAY,
   isProtectedStatus,
+  monthLabel,
   statusMenuLabel,
   statusMenuOptions,
 } from './display';
@@ -183,5 +184,37 @@ describe('statusMenuLabel', () => {
       if (status === 'completed') continue;
       expect(statusMenuLabel(status), status).toBe(STATUS_DISPLAY[status].label);
     }
+  });
+});
+
+describe('monthLabel — §14.3 Month ▾ (PUL-408.2)', () => {
+  it('anchors Month 1 to the project start month', () => {
+    expect(monthLabel('2026-03-01', 1)).toBe('Month 1 — March');
+  });
+
+  it('advances one calendar month per retainer month', () => {
+    expect(monthLabel('2026-03-01', 2)).toBe('Month 2 — April');
+    expect(monthLabel('2026-03-15', 6)).toBe('Month 6 — August');
+  });
+
+  it('wraps across the year boundary', () => {
+    // Month 13 of a November start is November again, a year on — the label names the month,
+    // not the year, exactly as §14.3's `Month N — MonthName` crumb does.
+    expect(monthLabel('2026-11-01', 3)).toBe('Month 3 — January');
+    expect(monthLabel('2026-11-01', 13)).toBe('Month 13 — November');
+  });
+
+  it('is unaffected by the day of the month — day-clamping cannot change the month name', () => {
+    // §13.8 clamps the DAY when computing a due date (Jan 31 + 1 month = Feb 28). A month name
+    // is immune to that: whichever day the clamp picks, it is still in February.
+    expect(monthLabel('2026-01-31', 2)).toBe('Month 2 — February');
+    expect(monthLabel('2026-01-01', 2)).toBe('Month 2 — February');
+  });
+
+  it('degrades to a bare `Month N` rather than naming the wrong month', () => {
+    // A label with no month name is merely poor; a wrong one sends a manager to the wrong cycle.
+    expect(monthLabel('not-a-date', 4)).toBe('Month 4');
+    expect(monthLabel('', 4)).toBe('Month 4');
+    expect(monthLabel('2026-03-01', 0)).toBe('Month 0');
   });
 });

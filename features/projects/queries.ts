@@ -8,7 +8,7 @@
 // consuming action), not inside the read — the PUL-207 pattern. `getTaskDetail` is the one
 // exception: it requires an authenticated, active session itself (still no per-role filter).
 
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '../../db';
 import {
@@ -24,6 +24,7 @@ import {
 } from '../../db/schema';
 import type { Executor } from '../../lib/mutation';
 import { getSessionUser } from '../../lib/session';
+import { DEPENDENCY_SATISFIED_STATUSES } from './display';
 
 /** The columns a project picker needs. Kept narrow — the client name is for disambiguation. */
 export interface PickableProject {
@@ -31,6 +32,15 @@ export interface PickableProject {
   name: string;
   clientId: string;
   clientName: string;
+  /**
+   * `YYYY-MM-DD`, never a `Date` (§11.0 — a bare `date` column is an Asia/Dhaka calendar day).
+   *
+   * Here because Month ▾ labels are calendar-anchored to it (§14.3 / `monthLabel`): "Month 3"
+   * is only a name once you know which month the project started in. A picker row is the
+   * natural carrier — the alternative is a second round trip to learn one column about a
+   * project the client already has in hand.
+   */
+  startDate: string;
 }
 
 /**
@@ -53,6 +63,7 @@ export async function activeProjectsQuery(): Promise<PickableProject[]> {
       name: projects.name,
       clientId: projects.clientId,
       clientName: clients.name,
+      startDate: projects.startDate,
     })
     .from(projects)
     .innerJoin(clients, eq(projects.clientId, clients.id))
@@ -395,4 +406,244 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     })),
     dependency: dependencyRows[0] ?? null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getFilteredTasks — the one filtered-tasks read every tab shares (PUL-408.3, §14.3)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The §14.3 filter bar as a value: Client ▾ · Project ▾ · Month ▾ · Assignee ▾.
+ *
+ * Every key is optional and every key has an explicit "no filter" value, because the filter
+ * bar's state object declares all four upfront (§16.10) and passes them through verbatim.
+ * `'all'` and `undefined` mean the same thing here on purpose: the UI never has to decide
+ * whether to omit a key, which is exactly the lazy-init branch §16.10 exists to prevent.
+ */
+export interface TaskFilters {
+  clientId?: string;
+  projectId?: string;
+  /** A retainer month number, or `'all'`. Tasks with `month IS NULL` appear only under `'all'`. */
+  month?: number | 'all';
+  /** A user id, `'unassigned'` (assignee_id IS NULL), or `'all'`. */
+  assigneeId?: string | 'unassigned' | 'all';
+}
+
+/** The "no filter" sentinel shared by Month ▾ and Assignee ▾. */
+export const FILTER_ALL = 'all';
+/** Assignee ▾'s "show claimable work" option. Not a user id — no user id can collide with it. */
+export const FILTER_UNASSIGNED = 'unassigned';
+
+/**
+ * One task as a Board card / List row / Calendar chip draws it.
+ *
+ * **This is a LIST shape and must stay one.** No description, no comments, no submissions —
+ * those are `getTaskDetail`'s job, fetched when the modal opens. A board renders every task in
+ * a project at once, so anything added here is paid for N times for something nobody can read
+ * without clicking through.
+ */
+export interface FilteredTaskRow {
+  id: string;
+  title: string;
+  category: string;
+  /** NULL for one-off (non-retainer) work (§11.3). */
+  month: number | null;
+  priority: (typeof projectTasks.$inferSelect)['priority'];
+  status: TaskStatus;
+  /** `YYYY-MM-DD` string, never a `Date` — render with `fmtDate` (§14.15 r.2). */
+  dueDate: string | null;
+  assignee: DetailPerson | null;
+  /** For §14.3.1's subtask badge, which hides itself at `subtaskTotal === 0`. */
+  subtaskDone: number;
+  subtaskTotal: number;
+  /**
+   * §3.2.5's display-only lock: this task has an upstream dependency that is not finished.
+   * The stored `status` is untouched — the pill decides to draw a padlock, nothing writes
+   * `blocked` back.
+   */
+  dependencyBlocked: boolean;
+}
+
+/**
+ * §14.3 / PUL-408.3 — THE canonical filtered-tasks query. Board, List and Calendar all read
+ * through this one function, which is the whole point: "filter changes update every tab
+ * identically" is only true if there is one query to change (§16.9's three-surfaces-one-query
+ * argument, applied to the board the same way §13.8 applies it to the review queue).
+ *
+ * Follows the slice's convention: `getSessionUser()` to require an authenticated, ACTIVE user,
+ * and no per-role row filtering beyond that — `project.read` is open to every role (§9.6) and
+ * §13.8 states the open read model explicitly ("all roles read all active projects"). What a
+ * role may *do* with a task is decided by the actions; the Assignee ▾ dropdown narrowing itself
+ * for employees is a convenience in the picker, not a scope on this read.
+ *
+ * Three exclusions are applied unconditionally, and each is a decision worth naming:
+ *
+ *   1. **Soft-deleted tasks** (`deleted_at`) — deletion is an erasure from the working set, not
+ *      a state anyone browses. Same rule as every other read in this file.
+ *   2. **Tasks on an archived or soft-deleted project** — §13.3.4: archived projects are hidden
+ *      from default views. `projectsListQuery` is the deliberate opposite (a manager confirming
+ *      an archive took), and this is not that surface.
+ *   3. **`completed` and `cancelled` tasks — FLAGGED DECISION.** Both are terminal, and the
+ *      board shows active work. Note `approved` is deliberately NOT excluded: it is the normal
+ *      end of the QC path and a manager needs to see this month's approved work sitting in its
+ *      column. The consequence to know about is that a `completed` task vanishes from every tab
+ *      with no "show closed" affordance in this ticket — if PUL-409/410 turns out to need one,
+ *      it belongs here as an `includeTerminal?: boolean` filter key, not as a second query.
+ *
+ * Ordering is fully stable — priority DESC (the pgEnum is declared low→urgent, so DESC is
+ * urgent-first), then due date ASC with NULLs last (an undated task is not more urgent than a
+ * dated one), then `created_at`, then `id` to break the remaining ties. Without that last
+ * column two tasks created in the same transaction could swap places between renders.
+ */
+export async function getFilteredTasks(filters: TaskFilters = {}): Promise<FilteredTaskRow[]> {
+  await getSessionUser();
+
+  const upstream = alias(projectTasks, 'upstream_task');
+
+  /*
+   * Subtask counts as a grouped subquery rather than a join onto the rows themselves: joining
+   * `task_subtasks` directly would multiply every task row by its subtask count and force a
+   * GROUP BY over the whole select list. LEFT JOIN, so a task with no subtasks survives — its
+   * counts arrive NULL and are coalesced to 0 below.
+   */
+  const subtaskCounts = db
+    .select({
+      taskId: taskSubtasks.taskId,
+      total: sql<number>`count(*)::int`.as('subtask_total'),
+      done: sql<number>`count(*) filter (where ${taskSubtasks.done})::int`.as('subtask_done'),
+    })
+    .from(taskSubtasks)
+    .groupBy(taskSubtasks.taskId)
+    .as('subtask_counts');
+
+  /** One source of truth for "the upstream work is finished" — shared with the status pill. */
+  const satisfied = sql.join(
+    DEPENDENCY_SATISFIED_STATUSES.map((status) => sql`${status}`),
+    sql`, `,
+  );
+
+  const where: SQL[] = [
+    isNull(projectTasks.deletedAt),
+    isNull(projects.deletedAt),
+    eq(projects.status, 'active'),
+    notInArray(projectTasks.status, ['completed', 'cancelled']),
+  ];
+
+  if (filters.clientId) where.push(eq(projects.clientId, filters.clientId));
+  if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
+
+  // `typeof === 'number'` rather than a truthiness check: month 0 is not a valid retainer month
+  // today, but a truthy test would silently drop it if that ever changed, and `'all'` is a
+  // string. The three cases are spelled out so none of them falls through by accident.
+  if (typeof filters.month === 'number') where.push(eq(projectTasks.month, filters.month));
+
+  if (filters.assigneeId === FILTER_UNASSIGNED) {
+    where.push(isNull(projectTasks.assigneeId));
+  } else if (filters.assigneeId && filters.assigneeId !== FILTER_ALL) {
+    where.push(eq(projectTasks.assigneeId, filters.assigneeId));
+  }
+
+  const rows = await db
+    .select({
+      id: projectTasks.id,
+      title: projectTasks.title,
+      category: projectTasks.category,
+      month: projectTasks.month,
+      priority: projectTasks.priority,
+      status: projectTasks.status,
+      dueDate: projectTasks.dueDate,
+      assigneeId: user.id,
+      assigneeName: user.name,
+      assigneeImage: user.image,
+      subtaskTotal: sql<number>`coalesce(${subtaskCounts.total}, 0)`,
+      subtaskDone: sql<number>`coalesce(${subtaskCounts.done}, 0)`,
+      // `coalesce(…, true)` covers the unreachable-upstream case: `depends_on` is a real FK, so
+      // the row always exists, but if the join ever yields NULL we report blocked rather than
+      // claim a dependency we could not read is satisfied.
+      dependencyBlocked: sql<boolean>`(
+        ${projectTasks.dependsOn} is not null
+        and coalesce(${upstream.status}::text not in (${satisfied}), true)
+      )`,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .leftJoin(user, eq(user.id, projectTasks.assigneeId))
+    .leftJoin(subtaskCounts, eq(subtaskCounts.taskId, projectTasks.id))
+    .leftJoin(upstream, eq(upstream.id, projectTasks.dependsOn))
+    .where(and(...where))
+    .orderBy(
+      desc(projectTasks.priority),
+      sql`${projectTasks.dueDate} asc nulls last`,
+      asc(projectTasks.createdAt),
+      asc(projectTasks.id),
+    );
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    month: row.month,
+    priority: row.priority,
+    status: row.status,
+    dueDate: row.dueDate,
+    // The LEFT JOIN gives three NULL columns for an unassigned task; `assignee` is one nullable
+    // object rather than three nullable fields so no caller can render half a person.
+    assignee:
+      row.assigneeId === null
+        ? null
+        : { id: row.assigneeId, name: row.assigneeName ?? '', image: row.assigneeImage },
+    subtaskDone: Number(row.subtaskDone),
+    subtaskTotal: Number(row.subtaskTotal),
+    dependencyBlocked: row.dependencyBlocked,
+  }));
+}
+
+/** One project's retainer month numbers, ascending — the raw material for Month ▾. */
+export interface ProjectMonths {
+  projectId: string;
+  /** Distinct non-null `project_tasks.month` values, ascending. */
+  months: number[];
+}
+
+/**
+ * Which months each active project actually has tasks in (PUL-408.2's Month ▾ cascade).
+ *
+ * **The month SET comes from the tasks; only the month LABEL comes from `start_date`** (see
+ * `monthLabel` in display.ts). There is no stored "how many months is this retainer", and
+ * inventing one — say, months elapsed since `start_date` — would offer a manager Month 7 on a
+ * project whose tasks stop at Month 3, and hide Month 9 on one that was planned ahead. The
+ * tasks are the only honest answer to "which cycles exist here".
+ *
+ * `month IS NULL` (one-off work) contributes nothing: those tasks are reachable under "All
+ * months" and have no cycle to name.
+ *
+ * Every active project in one round trip rather than a query per selection, the same reasoning
+ * as `activeProjectsQuery`: the agency runs tens of projects, so the whole cascade map is
+ * smaller than the round trips that would fetch it a slice at a time, and changing the Client ▾
+ * or Project ▾ costs nothing.
+ */
+export async function projectMonthsQuery(): Promise<ProjectMonths[]> {
+  const rows = await db
+    .selectDistinct({ projectId: projectTasks.projectId, month: projectTasks.month })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .where(
+      and(
+        isNull(projectTasks.deletedAt),
+        isNull(projects.deletedAt),
+        eq(projects.status, 'active'),
+        isNotNull(projectTasks.month),
+      ),
+    )
+    .orderBy(asc(projectTasks.projectId), asc(projectTasks.month));
+
+  const byProject = new Map<string, number[]>();
+  for (const row of rows) {
+    if (row.month === null) continue; // unreachable past the isNotNull, but narrows the type
+    const months = byProject.get(row.projectId);
+    if (months) months.push(row.month);
+    else byProject.set(row.projectId, [row.month]);
+  }
+
+  return [...byProject].map(([projectId, months]) => ({ projectId, months }));
 }

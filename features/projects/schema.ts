@@ -331,3 +331,22 @@ export const LoadTaskDetailInput = z.object({
 });
 
 export type LoadTaskDetailInput = z.infer<typeof LoadTaskDetailInput>;
+
+/**
+ * §14.3 filter bar input, as the `loadFilteredTasks` read action takes it (PUL-408.3).
+ *
+ * Every key is optional and `'all'` is an accepted value rather than something the UI has to
+ * strip: the filter bar declares all four keys upfront (§16.10) and sends whatever it holds.
+ * Making the schema absorb `'all'` is what lets the client state stay branchless.
+ *
+ * `month` is a union of a positive int and the literal, not a coerced string — a `'3'` arriving
+ * where a number belongs means the caller built the payload by hand and should be told.
+ */
+export const LoadFilteredTasksInput = z.object({
+  clientId: z.string().min(1).optional(),
+  projectId: z.string().min(1).optional(),
+  month: z.union([z.number().int().positive(), z.literal('all')]).optional(),
+  assigneeId: z.union([z.string().min(1), z.literal('unassigned'), z.literal('all')]).optional(),
+});
+
+export type LoadFilteredTasksInput = z.infer<typeof LoadFilteredTasksInput>;

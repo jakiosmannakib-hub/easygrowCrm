@@ -3,7 +3,7 @@
 // Reads for the employees slice. No 'use server' and no writes — queries may run anywhere
 // (server components, other queries, actions); only actions.ts writes (CLAUDE.md §2).
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import { user as userTable } from '../../db/schema';
 
@@ -64,6 +64,35 @@ export async function activeUsersQuery(): Promise<PickableUser[]> {
     })
     .from(userTable)
     .where(eq(userTable.active, true))
+    .orderBy(asc(userTable.name));
+}
+
+/**
+ * Every user who may legally hold a TASK ASSIGNMENT: active, and never `super_admin`.
+ *
+ * This is the "own call site" that `activeUsersQuery` above defers the SA filter to (§9.7-4,
+ * Amendment E). It exists as a named query rather than a `.filter()` at each picker because the
+ * rule is a permanent property of assignment, not a preference of one dropdown: the
+ * `pt_no_sa_assignee` trigger and `requireAssignableUser` both reject an SA assignee, so a
+ * picker that offered one would be offering a choice the server is guaranteed to refuse.
+ *
+ * Filtered in SQL rather than in JS for the same reason `activeUsersQuery` filters `active`
+ * there: one forgotten predicate is a dropdown that hands a user a guaranteed error.
+ *
+ * It does NOT exclude the current assignee or the acting user — `assignTask` treats
+ * re-assigning to the current holder as a no-op (no write, no audit), and a manager assigning
+ * work to themselves is legitimate.
+ */
+export async function assignableUsersQuery(): Promise<PickableUser[]> {
+  return db
+    .select({
+      id: userTable.id,
+      name: userTable.name,
+      role: userTable.role,
+      active: userTable.active,
+    })
+    .from(userTable)
+    .where(and(eq(userTable.active, true), ne(userTable.role, 'super_admin')))
     .orderBy(asc(userTable.name));
 }
 

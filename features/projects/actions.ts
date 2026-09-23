@@ -30,13 +30,13 @@ import {
   user as userTable,
 } from '../../db/schema';
 import { actionResult } from '../../lib/action-result';
-import { authorize, type User } from '../../lib/authz';
+import { authorize, can, type User } from '../../lib/authz';
 import { clock } from '../../lib/clock';
 import { AppError } from '../../lib/errors';
 import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { MANAGER_ROLES } from '../employees/queries';
+import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
 import { getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
@@ -1822,8 +1822,31 @@ export async function loadTaskDetail(input: LoadTaskDetailInput) {
 
     // 2. AUTHORIZE — first awaited line. `getTaskDetail` re-reads the session itself; this is
     //    the permission check, not a substitute for it.
-    await authorize('project.read');
+    const actor = await authorize('project.read');
 
-    return getTaskDetail(parsed.taskId);
+    const detail = await getTaskDetail(parsed.taskId);
+    if (detail === null) return null;
+
+    // Who is looking, resolved SERVER-SIDE and returned with the data (PUL-407 Stage 3a).
+    //
+    // The modal needs the viewer's role and id to decide which §14.3.2 menu to draw, and the
+    // assignee cell is conditional on `viewer.id === task.assigneeId`. Returning it here rather
+    // than threading it as a prop keeps the two from disagreeing: the role that chose the menu
+    // is the same DB read that produced the task, from the same request. A prop would let a
+    // stale board pass a role the user no longer has.
+    //
+    // This is for RENDERING ONLY. Every option it enables is re-authorized by the action behind
+    // it — `can()` here decides what to draw, `authorize()` there decides what happens
+    // (§16: the client displays, the server decides).
+    const canAssign = can(actor, 'project_task.assign');
+
+    return {
+      detail,
+      viewer: { id: actor.id, role: actor.role, canAssign },
+      // Fetched only for someone who may actually assign: the picker is the one part of this
+      // payload that is a list of other people, and §13.4.3's permission is what gates knowing
+      // it. `null` (not `[]`) so the client distinguishes "not allowed" from "nobody eligible".
+      assignable: canAssign ? await assignableUsersQuery() : null,
+    };
   });
 }

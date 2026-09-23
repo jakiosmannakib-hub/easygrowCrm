@@ -16,12 +16,45 @@
 import { CheckIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import type { ActionResult } from '@/lib/action-result';
 import { fmtDate, fmtHM } from '@/lib/format';
+import { showErrorToast } from '@/lib/show-error-toast';
 import { initials } from '@/features/employees/display';
-import { loadTaskDetail } from '../actions';
-import { DEPENDENCY_SATISFIED_STATUSES, PRIORITY_LABELS } from '../display';
+import {
+  assignTask,
+  changeTaskStatusOpen,
+  loadTaskDetail,
+  setTaskStatusProtected,
+} from '../actions';
+import {
+  DEPENDENCY_SATISFIED_STATUSES,
+  PRIORITY_LABELS,
+  isProtectedStatus,
+  statusMenuLabel,
+  statusMenuOptions,
+  type TaskStatus,
+} from '../display';
 import { StatusPill } from './status-pill';
+
+/** Any action's result — `run()` only ever reads the failure half. */
+type ActionOutcome = ActionResult<unknown>;
 
 /**
  * The success payload, derived from the action rather than restated.
@@ -29,12 +62,16 @@ import { StatusPill } from './status-pill';
  * Deriving it — instead of importing `TaskDetail` from `queries.ts` — is the point: a client
  * component must not import the server-only queries module at all, and taking the type off the
  * action means the `ActionResult` boundary (PUL-111) can't silently drift from what this
- * component reads. The action's success data is `TaskDetail | null`; `NonNullable` is the
- * loaded case.
+ * component reads. The action's success data is `{ detail, viewer, assignable } | null`;
+ * `NonNullable` is the loaded case.
  */
-type TaskDetailData = NonNullable<
+type LoadedTask = NonNullable<
   Extract<Awaited<ReturnType<typeof loadTaskDetail>>, { ok: true }>['data']
 >;
+
+type TaskDetailData = LoadedTask['detail'];
+type Viewer = LoadedTask['viewer'];
+type Assignable = NonNullable<LoadedTask['assignable']>[number];
 
 type DetailComment = TaskDetailData['comments'][number];
 type DetailSubmission = TaskDetailData['submissions'][number];
@@ -78,13 +115,36 @@ export function TaskDetailModal({
 
 function TaskDetailBody({ taskId }: { taskId: string }) {
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
+  const [viewer, setViewer] = useState<Viewer | null>(null);
+  const [assignable, setAssignable] = useState<Assignable[] | null>(null);
   /** `'loading'` → `'loaded'` | `'missing'` (task gone) | `'failed'` (the read itself failed). */
   const [phase, setPhase] = useState<'loading' | 'loaded' | 'missing' | 'failed'>('loading');
+
+  /**
+   * Bumped after every successful mutation to re-run the load effect below (PUL-407 Stage 3a).
+   *
+   * Re-reading is not cosmetic. `changeTaskStatusOpen` / `setTaskStatusProtected` are
+   * optimistic-locked on `version`, and each one INCREMENTS it. Without a re-fetch the modal
+   * would still hold the pre-write version, so the user's *second* status change in a row would
+   * fail `CONFLICT` against a row nobody else touched. The re-fetch is what keeps the held
+   * version current.
+   *
+   * A nonce rather than a re-key: re-keying the body would remount it, which would throw away
+   * the loaded data and flash the loading state after every pill change. The `taskId` key stays
+   * exactly as Stage 2 set it.
+   */
+  const [nonce, setNonce] = useState(0);
+  /** True while a mutation is in flight — every header control disables together. */
+  const [busy, setBusy] = useState(false);
+  /** §13.4.5's revision note is collected in its own modal before the write happens. */
+  const [revisionOpen, setRevisionOpen] = useState(false);
 
   useEffect(() => {
     // Guards a stale response from an earlier opening landing on a newer one: React 19 Strict
     // Mode double-invokes effects in dev, and a fast close/re-open (or a click through to
-    // another task) can leave a request in flight against an unmounted body.
+    // another task) can leave a request in flight against an unmounted body. It guards the
+    // re-fetch case too — two quick mutations can leave two loads racing, and only the newest
+    // may land.
     let current = true;
 
     void (async () => {
@@ -102,14 +162,46 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
         setPhase('missing');
         return;
       }
-      setDetail(result.data);
+      setDetail(result.data.detail);
+      setViewer(result.data.viewer);
+      setAssignable(result.data.assignable);
       setPhase('loaded');
     })();
 
     return () => {
       current = false;
     };
-  }, [taskId]);
+    // `nonce` is the re-fetch trigger; `detail` is deliberately NOT cleared first, so the
+    // current data stays on screen while the new read is in flight.
+  }, [taskId, nonce]);
+
+  /**
+   * Run a mutation, then re-read. THE one path every header control goes through.
+   *
+   * Not optimistic: a status change and an assignment are accountability actions (§14.15 r.5),
+   * so the UI waits for the server rather than guessing. On failure the result goes to
+   * `showErrorToast`, which maps `CONFLICT` to §14.3.3's "This task changed while you were
+   * editing — refresh." and every GATE reason to its own sentence (PUL-106).
+   *
+   * It re-fetches on failure too, deliberately: a CONFLICT means the row moved under us, so the
+   * most useful next state is the current one — after which the retry has a fresh version and
+   * succeeds. That turns the refresh toast into advice rather than a chore.
+   */
+  async function run(mutate: () => Promise<ActionOutcome>): Promise<boolean> {
+    setBusy(true);
+    try {
+      const result = await mutate();
+      if (!result.ok) {
+        showErrorToast(result);
+        if (result.code === 'CONFLICT') setNonce((n) => n + 1);
+        return false;
+      }
+      setNonce((n) => n + 1);
+      return true;
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (phase === 'loading') {
     return (
@@ -156,9 +248,50 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
       ? { title: dependency.title }
       : undefined;
 
-  // §14.3.3's unified locking rule. Stage 2 is read-only throughout, so this drives the banner
-  // only; Stage 3 reads the same flag to disable the controls it adds.
+  // §14.3.3's unified locking rule — checklist, subtasks, hours and proof go read-only while a
+  // review is pending. The status menu is NOT part of this lock: `submitted` is already outside
+  // `STATUS_CHANGEABLE_FROM`, so the menu closes for its own reason (§13.4.4's locked states),
+  // and a manager's override out of it is §13.4.5's separate act.
   const locked = task.status === 'submitted';
+
+  // §14.3.2's option set for THIS viewer on THIS task. Empty ⇒ the pill renders read-only.
+  // Convenience only: every option is re-authorized by the action behind it.
+  const statusOptions = viewer
+    ? statusMenuOptions(task.status, viewer, task.assigneeId)
+    : [];
+
+  /**
+   * Route a chosen status to the right §13 action.
+   *
+   * `revision_required` does NOT write here — §13.4.5 requires a note, so it opens the note
+   * modal and the write happens on that modal's submit. Everything else splits on
+   * `isProtectedStatus`: the open set goes to §13.4.4, `completed` / `cancelled` to §13.4.5.
+   *
+   * `version` is the one the last load returned, which is why `run()` re-fetches: without that,
+   * a second change in a row would CONFLICT on a row nobody else touched.
+   */
+  function onStatusSelect(next: TaskStatus) {
+    if (next === task.status) return;
+
+    if (next === 'revision_required') {
+      setRevisionOpen(true);
+      return;
+    }
+
+    void run(() =>
+      isProtectedStatus(next)
+        ? setTaskStatusProtected({
+            taskId,
+            version: task.version,
+            status: next as 'completed' | 'cancelled',
+          })
+        : changeTaskStatusOpen({
+            taskId,
+            version: task.version,
+            status: next as 'planned' | 'in_progress' | 'blocked',
+          }),
+    );
+  }
 
   // §14.3.3 Proof: the LATEST submission's proof. There is no task-level proof field — the
   // editable proof input belongs to the Phase-6 Submit modal, and must not be added here.
@@ -180,7 +313,24 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
       </DialogHeader>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-        <StatusPill status={task.status} dependencyBlocked={dependencyBlocked} />
+        {/*
+          §14.3.2: "current status always shown even if outside the option set". With no options
+          the pill IS the display — which covers the locked states, HR, and a non-assignee EMP.
+          The dependency-blocked override rides on both paths, so a blocked-by-dependency task
+          still reads as Blocked even while its owner can change the underlying status.
+        */}
+        {statusOptions.length === 0 ? (
+          <StatusPill status={task.status} dependencyBlocked={dependencyBlocked} />
+        ) : (
+          <StatusMenu
+            status={task.status}
+            options={statusOptions}
+            dependencyBlocked={dependencyBlocked}
+            disabled={busy}
+            onSelect={(next) => onStatusSelect(next)}
+          />
+        )}
+
         <span className="text-muted-foreground">
           Priority: <span className="text-foreground">{PRIORITY_LABELS[task.priority]}</span>
         </span>
@@ -188,8 +338,20 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           {/* Always through fmtDate — full date with year, never a bare month-day (§14.15 r.2). */}
           Due: <span className="text-foreground">{fmtDate(task.dueDate) || 'No due date'}</span>
         </span>
-        {/* Assign ▾ is Stage 3 (§13.4.3, MGR only). Display only for now. */}
-        {assignee ? (
+
+        {/*
+          §14.3.3: a manager gets Assign ▾; everyone else sees the assignee read-only. `assignable`
+          is non-null exactly when the server said this viewer holds `project_task.assign`, so the
+          picker's existence is a server decision, not a client role guess.
+        */}
+        {assignable !== null ? (
+          <AssignPicker
+            assignable={assignable}
+            currentAssigneeId={task.assigneeId}
+            disabled={busy}
+            onSelect={(assigneeId) => void run(() => assignTask({ taskId, assigneeId }))}
+          />
+        ) : assignee ? (
           <span className="flex items-center gap-1.5">
             <Avatar size="sm">
               {assignee.image ? <AvatarImage src={assignee.image} alt="" /> : null}
@@ -321,7 +483,193 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           )}
         </Section>
       </div>
+
+      {/*
+        §13.4.5's revision-note modal. Nested inside the detail dialog rather than replacing it:
+        the manager is writing the note ABOUT what they are looking at, so the task stays behind
+        it. Keyed by `revisionOpen` so each opening starts with an empty textarea.
+      */}
+      <RevisionNoteDialog
+        key={revisionOpen ? 'open' : 'closed'}
+        open={revisionOpen}
+        taskTitle={task.title}
+        busy={busy}
+        onClose={() => setRevisionOpen(false)}
+        onSubmit={async (note) => {
+          const ok = await run(() =>
+            setTaskStatusProtected({
+              taskId,
+              version: task.version,
+              status: 'revision_required',
+              note,
+            }),
+          );
+          if (ok) setRevisionOpen(false);
+        }}
+      />
     </>
+  );
+}
+
+/**
+ * The §14.3.2 status dropdown.
+ *
+ * The trigger renders the `StatusPill` itself rather than Base UI's `SelectValue`, for a reason
+ * that is not cosmetic: §14.3.2 requires the CURRENT status to show "even if outside the option
+ * set", and a task in `revision_required` is exactly that case for its assignee — the menu
+ * offers the three open statuses while the pill must still read "Needs revision". Driving the
+ * trigger off `SelectValue` would blank it whenever the value has no matching item.
+ *
+ * `value` is therefore deliberately NOT bound; the Select is used as a menu, not as a bound
+ * input, and `onValueChange` (which yields `string | null` on Base UI) is the only signal read.
+ */
+function StatusMenu({
+  status,
+  options,
+  dependencyBlocked,
+  disabled,
+  onSelect,
+}: {
+  status: TaskStatus;
+  options: TaskStatus[];
+  dependencyBlocked?: { title: string };
+  disabled: boolean;
+  onSelect: (next: TaskStatus) => void;
+}) {
+  return (
+    <Select
+      value={status}
+      onValueChange={(next: string | null) => {
+        if (next !== null) onSelect(next as TaskStatus);
+      }}
+    >
+      <SelectTrigger size="sm" aria-label="Change status" disabled={disabled} className="gap-2">
+        <StatusPill status={status} dependencyBlocked={dependencyBlocked} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option} value={option}>
+            {statusMenuLabel(option)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * §13.4.3's Assign ▾ — managers only, and only ever offered active non-SA users, because
+ * `assignableUsersQuery` is what populated it.
+ *
+ * `UNASSIGN` is a sentinel rather than an empty string: Base UI treats `''` as "no value", so an
+ * empty-string item cannot be selected. The same trick as the offboarding dialog's `CANCEL`.
+ */
+const UNASSIGN = '__unassign__';
+
+function AssignPicker({
+  assignable,
+  currentAssigneeId,
+  disabled,
+  onSelect,
+}: {
+  assignable: Assignable[];
+  currentAssigneeId: string | null;
+  disabled: boolean;
+  onSelect: (assigneeId: string | null) => void;
+}) {
+  return (
+    <Select
+      value={currentAssigneeId ?? UNASSIGN}
+      onValueChange={(next: string | null) => {
+        if (next === null) return;
+        const assigneeId = next === UNASSIGN ? null : next;
+        // `assignTask` treats "no change" as a no-op server-side, but stopping here saves the
+        // round trip and the re-fetch that would follow it.
+        if (assigneeId === currentAssigneeId) return;
+        onSelect(assigneeId);
+      }}
+    >
+      <SelectTrigger size="sm" aria-label="Assign to" disabled={disabled}>
+        <SelectValue placeholder="Unassigned" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={UNASSIGN}>Unassigned</SelectItem>
+        {assignable.map((candidate) => (
+          <SelectItem key={candidate.id} value={candidate.id}>
+            {candidate.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * §13.4.5's "say why" modal, shown before a task is sent back for revision.
+ *
+ * The empty-note check is client-side convenience only — the server returns
+ * `GATE:note_required` regardless, and that is the real rule. Blocking the button here just
+ * means the common mistake costs no round trip; it is not what enforces the note.
+ */
+function RevisionNoteDialog({
+  open,
+  taskTitle,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  taskTitle: string;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (note: string) => void;
+}) {
+  const [note, setNote] = useState('');
+  const trimmed = note.trim();
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Send back for revision</DialogTitle>
+          <DialogDescription>
+            {taskTitle} — the assignee sees this note, so say what needs changing.
+          </DialogDescription>
+        </DialogHeader>
+
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          rows={4}
+          autoFocus
+          aria-label="Revision note"
+          placeholder="What needs changing?"
+          className="border-input bg-input/20 focus-visible:border-ring focus-visible:ring-ring/30 w-full rounded-md border px-2 py-1.5 text-xs/relaxed outline-none focus-visible:ring-2 dark:bg-input/30"
+        />
+
+        <DialogFooter>
+          <DialogClose
+            render={
+              <Button variant="outline" type="button">
+                Cancel
+              </Button>
+            }
+          />
+          <Button
+            variant="destructive"
+            disabled={trimmed === '' || busy}
+            onClick={() => onSubmit(trimmed)}
+          >
+            {busy ? 'Sending…' : 'Send back'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

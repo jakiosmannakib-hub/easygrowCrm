@@ -7,7 +7,7 @@
 // maps are typed off the pgEnum's `enumValues`, so adding a status or a priority to the schema
 // without labelling it here is a COMPILE error rather than a blank pill in production.
 
-import { taskPriority, taskStatus } from '../../db/schema/enums';
+import { taskPriority, taskStatus, userRole } from '../../db/schema/enums';
 
 export type TaskStatus = (typeof taskStatus.enumValues)[number];
 export type TaskPriority = (typeof taskPriority.enumValues)[number];
@@ -112,3 +112,121 @@ export const PRIORITY_LABELS = {
  * the downstream one, not a green light.
  */
 export const DEPENDENCY_SATISFIED_STATUSES: readonly TaskStatus[] = ['approved', 'completed'];
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3.2 status-dropdown option sets (PUL-407 Stage 3a)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The statuses §13.4.4 `changeTaskStatusOpen` accepts — the employee-reachable pill.
+ *
+ * Mirrors `ChangeTaskStatusOpenInput`'s enum exactly. Deliberately a hand-written subset, not
+ * derived from `taskStatus.enumValues`: widening it automatically when the DB enum gains a
+ * value would offer a status the action refuses.
+ */
+export const OPEN_SETTABLE_STATUSES = ['planned', 'in_progress', 'blocked'] as const;
+
+/**
+ * The statuses §13.4.5 `setTaskStatusProtected` accepts FROM THE MENU — the manager overrides.
+ *
+ * **`approved` is deliberately absent.** The action lists it (a well-formed payload) but always
+ * refuses it with `GATE:use_review`: approving goes through the Phase-6 review modal, never the
+ * status menu (§14.3.2). Offering it here would render a menu item whose only possible outcome
+ * is an error toast.
+ */
+export const PROTECTED_SETTABLE_STATUSES = ['revision_required', 'completed', 'cancelled'] as const;
+
+/**
+ * The statuses a task can be moved OUT OF via the menu — `OPEN_STATUSES` in actions.ts.
+ *
+ * Note `revision_required` is here but absent from `OPEN_SETTABLE_STATUSES`: a task in revision
+ * is moved back to work through the menu, but only a review (§13.4.7) or a manager override
+ * (§13.4.5) puts it there. Everything absent — `submitted`, `approved`, `completed`,
+ * `cancelled` — is a locked state (§14.3.2), and the pill renders read-only.
+ */
+export const STATUS_CHANGEABLE_FROM = [
+  'planned',
+  'in_progress',
+  'blocked',
+  'revision_required',
+] as const;
+
+/**
+ * The label a status carries **in the dropdown**, which differs from its pill label in exactly
+ * one case.
+ *
+ * §14.3.2 writes the manager set as "… Needs revision · Done (Completed) · Cancelled", with the
+ * parenthetical distinguishing it from "Done (Approved)", which is NOT in the menu. The pill
+ * stays plain "Done" — on a board, provenance is carried by the check-shield icon, but in a menu
+ * there is no pill to compare against, so the word does the work.
+ *
+ * This is a MANAGER-only control. CLAUDE.md's "'Completed' never appears as an employee-facing
+ * label" is scoped to what employees see; the manager choosing an explicit QC bypass is exactly
+ * who should see the word. If PUL-809's forbidden-words grep is written naively it will flag
+ * this line — the grep needs to scope to employee-facing surfaces, not the string alone.
+ */
+export function statusMenuLabel(status: TaskStatus): string {
+  return status === 'completed' ? 'Done (Completed)' : STATUS_DISPLAY[status].label;
+}
+
+/**
+ * Who is looking, as far as the menu is concerned.
+ *
+ * `Role` is derived from the pgEnum rather than imported from `lib/authz`, deliberately: authz
+ * pulls in `authorize()` → `lib/session` → `next/headers` and the db client, none of which may
+ * cross into a client bundle. The enum module is pure.
+ */
+export type Role = (typeof userRole.enumValues)[number];
+
+export interface StatusMenuViewer {
+  id: string;
+  role: Role;
+}
+
+/** §9.6's manager-level roles, as the menu uses them. Mirrors `MANAGER_ROLES`. */
+export const MENU_MANAGER_ROLES: readonly Role[] = [
+  'super_admin',
+  'team_leader',
+  'project_manager',
+];
+
+/**
+ * The §14.3.2 option set for one viewer looking at one task, and the single place that decides
+ * whether the pill is a menu at all.
+ *
+ * Returns `[]` when the pill must render read-only, which happens when either:
+ *   - the task sits in a locked state (`submitted` / `approved` / `completed` / `cancelled`) —
+ *     §13.4.4 refuses to move those and §13.4.5 is a different, deliberate act; or
+ *   - the viewer is an employee who is not the assignee, or is HR (no status cell at all).
+ *
+ * **This is convenience, not security.** Every option it returns is re-authorized server-side by
+ * `changeTaskStatusOpen` / `setTaskStatusProtected`; the client only decides what to draw
+ * (§16 — "the client displays; the server decides").
+ *
+ * `submit for review` is deliberately NOT produced: `submitTask` is Phase 6 (PUL-601), and
+ * §14.3.2's "➤ Submit for review…" opens the Submit modal rather than setting a status.
+ */
+export function statusMenuOptions(
+  status: TaskStatus,
+  viewer: StatusMenuViewer,
+  assigneeId: string | null,
+): TaskStatus[] {
+  if (!(STATUS_CHANGEABLE_FROM as readonly TaskStatus[]).includes(status)) return [];
+
+  if (MENU_MANAGER_ROLES.includes(viewer.role)) {
+    return [...OPEN_SETTABLE_STATUSES, ...PROTECTED_SETTABLE_STATUSES];
+  }
+
+  // The only non-manager who may move a pill is the assignee (§9.6's `assignee` cell).
+  // admin_hr holds no `set_status_open` cell at all, so it falls through to read-only.
+  if (viewer.role === 'employee' && assigneeId === viewer.id) {
+    return [...OPEN_SETTABLE_STATUSES];
+  }
+
+  return [];
+}
+
+/** Which action a chosen menu status routes to. */
+export function isProtectedStatus(status: TaskStatus): boolean {
+  return (PROTECTED_SETTABLE_STATUSES as readonly TaskStatus[]).includes(status);
+}

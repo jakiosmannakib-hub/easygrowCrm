@@ -10,6 +10,7 @@
 // §13.4.9 addSubtask / toggleSubtask / deleteSubtask (PUL-405).
 // §13.4.10 toggleChecklistItem / addChecklistItem / deleteChecklistItem (PUL-405).
 // §13.4.11 addComment (PUL-406).
+// §13.8 loadTaskDetail (PUL-407) — a READ, here because client components can't import queries.
 // Still to come: §13.3.5 `deleteProject` (SA only) and §13.3.2 `createProjectFromTemplate`
 // (PUL-506, the Start Project wizard).
 
@@ -36,6 +37,7 @@ import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES } from '../employees/queries';
+import { getTaskDetail } from './queries';
 import {
   AddChecklistItemInput,
   AddCommentInput,
@@ -47,6 +49,7 @@ import {
   CreateTaskInput,
   DeleteChecklistItemInput,
   DeleteSubtaskInput,
+  LoadTaskDetailInput,
   SetTaskStatusProtectedInput,
   ToggleChecklistItemInput,
   ToggleSubtaskInput,
@@ -1787,5 +1790,40 @@ export async function addComment(input: AddCommentInput) {
     }
 
     return row;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §13.8 getTaskDetail — the Task Detail modal's read (PUL-407 Stage 2)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the §14.3.3 Task Detail modal renders, in one authorized round trip.
+ *
+ * A **read** living in actions.ts, for the same reason as `loadOffboardingContext` (PUL-206):
+ * a client component cannot import `queries.ts` (server-only, no `'use server'`), and the modal
+ * fetches on open rather than shipping every task's detail with the board. Living here also
+ * means the `authorize-first` ESLint rule applies, which is right — `project.read` is open to
+ * every role (§9.6), but "open to every role" is a decision the permission table should state,
+ * not something a read quietly assumes.
+ *
+ * No `withTx`, no audit, no notify: it writes nothing. Reading a task is not an
+ * accountability-bearing event and §9.8 lists no audit row for it.
+ *
+ * Returns `null` (inside `{ ok: true }`) for a missing or soft-deleted task rather than
+ * NOT_FOUND, carrying `getTaskDetail`'s own contract through unchanged: the modal distinguishes
+ * "this task is gone" — a normal outcome when a board is stale — from "the read failed", and
+ * shows a different thing for each.
+ */
+export async function loadTaskDetail(input: LoadTaskDetailInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadTaskDetailInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line. `getTaskDetail` re-reads the session itself; this is
+    //    the permission check, not a substitute for it.
+    await authorize('project.read');
+
+    return getTaskDetail(parsed.taskId);
   });
 }

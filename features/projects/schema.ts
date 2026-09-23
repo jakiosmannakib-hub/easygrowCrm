@@ -319,3 +319,15 @@ export const AddCommentInput = z.object({
 });
 
 export type AddCommentInput = z.infer<typeof AddCommentInput>;
+
+/**
+ * §13.8 `getTaskDetail` input, as the `loadTaskDetail` read action takes it (PUL-407 Stage 2).
+ *
+ * A read has an input schema for the same reason a write does: the id crosses the server-action
+ * boundary from a client component, so it is untrusted until parsed.
+ */
+export const LoadTaskDetailInput = z.object({
+  taskId: z.string().min(1),
+});
+
+export type LoadTaskDetailInput = z.infer<typeof LoadTaskDetailInput>;

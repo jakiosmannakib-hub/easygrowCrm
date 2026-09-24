@@ -1044,20 +1044,19 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.4, §16.10 · **Depends:** PUL-407, PUL-408
 
-- [ ] 410.1 Collapsible Month → Category → Task tree; month header with done count + "Current cycle" pill; category header with color dot
-- [ ] 410.2 Row: Task · Owner · Status pill · **Due (`Aug 8, 2026` + suffix + `2/4 subtasks` line)** · Priority · Est · ⋯
-- [ ] 410.3 Collapse state declared upfront (§16.10)
-- [ ] 410.4 `+ Add task in {Category}` per open group (MGR); Unassigned banner section
+- [x] 410.1 Collapsible Month → Category → Task tree; month header with done count + "Current cycle" pill; category header with color dot — `groupTaskTree()` in `display.ts`. Months ascend with **Unscheduled** (`month` null) last, categories are alphabetical, tasks keep the query order. `Month N — MonthName` and "Current cycle" (`retainerMonth`) need ONE project; with All projects the header falls back to bare `Month N` with no pill. The color dot is `categoryDotClass()`, a hash of the name into an 8-hue palette.
+- [x] 410.2 Row: Task · Owner · Status pill · **Due (`Aug 8, 2026` + suffix + `2/4 subtasks` line)** · Priority · Est · ⋯ — the status pill is the shared `<TaskStatusControl>`, editable inline. The ⋯ menu offers only "Open details": §14.3.4 defines no row actions, so none were invented.
+- [x] 410.3 Collapse state declared upfront (§16.10) — one `overrides` object (`{}`) holding only the user's toggles, resolved every render by `treeOpenState()` into a **complete** map (every key present). Defaults: categories open; months open only for the current cycle and Unscheduled. All months open when there is no current cycle (All projects) or only one month on screen. Re-keyed per project, so collapse state resets on a switch.
+- [x] 410.4 `+ Add task in {Category}` per open group (MGR); Unassigned banner section — New Task modal with the category pre-filled (§14.3.8). **Unassigned is a banner ("N unassigned"), not a separate section**: unassigned tasks stay in their month and category with an "Unassigned" owner badge, because pulling them out would fragment the hierarchy. The Board pins them because assigning is that view's job.
 
-**Done when:** tree renders and collapses identically to the prototype's list view.
+**Done when:** tree renders and collapses identically to the prototype's list view — **code complete (`cc55fb4`), awaiting Jaki's manual QA.**
 
 > **Inherited from PUL-408 → PUL-409:** "filter changes update every tab identically" is first
 > checkable here, as the second tab. Render List from the **same** `tasks` / `loading` the filter
 > bar hands the Board (the tab-panel slot in `projects-filter-bar.tsx` has a comment marking it)
 > and bump the same `taskNonce` on modal close. No second fetch.
 
-> **Stage 1 — prep, no new UI.** Two changes so 410.2's row
-> can be built. **No subtask above is complete yet.**
+> **Stage 1 — prep, no new UI** (`71fa9f8`). Two changes so 410.2's row could be built.
 >
 > **1. `<TaskStatusControl>` extracted from the Task Detail modal**
 > (`features/projects/components/task-status-control.tsx`). It holds PUL-407 Stage 3a's code,
@@ -1085,17 +1084,31 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > `hoursOrNull` like `getTaskDetail`) for 410.2's Est column. It has a new case in
 > `filtered-tasks.test.ts`. No other query change.
 >
-> **Open for Stage 2 (the rows).** `FilteredTaskRow` is missing two things `<TaskStatusControl>`
-> needs:
-> - **`version`**, required for the optimistic lock;
-> - **the upstream task's title**: the row has only a `dependencyBlocked` boolean, so the tooltip
->   can't name the blocking task.
+> **Stage 2 — the List itself** (`cc55fb4`). It resolved Stage 1's open questions:
+> - **`getFilteredTasks` gained `version` and `blockedByTitle`.** `blockedByTitle` is the upstream
+>   title only while `dependencyBlocked`, read off the existing upstream join with no new query.
+>   It's derived from `dependencyBlocked`, so the two can't disagree. `dependencyBlocked` itself is
+>   unchanged, so the Board is unaffected. Both new fields are covered in `filtered-tasks.test.ts`.
+>   It's two narrow columns, which justifies widening a LIST shape.
+> - **The viewer's `{ id, role }`** is passed page → filter bar → List. Only those two fields
+>   cross to the client.
 >
-> Either add both to `getFilteredTasks` (it is a LIST shape, so justify the width), or have a List
-> row's status cell open the Task Detail modal the way Board cards do.
+> **Still no second fetch.** The List draws the filter bar's `tasks`. An inline status change, a
+> modal close and `+ Add task in {Category}` all re-read list + header through `taskNonce`.
+> Switching tabs doesn't refetch.
 >
-> The row also needs the viewer's `{ id, role }`. The filter bar doesn't hold these today, so the
-> page must pass them down.
+> **PUL-408's deferred "Done when" ("filter changes update every tab identically") is now checkable
+> by hand**, because List is the second tab. It holds by construction: one array handed to every
+> view, and `state.tab` absent from the fetch effect. There is no automated cross-tab test,
+> because the views are client components and §15.2 doesn't unit-test those. Confirm it in QA.
+>
+> **Done counts are "approved of what's shown".** `getFilteredTasks` already hides completed and
+> cancelled tasks, so a month's or category's `done/total` will not match the header's
+> whole-project progress. That's expected, not a bug.
+>
+> **Tests:** `list.test.ts` (19, all pure) covers `groupTaskTree` (order, Unscheduled last,
+> counts, unique and stable keys), `treeOpenState` (a complete map, defaults, overrides, stale
+> keys ignored) and `categoryDotClass`.
 
 ---
 
@@ -1103,11 +1116,45 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §14.3.4 · **Depends:** PUL-407, PUL-408
 
-- [ ] 411.1 Month grid, header **`August 2026`** (year always), today highlighted
-- [ ] 411.2 Category-colored chips → Task Detail
-- [ ] 411.3 Prev/Next = real server-side month navigation (not the demo toast)
+- [x] 411.1 Month grid, header **`August 2026`** (year always), today highlighted — `calendarGrid()` builds whole weeks, **Sunday first** (the Sun–Thu work week), with the adjacent months' days muted. Today's date number sits in a solid teal circle. "Today" is `dhakaToday()` (the clock port); the viewed month starts there and is split out of the string, never a `Date`.
+- [x] 411.2 Category-colored chips → Task Detail — `categoryDotClass()` (shared with the List) plus the truncated title. A chip opens the Task Detail modal; closing it bumps `taskNonce`. Up to 3 chips per day, then "+N more" expands **that** day in place (one at a time). There's no day-detail popover; the List is where a busy day is read in full. Undated tasks can't sit on a day, so a line under the grid counts them rather than letting them vanish.
+- [ ] 411.3 Prev/Next = real server-side month navigation (not the demo toast) — **built as REAL navigation, but client-side: needs a ruling (below).** Prev / Next / Today move the viewed month over the filter bar's shared `tasks` array, with no new fetch and no toast.
 
-**Done when:** navigating months returns correct task sets from the server.
+**Done when:** navigating months returns correct task sets from the server — **met in substance, not in wording; see the ruling below.** Code complete (`f9355fb`), awaiting Jaki's manual QA.
+
+> **Spec conflict, resolved at the owner's direction, needs a ruling** (Jaki). §14.3.4 and 411.3
+> say navigation is a *"server-side date shift, not just visual"*. It shipped client-side because
+> **`getFilteredTasks` has no date window**: every task matching the filters is already in the
+> shared array, so shifting months on the client shows exactly the rows a server shift would
+> return. It also keeps the Board / List / Calendar one-array rule (PUL-408.3) intact.
+>
+> The spec's concern was the prototype's toast, which is fake navigation over no data. This is
+> real navigation. **If `getFilteredTasks` ever gains a date window** (e.g. for performance), the
+> month shift must move to the server at that point. Either amend §14.3.4 to "real month
+> navigation over the filtered set" and tick 411.3, or keep the wording and treat the date window
+> as this ticket's trigger.
+>
+> **Pure, `Date`-free helpers in `display.ts`, unit-tested** in `calendar.test.ts` (17 cases):
+> - `calendarGrid`: 4-, 5- and 6-week months, a leap February and the year boundary in the
+>   padding, and every day of every 2026 month exactly once;
+> - `bucketTasksByDay`: keyed by the stored `YYYY-MM-DD`; undated and malformed dates dropped;
+>   a trailing-day cell still finds its task;
+> - `shiftCalendarMonth`: Dec → Jan, Jan → Dec, multi-month jumps;
+> - `calendarMonthOf` / `calendarMonthTitle`.
+>
+> **A gotcha worth not re-learning:** `dayNumber()` (from PUL-409's `overdueDays`) has an
+> arbitrary epoch, 0000-03-01, not 1970-01-01, because it was only ever used for day
+> *differences*. The first grid assumed a Unix epoch and was off by one weekday everywhere. The
+> tests caught it. Weekdays are now measured from a known Thursday (1970-01-01); don't read a
+> weekday straight off `dayNumber`.
+>
+> **State:** the viewed month is the one navigation value, declared upfront from `dhakaToday()`
+> (§16.10). The component also holds `openTaskId` (the modal) and `expandedDay` (the one "+N
+> more" day). It takes only `tasks` / `loading` / `onChanged`; `viewer` and `project` aren't
+> props because nothing on a calendar uses them.
+>
+> **Completed and cancelled tasks don't appear**, because `getFilteredTasks` excludes them (its
+> PUL-408 flagged decision). A manager looking for last month's closed work won't find it here.
 
 ---
 

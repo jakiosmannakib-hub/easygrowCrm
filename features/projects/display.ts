@@ -445,3 +445,133 @@ export function retainerMonth(startDate: string, today: string): number {
 
   return Math.max(1, elapsed + 1);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3.1 Board — columns, grouping, overdue days (PUL-409)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * §14.3.1's six Kanban columns, in the spec's left-to-right order.
+ *
+ * `completed` and `cancelled` have no column: `getFilteredTasks` already excludes both (see its
+ * flagged decision), so a column for them would always be empty.
+ */
+export const BOARD_STATUSES = [
+  'planned',
+  'in_progress',
+  'blocked',
+  'submitted',
+  'revision_required',
+  'approved',
+] as const satisfies readonly TaskStatus[];
+
+export type BoardStatus = (typeof BOARD_STATUSES)[number];
+
+/**
+ * Each column's top border, in its status color (§14.3.1). The hue matches `STATUS_DISPLAY`'s
+ * pill for the same status; kept as a separate map because a border wants the solid color,
+ * where the pill wants a 10% tint.
+ */
+export const BOARD_COLUMN_BORDER = {
+  planned: 'border-t-muted-foreground/40',
+  in_progress: 'border-t-blue-500',
+  blocked: 'border-t-red-500',
+  submitted: 'border-t-amber-500',
+  revision_required: 'border-t-orange-500',
+  approved: 'border-t-teal-500',
+} as const satisfies Record<BoardStatus, string>;
+
+/**
+ * The priority pill on a board card. §14.3.1 asks for a "priority pill" and names no colors, so
+ * this is neutral for the everyday two and tinted only where a manager scanning a column should
+ * notice: high (amber) and urgent (red).
+ */
+export const PRIORITY_PILL_CLASSNAME = {
+  low: 'bg-muted text-muted-foreground border-border',
+  medium: 'bg-muted text-muted-foreground border-border',
+  high: 'bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300',
+  urgent: 'bg-red-500/10 text-red-700 border-red-500/30 dark:text-red-300',
+} as const satisfies Record<TaskPriority, string>;
+
+/** The minimum a row needs for the board to place it. `FilteredTaskRow` satisfies it. */
+interface BoardPlaceable {
+  status: TaskStatus;
+  assignee: { id: string } | null;
+}
+
+export interface BoardGroups<T> {
+  /** §14.3.1's pinned group: every matching task with no assignee, whatever its status. */
+  unassigned: T[];
+  /** One entry per `BOARD_STATUSES` value, in order, ALWAYS all six (empty columns included). */
+  columns: { status: BoardStatus; tasks: T[] }[];
+}
+
+/**
+ * Split the filtered rows into the pinned Unassigned group and the six status columns.
+ *
+ * **Every task lands in exactly one place.** An unassigned task goes to the Unassigned group and
+ * NOT also to its status column — showing it twice would double-count it in the column chip,
+ * and assigning it (the whole point of the group, §13.4.3) is what moves it into a column.
+ *
+ * Input order is preserved within every group, so `getFilteredTasks`' stable priority → due →
+ * created ordering carries straight through to each column. A row whose status has no column
+ * (`completed` / `cancelled`, which the query already excludes) is dropped rather than
+ * crashing the board.
+ */
+export function groupBoardTasks<T extends BoardPlaceable>(rows: readonly T[]): BoardGroups<T> {
+  const byStatus = new Map<TaskStatus, T[]>(BOARD_STATUSES.map((s) => [s, []]));
+  const unassigned: T[] = [];
+
+  for (const row of rows) {
+    if (row.assignee === null) {
+      unassigned.push(row);
+      continue;
+    }
+    byStatus.get(row.status)?.push(row);
+  }
+
+  return {
+    unassigned,
+    columns: BOARD_STATUSES.map((status) => ({ status, tasks: byStatus.get(status) ?? [] })),
+  };
+}
+
+/**
+ * A `YYYY-MM-DD` calendar day → a day number, by pure integer arithmetic (Howard Hinnant's
+ * `days_from_civil`). No `Date`: the string is an Asia/Dhaka calendar day (§11.0), and routing
+ * it through `Date` is how a UTC offset slips a day in.
+ */
+function dayNumber(iso: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const [y0, mo, d] = m.slice(1).map(Number) as [number, number, number];
+  const y = mo <= 2 ? y0 - 1 : y0;
+  const era = Math.floor(y / 400);
+  const yoe = y - era * 400;
+  const doy = Math.floor((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe;
+}
+
+/**
+ * §14.3.1's red `Overdue Nd` line: how many whole Dhaka calendar days a task is past due, or
+ * `null` when it should show no overdue line at all.
+ *
+ * Same rule as the header's health calc (§3.1.3, `getProjectHeader`): **strictly `<` today** —
+ * a task due today is not overdue — and **open tasks only**. A `DONE_STATUSES` task is finished
+ * work, and finished work cannot be late, whatever its due date says.
+ *
+ * `today` is supplied by the caller (`dhakaToday()`, which reads the clock port) so this stays
+ * pure and testable at fixed dates without freezing a clock.
+ */
+export function overdueDays(
+  dueDate: string | null,
+  today: string,
+  status: TaskStatus,
+): number | null {
+  if (dueDate === null || DONE_STATUSES.includes(status)) return null;
+  const due = dayNumber(dueDate);
+  const now = dayNumber(today);
+  if (due === null || now === null || due >= now) return null;
+  return now - due;
+}

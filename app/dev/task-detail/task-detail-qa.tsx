@@ -1,8 +1,8 @@
 // app/dev/task-detail/task-detail-qa.tsx — PUL-407 Stage 2
 //
 // The client half of the dev QA harness: holds "which task is open" and renders the one modal.
-// THROWAWAY SCAFFOLDING — the Board (PUL-409) is the real opener, and this whole directory goes
-// away then. See page.tsx.
+// Kept past PUL-409 as an isolated-modal QA harness — the Board is the real opener, but this
+// reaches states the Board never shows. See page.tsx.
 
 'use client';
 

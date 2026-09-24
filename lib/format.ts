@@ -39,14 +39,23 @@ export function dhakaToday(): string {
  *
  * `null` (no due date) → `''`. Anything that is not `YYYY-MM-DD` is returned unchanged rather
  * than rendered as a wrong date.
+ *
+ * `{ relative: false }` drops the suffix and returns the bare `Aug 8, 2026` (PUL-409). For a
+ * surface that already carries its own overdue signal — the Board card's red `Overdue Nd` line,
+ * which also knows finished work cannot be late — where the suffix would say it twice. The
+ * default stays `true`, so every existing caller's output is unchanged.
  */
-export function fmtDate(dateStr: string | null): string {
+export function fmtDate(
+  dateStr: string | null,
+  { relative = true }: { relative?: boolean } = {},
+): string {
   if (dateStr === null) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   const month = m ? MONTHS[Number(m[2]) - 1] : undefined;
   if (!m || !month) return dateStr;
 
   const label = `${month} ${Number(m[3])}, ${m[1]}`;
+  if (!relative) return label;
   const today = dhakaToday();
   if (dateStr === today) return `${label} · Today`;
   if (dateStr < today) return `${label} · Overdue`;

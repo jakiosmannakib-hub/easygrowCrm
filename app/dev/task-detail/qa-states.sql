@@ -1,4 +1,4 @@
--- app/dev/task-detail/qa-states.sql — PUL-407 Stages 2–3b, throwaway QA scaffolding
+-- app/dev/task-detail/qa-states.sql — PUL-407 Stages 2–3b, shared QA fixtures (kept past PUL-409)
 --
 -- The §14.3.3 modal has states no fixture reaches. `tests/seed.ts` is TEST-database only
 -- (`assertTestDb` refuses any DATABASE_URL whose database name lacks "test"), so it cannot
@@ -13,8 +13,9 @@
 --     < app/dev/task-detail/qa-states.sql
 --
 -- DEV ONLY. It is never imported by application code and never runs in CI — it is piped by hand,
--- and it lives under app/dev/ with the page it feeds. Delete this whole directory when the Board
--- (PUL-409) becomes the real opener.
+-- and it lives under app/dev/ with the page it feeds. Originally throwaway until the Board
+-- (PUL-409); now KEPT as the shared QA fixture for both the isolated-modal harness and manual QA
+-- of the Board — see page.tsx for why the harness stays.
 --
 -- ── Fully self-contained ─────────────────────────────────────────────────────────────────
 -- A hand-seeded dev DB has only the super_admin from seed-admin.sql: no clients, no projects,

@@ -1,7 +1,7 @@
 // features/projects/components/projects-filter-bar.tsx — PUL-408 Stage 1, §14.3 / §16.10
 //
 // The /projects filter bar: Client ▾ · Project ▾ (client-scoped) · Month ▾ · Assignee ▾, plus
-// the MGR-only export slot and the Board/List/Calendar tab strip.
+// the MGR-only export slot, the Board/List/Calendar tab strip, and the active tab's panel.
 //
 // Every dropdown's whole option list arrives from the server component and the cascade runs in
 // memory — the same reasoning as the employee grid (PUL-206) and the client list (PUL-207): the
@@ -24,6 +24,7 @@ import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
 import { monthLabel } from '../display';
 import { ProjectHeader } from './project-header';
+import { TaskBoard } from './task-board';
 import type { PickableClient } from '../../clients/queries';
 import type { FilteredTaskRow, PickableProject, ProjectMonths, TaskFilters } from '../queries';
 
@@ -113,6 +114,7 @@ export function ProjectsFilterBar({
   projectMonths,
   assignees,
   canExport,
+  canCreateTask,
   initialTasks,
 }: {
   clients: PickableClient[];
@@ -123,6 +125,11 @@ export function ProjectsFilterBar({
   assignees: AssigneeOption[];
   /** MGR-only (§14.3). Controls whether the export slot renders at all. */
   canExport: boolean;
+  /**
+   * `can(viewer, 'project_task.create')`, decided server-side by the page (§9.6 — MGR only).
+   * Gates the Board's `+ Add task`. Convenience, not security: `createTask` re-authorizes.
+   */
+  canCreateTask: boolean;
   /** The server's first result, so the page has rows before the client ever runs. */
   initialTasks: FilteredTaskRow[];
 }) {
@@ -341,6 +348,9 @@ export function ProjectsFilterBar({
         <ProjectHeader
           key={selectedProject.id}
           projectId={selectedProject.id}
+          // The page's one refetch counter: a Task Detail edit on the Board reloads the header
+          // too, so progress and health move with the card (PUL-409 Stage 2).
+          refreshKey={taskNonce}
           onChanged={() => setTaskNonce((n) => n + 1)}
         />
       )}
@@ -365,16 +375,29 @@ export function ProjectsFilterBar({
       </div>
 
       {/*
-        SCAFFOLDING — the Board (PUL-409), List (PUL-410) and Calendar (PUL-411) replace this
-        block entirely. It exists so `getFilteredTasks` is verifiable in a browser before any
-        view renders it: change a dropdown, watch the count move. Delete on 409.
+        The active tab's panel. Every view receives the SAME `tasks` array — none of them
+        fetches — which is what makes "filter changes update every tab identically"
+        (PUL-408.3) true by construction. List (PUL-410) and Calendar (PUL-411) slot in as
+        sibling branches here, each fed `tasks` / `loading` / the same nonce bump.
       */}
-      <div className="text-muted-foreground border-border rounded-md border border-dashed p-6 text-xs">
-        {loading ? 'Loading…' : `${tasks.length} task${tasks.length === 1 ? '' : 's'} match`}
-        <span className="ml-2 opacity-60">
-          · {state.tab} view lands in PUL-409 / 410 / 411
-        </span>
-      </div>
+      {state.tab === 'board' ? (
+        <TaskBoard
+          tasks={tasks}
+          loading={loading}
+          // `+ Add task` needs ONE project to add to — with "All projects" there is none, so the
+          // board is handed null and the button does not render.
+          addToProjectId={canCreateTask && selectedProject !== null ? selectedProject.id : null}
+          // After a task is created from the board, re-read list + header together.
+          onTaskCreated={() => setTaskNonce((n) => n + 1)}
+          // Re-read after the Task Detail modal closes, through the same nonce New Task and
+          // Archive use — a status or assignee change made in the modal moves the card.
+          onTaskClosed={() => setTaskNonce((n) => n + 1)}
+        />
+      ) : (
+        <div className="text-muted-foreground border-border rounded-md border border-dashed p-6 text-xs">
+          {state.tab === 'list' ? 'List view lands in PUL-410.' : 'Calendar view lands in PUL-411.'}
+        </div>
+      )}
     </div>
   );
 }

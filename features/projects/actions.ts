@@ -38,7 +38,13 @@ import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
 import { taskCapabilities } from './capabilities';
-import { getFilteredTasks, getProjectHeader, getTaskDetail } from './queries';
+import {
+  getFilteredTasks,
+  getProjectHeader,
+  getReviewQueue,
+  getTaskDetail,
+  getWorkload,
+} from './queries';
 import {
   AddChecklistItemInput,
   AddCommentInput,
@@ -53,7 +59,9 @@ import {
   LoadFilteredTasksInput,
   LoadNewTaskContextInput,
   LoadProjectHeaderInput,
+  LoadReviewQueueInput,
   LoadTaskDetailInput,
+  LoadWorkloadInput,
   SetTaskStatusProtectedInput,
   ToggleChecklistItemInput,
   ToggleSubtaskInput,
@@ -1964,5 +1972,61 @@ export async function loadNewTaskContext(input: LoadNewTaskContextInput) {
       assignable,
       dependencyOptions: tasks.map((t) => ({ id: t.id, title: t.title })),
     };
+  });
+}
+
+/**
+ * §13.8 / PUL-412 — the Review tab's read. Wraps `getReviewQueue`, THE canonical review query
+ * (§16.9), so a client tab can re-run it when the project or the "Routed to me" chip changes.
+ * The future `/review` page (PUL-607) and dashboard card (PUL-803) call the same query.
+ *
+ * Authorized on `review.read`, the exact §9.6 key. With no resource, `can()` passes only the
+ * unconditional `allow` cells — SA / TL / PM / HR — and an employee's `self` cell fails closed,
+ * so an employee is refused here with FORBIDDEN. The query ALSO scopes an employee to their own
+ * submissions; that is defense in depth, unreachable through this action.
+ *
+ * A read: validate → authorize → read. No transaction, no audit row, no notification.
+ */
+export async function loadReviewQueue(input: LoadReviewQueueInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadReviewQueueInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line.
+    await authorize('review.read');
+
+    return getReviewQueue(parsed);
+  });
+}
+
+/**
+ * Who may read workload: §13.8 "MGR + HR", and §14.3's tab visibility says the same. Kept here,
+ * not exported, because a 'use server' module may export only async functions.
+ */
+const WORKLOAD_ROLES: readonly User['role'][] = [...MANAGER_ROLES, 'admin_hr'];
+
+/**
+ * §13.8 / PUL-412 — the Workload tab's read. Wraps `getWorkload`.
+ *
+ * **Role-gated in the action, because §9.6 has no workload permission.** §13.8 and §14.3 say
+ * MGR + HR, but there is no `workload.read` row in the permission table to `authorize()` against,
+ * and inventing one in `lib/authz.ts` would make that file disagree with §9.6, which is the
+ * table's source of truth. So `authorize('project.read')` is still the first awaited line (it
+ * proves an active, signed-in user and keeps `easygrowcrm/authorize-first` satisfied), and the
+ * role check follows it: SA / TL / PM / HR allowed, an employee gets FORBIDDEN.
+ *
+ * The proper fix is a §9.6 amendment adding `workload.read`; this check then becomes
+ * `authorize('workload.read')`. Flagged in §17 / PUL-412.
+ */
+export async function loadWorkload(input: LoadWorkloadInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = LoadWorkloadInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line, then the role gate §9.6 has no row for (see above).
+    const actor = await authorize('project.read');
+    if (!WORKLOAD_ROLES.includes(actor.role)) throw new AppError('FORBIDDEN');
+
+    return getWorkload(parsed);
   });
 }

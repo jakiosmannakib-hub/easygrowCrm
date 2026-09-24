@@ -22,11 +22,13 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
-import { monthLabel, type StatusMenuViewer } from '../display';
+import { monthLabel, type Role, type StatusMenuViewer } from '../display';
 import { ProjectHeader } from './project-header';
+import { ReviewTab } from './review-tab';
 import { TaskBoard } from './task-board';
 import { TaskCalendar } from './task-calendar';
 import { TaskList } from './task-list';
+import { WorkloadTab } from './workload-tab';
 import type { PickableClient } from '../../clients/queries';
 import type { FilteredTaskRow, PickableProject, ProjectMonths, TaskFilters } from '../queries';
 
@@ -51,11 +53,30 @@ const ALL = 'all';
 /** Assignee ▾'s claimable-work option. No user id can collide with it. */
 const UNASSIGNED = 'unassigned';
 
-/** §14.3's tab strip. Review / Workload / Manager QA are PUL-412 and not offered yet. */
+const ALL_ROLES: readonly Role[] = [
+  'super_admin',
+  'team_leader',
+  'project_manager',
+  'admin_hr',
+  'employee',
+];
+/** §14.3: "Review + Workload MGR/HR". */
+const MGR_HR_ROLES: readonly Role[] = ['super_admin', 'team_leader', 'project_manager', 'admin_hr'];
+
+/**
+ * §14.3's tab strip, with each tab's visibility as an explicit role list — the same convention
+ * as `lib/nav.ts`, rather than a live `can()` (which would pull lib/authz into a client bundle).
+ *
+ * Hiding a tab is cosmetic (§9.5 r.2): `loadReviewQueue` authorizes `review.read` and
+ * `loadWorkload` role-gates, so an employee who forced a tab open would be refused by the server.
+ * Manager QA (SA + TL) is PUL-604 and is deliberately not offered yet.
+ */
 const TABS = [
-  { key: 'board', label: 'Board' },
-  { key: 'list', label: 'List' },
-  { key: 'calendar', label: 'Calendar' },
+  { key: 'board', label: 'Board', visibleTo: ALL_ROLES },
+  { key: 'list', label: 'List', visibleTo: ALL_ROLES },
+  { key: 'calendar', label: 'Calendar', visibleTo: ALL_ROLES },
+  { key: 'review', label: 'Review', visibleTo: MGR_HR_ROLES },
+  { key: 'workload', label: 'Workload', visibleTo: MGR_HR_ROLES },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
@@ -200,6 +221,13 @@ export function ProjectsFilterBar({
    * mutation and a filter change take exactly the same refetch path.
    */
   const [taskNonce, setTaskNonce] = useState(0);
+
+  /**
+   * The Review tab title's count (§14.3.5). `null` until the Review tab has loaded once — the
+   * queue is its own fetch, made only when the tab opens, so before then there is no number to
+   * show rather than a wrong one. It then tracks the tab's latest read (project / chip changes).
+   */
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
 
   useEffect(() => {
     const token = ++latestRequest.current;
@@ -364,21 +392,25 @@ export function ProjectsFilterBar({
         />
       )}
 
-      {/* §14.3's tabs. Board / List / Calendar are PUL-409 / 410 / 411; Review, Workload and
-          Manager QA (PUL-412) are not offered until their queries exist. */}
-      <div className="border-border flex gap-1 border-b">
-        {TABS.map((tab) => (
+      {/* §14.3's tabs, filtered to what this role may see. Board / List / Calendar are
+          PUL-409 / 410 / 411; Review + Workload are PUL-412; Manager QA is PUL-604. */}
+      <div className="border-border flex gap-1 overflow-x-auto border-b">
+        {TABS.filter((tab) => tab.visibleTo.includes(viewer.role)).map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => setState((s) => ({ ...s, tab: tab.key }))}
             className={
               state.tab === tab.key
-                ? 'border-primary text-foreground -mb-px border-b-2 px-3 py-2 text-xs font-medium'
-                : 'text-muted-foreground hover:text-foreground -mb-px border-b-2 border-transparent px-3 py-2 text-xs'
+                ? 'border-primary text-foreground -mb-px shrink-0 border-b-2 px-3 py-2 text-xs font-medium'
+                : 'text-muted-foreground hover:text-foreground -mb-px shrink-0 border-b-2 border-transparent px-3 py-2 text-xs'
             }
           >
             {tab.label}
+            {/* §14.3.5: "Tab title shows count" — once the Review tab has loaded it. */}
+            {tab.key === 'review' && reviewCount !== null ? (
+              <span className="text-muted-foreground ml-1 tabular-nums">({reviewCount})</span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -423,13 +455,27 @@ export function ProjectsFilterBar({
           // header through the one nonce.
           onChanged={() => setTaskNonce((n) => n + 1)}
         />
-      ) : (
+      ) : state.tab === 'calendar' ? (
         <TaskCalendar
           tasks={tasks}
           loading={loading}
           // Modal close re-reads list + header through the one nonce, same as Board and List.
           onChanged={() => setTaskNonce((n) => n + 1)}
         />
+      ) : state.tab === 'review' ? (
+        /*
+          Review and Workload are NOT presentations of `tasks`: each reads its own query
+          (`getReviewQueue` / `getWorkload`) and fetches on mount — i.e. when the tab is opened —
+          and when the project changes. Board / List / Calendar's shared-array rule is unchanged.
+        */
+        <ReviewTab
+          projectId={selectedProject?.id}
+          onCount={setReviewCount}
+          // A modal edit can change what the other tabs and the header show — re-read them too.
+          onChanged={() => setTaskNonce((n) => n + 1)}
+        />
+      ) : (
+        <WorkloadTab projectId={selectedProject?.id} />
       )}
     </div>
   );

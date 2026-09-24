@@ -371,3 +371,22 @@ export const LoadNewTaskContextInput = z.object({
 });
 
 export type LoadNewTaskContextInput = z.infer<typeof LoadNewTaskContextInput>;
+
+/**
+ * §13.8 `getReviewQueue` filters, as the `loadReviewQueue` read action takes them (PUL-412).
+ * Mirrors `ReviewQueueFilters` in queries.ts, which a client cannot import.
+ */
+export const LoadReviewQueueInput = z.object({
+  projectId: z.string().min(1).optional(),
+  routedToMe: z.boolean().optional(),
+  sort: z.enum(['newest', 'oldest']).optional(),
+});
+
+export type LoadReviewQueueInput = z.infer<typeof LoadReviewQueueInput>;
+
+/** §13.8 `getWorkload` filters, as the `loadWorkload` read action takes them (PUL-412). */
+export const LoadWorkloadInput = z.object({
+  projectId: z.string().min(1).optional(),
+});
+
+export type LoadWorkloadInput = z.infer<typeof LoadWorkloadInput>;

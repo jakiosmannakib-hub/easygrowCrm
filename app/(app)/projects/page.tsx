@@ -69,6 +69,9 @@ export default async function ProjectsPage() {
         // The Board's `+ Add task` (PUL-409). Read off the §9.6 table rather than restated —
         // the same `can()` call `loadProjectHeader` makes for the header's `+ New Task`.
         canCreateTask={can(viewer, 'project_task.create')}
+        // The List view's inline status control needs to know who is looking (§14.3.2). Only
+        // `{ id, role }` crosses to the client — not the whole session user.
+        viewer={{ id: viewer.id, role: viewer.role }}
         initialTasks={initialTasks}
       />
     </div>

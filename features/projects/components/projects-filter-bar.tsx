@@ -22,9 +22,10 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
-import { monthLabel } from '../display';
+import { monthLabel, type StatusMenuViewer } from '../display';
 import { ProjectHeader } from './project-header';
 import { TaskBoard } from './task-board';
+import { TaskList } from './task-list';
 import type { PickableClient } from '../../clients/queries';
 import type { FilteredTaskRow, PickableProject, ProjectMonths, TaskFilters } from '../queries';
 
@@ -115,6 +116,7 @@ export function ProjectsFilterBar({
   assignees,
   canExport,
   canCreateTask,
+  viewer,
   initialTasks,
 }: {
   clients: PickableClient[];
@@ -130,6 +132,12 @@ export function ProjectsFilterBar({
    * Gates the Board's `+ Add task`. Convenience, not security: `createTask` re-authorizes.
    */
   canCreateTask: boolean;
+  /**
+   * Who is looking, from the page's server-side session read (§16.5 — role re-read from the DB).
+   * Feeds each List row's §14.3.2 status option set. Display only: every status write is
+   * re-authorized by its action.
+   */
+  viewer: StatusMenuViewer;
   /** The server's first result, so the page has rows before the client ever runs. */
   initialTasks: FilteredTaskRow[];
 }) {
@@ -377,8 +385,10 @@ export function ProjectsFilterBar({
       {/*
         The active tab's panel. Every view receives the SAME `tasks` array — none of them
         fetches — which is what makes "filter changes update every tab identically"
-        (PUL-408.3) true by construction. List (PUL-410) and Calendar (PUL-411) slot in as
-        sibling branches here, each fed `tasks` / `loading` / the same nonce bump.
+        (PUL-408.3) true by construction, and why switching tabs never refetches (`state.tab`
+        is absent from the fetch effect's dependencies). Board (PUL-409) and List (PUL-410) are
+        built; Calendar (PUL-411) slots in as the next sibling branch, fed the same `tasks` /
+        `loading` / nonce bump.
       */}
       {state.tab === 'board' ? (
         <TaskBoard
@@ -393,9 +403,29 @@ export function ProjectsFilterBar({
           // Archive use — a status or assignee change made in the modal moves the card.
           onTaskClosed={() => setTaskNonce((n) => n + 1)}
         />
+      ) : state.tab === 'list' ? (
+        <TaskList
+          // Re-keyed per project so collapse state resets on a switch: its keys (`month:3`) are
+          // structural, and "Month 3 collapsed" in one project means nothing in another.
+          key={selectedProject?.id ?? ALL}
+          tasks={tasks}
+          loading={loading}
+          viewer={viewer}
+          // Month labels + "Current cycle" are anchored to ONE project's start date; with All
+          // projects the list gets null and falls back to bare `Month N`.
+          project={
+            selectedProject === null
+              ? null
+              : { id: selectedProject.id, startDate: selectedProject.startDate }
+          }
+          canCreateTask={canCreateTask}
+          // Inline status change, modal close and `+ Add task in {Category}` all re-read list +
+          // header through the one nonce.
+          onChanged={() => setTaskNonce((n) => n + 1)}
+        />
       ) : (
         <div className="text-muted-foreground border-border rounded-md border border-dashed p-6 text-xs">
-          {state.tab === 'list' ? 'List view lands in PUL-410.' : 'Calendar view lands in PUL-411.'}
+          Calendar view lands in PUL-411.
         </div>
       )}
     </div>

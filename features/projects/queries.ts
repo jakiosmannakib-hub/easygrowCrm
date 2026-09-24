@@ -475,6 +475,17 @@ export interface FilteredTaskRow {
    * `blocked` back.
    */
   dependencyBlocked: boolean;
+  /**
+   * The upstream task's title when `dependencyBlocked`, else `null` — for the List view's inline
+   * status pill, whose tooltip names the blocking task (§14.3.2). Comes off the SAME upstream
+   * join as `dependencyBlocked`, so the two cannot disagree about whether a task is blocked.
+   */
+  blockedByTitle: string | null;
+  /**
+   * The optimistic-lock version (§13.4.4 / §13.4.5). The List view's inline status control
+   * sends it with every status write; `getTaskDetail` carries the same column for the modal.
+   */
+  version: number;
 }
 
 /**
@@ -578,6 +589,10 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
         ${projectTasks.dependsOn} is not null
         and coalesce(${upstream.status}::text not in (${satisfied}), true)
       )`,
+      // The upstream title, read off the same join. Paired with `dependencyBlocked` in the map
+      // below rather than in SQL, so the "is it blocked" predicate exists exactly once.
+      upstreamTitle: upstream.title,
+      version: projectTasks.version,
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
@@ -610,6 +625,9 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     subtaskDone: Number(row.subtaskDone),
     subtaskTotal: Number(row.subtaskTotal),
     dependencyBlocked: row.dependencyBlocked,
+    // Only when blocked: a satisfied dependency names nothing, so the pill draws no tooltip.
+    blockedByTitle: row.dependencyBlocked ? row.upstreamTitle : null,
+    version: row.version,
   }));
 }
 

@@ -881,6 +881,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > `employees-grid.tsx:121` is harmless (value === label). Each is a one-line
 > `{(v) => LABELS[v]}` fix in another ticket's surface; needs a home in Phase 8 polish.
 >
+> **Moved in PUL-410 Stage 1:** Stage 3a's status dropdown + revision-note modal now live in
+> `task-status-control.tsx` as `<TaskStatusControl>`. The modal renders it, with the same
+> behavior. See PUL-410's note.
+>
 > **Still open:** 407.5 manual QA, and the 404.4 **server** dependency guard, which this ticket
 > did not close and PUL-601 depends on.
 
@@ -1046,6 +1050,47 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > checkable here, as the second tab. Render List from the **same** `tasks` / `loading` the filter
 > bar hands the Board (the tab-panel slot in `projects-filter-bar.tsx` has a comment marking it)
 > and bump the same `taskNonce` on modal close. No second fetch.
+
+> **Stage 1 — prep, no new UI.** Two changes so 410.2's row
+> can be built. **No subtask above is complete yet.**
+>
+> **1. `<TaskStatusControl>` extracted from the Task Detail modal**
+> (`features/projects/components/task-status-control.tsx`). It holds PUL-407 Stage 3a's code,
+> moved rather than re-derived:
+> - the read-only pill vs. dropdown decision (`statusMenuOptions`, which stays in `display.ts`);
+> - routing a choice to `changeTaskStatusOpen` or `setTaskStatusProtected`;
+> - the revision-note modal (one instance per control);
+> - `showErrorToast` for failures, including CONFLICT;
+> - the pill-in-the-trigger fix, so the trigger never goes blank.
+>
+> Props: `task { id, title, status, version, assigneeId }` · `viewer` (`StatusMenuViewer | null`)
+> · `dependencyBlocked?` · `disabled?` · `onBusyChange?` · `onChanged`. The modal now renders it.
+>
+> The modal's behavior is meant to be **unchanged**, and two couplings were carried over to keep
+> it that way:
+> - **One busy state across the modal.** The control reports its in-flight state through
+>   `onBusyChange`, and the modal combines it as `anyBusy = busy || statusBusy`. A status write
+>   still disables Assign ▾ and the body, and vice versa.
+> - **CONFLICT still reloads.** `onChanged()` fires on success **and** on CONFLICT, preserving
+>   PUL-407.4's "a CONFLICT means reload, so the retry has a fresh version".
+>
+> No component test covers the modal, so Jaki's manual QA confirms this.
+>
+> **2. `getFilteredTasks` returns `estimatedHours`** (a `number`, or `null` when unestimated, via
+> `hoursOrNull` like `getTaskDetail`) for 410.2's Est column. It has a new case in
+> `filtered-tasks.test.ts`. No other query change.
+>
+> **Open for Stage 2 (the rows).** `FilteredTaskRow` is missing two things `<TaskStatusControl>`
+> needs:
+> - **`version`**, required for the optimistic lock;
+> - **the upstream task's title**: the row has only a `dependencyBlocked` boolean, so the tooltip
+>   can't name the blocking task.
+>
+> Either add both to `getFilteredTasks` (it is a LIST shape, so justify the width), or have a List
+> row's status cell open the Task Detail modal the way Board cards do.
+>
+> The row also needs the viewer's `{ id, role }`. The filter bar doesn't hold these today, so the
+> page must pass them down.
 
 ---
 

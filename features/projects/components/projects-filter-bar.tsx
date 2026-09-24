@@ -25,6 +25,7 @@ import { loadFilteredTasks } from '../actions';
 import { monthLabel, type StatusMenuViewer } from '../display';
 import { ProjectHeader } from './project-header';
 import { TaskBoard } from './task-board';
+import { TaskCalendar } from './task-calendar';
 import { TaskList } from './task-list';
 import type { PickableClient } from '../../clients/queries';
 import type { FilteredTaskRow, PickableProject, ProjectMonths, TaskFilters } from '../queries';
@@ -386,9 +387,8 @@ export function ProjectsFilterBar({
         The active tab's panel. Every view receives the SAME `tasks` array — none of them
         fetches — which is what makes "filter changes update every tab identically"
         (PUL-408.3) true by construction, and why switching tabs never refetches (`state.tab`
-        is absent from the fetch effect's dependencies). Board (PUL-409) and List (PUL-410) are
-        built; Calendar (PUL-411) slots in as the next sibling branch, fed the same `tasks` /
-        `loading` / nonce bump.
+        is absent from the fetch effect's dependencies). Board (PUL-409), List (PUL-410) and
+        Calendar (PUL-411) are all fed the same `tasks` / `loading` / nonce bump.
       */}
       {state.tab === 'board' ? (
         <TaskBoard
@@ -424,9 +424,12 @@ export function ProjectsFilterBar({
           onChanged={() => setTaskNonce((n) => n + 1)}
         />
       ) : (
-        <div className="text-muted-foreground border-border rounded-md border border-dashed p-6 text-xs">
-          Calendar view lands in PUL-411.
-        </div>
+        <TaskCalendar
+          tasks={tasks}
+          loading={loading}
+          // Modal close re-reads list + header through the one nonce, same as Board and List.
+          onChanged={() => setTaskNonce((n) => n + 1)}
+        />
       )}
     </div>
   );

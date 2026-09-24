@@ -733,3 +733,116 @@ export function treeOpenState<T>(
   }
   return state;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3.4 Calendar — viewed month, month grid, tasks by day (PUL-411)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** A calendar month — `month` is 1-based (1 = January). Not a retainer month. */
+export interface CalendarMonth {
+  year: number;
+  month: number;
+}
+
+/** One cell of the month grid. */
+export interface CalendarDay {
+  /** `YYYY-MM-DD` — the same format as `dueDate`, so a task matches its cell by string equality. */
+  iso: string;
+  /** Day of the month, for the cell's number. */
+  day: number;
+  /** `false` for the leading / trailing days of the adjacent months, which render muted. */
+  inMonth: boolean;
+}
+
+/** The day number of 1970-01-01, a Thursday — the calendar grid's weekday reference. */
+const THURSDAY_1970 = dayNumber('1970-01-01') ?? 0;
+
+/** Zero-padded `YYYY-MM-DD` from parts. */
+function isoDay(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * The calendar month a `YYYY-MM-DD` day falls in — how the Calendar derives its starting month
+ * from `dhakaToday()`. By splitting the string, never through a `Date`, so an Asia/Dhaka day
+ * cannot drift into the previous month in a browser west of UTC+6.
+ */
+export function calendarMonthOf(iso: string): CalendarMonth {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(iso);
+  // Unreachable for `dhakaToday()`'s output; a sane fallback beats NaN in the header.
+  if (!m) return { year: 1970, month: 1 };
+  return { year: Number(m[1]), month: Number(m[2]) };
+}
+
+/** Prev / Next: shift by `delta` months, rolling the year over (Dec + 1 → Jan, Jan − 1 → Dec). */
+export function shiftCalendarMonth(cm: CalendarMonth, delta: number): CalendarMonth {
+  const index = cm.year * 12 + (cm.month - 1) + delta;
+  return { year: Math.floor(index / 12), month: (((index % 12) + 12) % 12) + 1 };
+}
+
+/** §14.3.4's header: `September 2026` — the year is ALWAYS shown (§14.15 r.2). */
+export function calendarMonthTitle(cm: CalendarMonth): string {
+  return `${MONTH_NAMES[cm.month - 1] ?? ''} ${cm.year}`;
+}
+
+/** The week header, Sunday first — the agency's work week is Sun–Thu (CLAUDE.md §2). */
+export const CALENDAR_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/**
+ * The month grid: whole weeks (Sunday first), padded with the previous month's trailing days
+ * and the next month's leading days. Between 4 and 6 weeks depending on the month.
+ *
+ * Pure integer arithmetic, no `Date`: the weekday comes from `dayNumber`, counted from
+ * 1970-01-01 (a Thursday). A `Date` built in the browser's zone could drift near
+ * midnight, and this file keeps every calendar day a plain Asia/Dhaka string (§11.0).
+ */
+export function calendarGrid(cm: CalendarMonth): CalendarDay[][] {
+  const { year, month } = cm;
+  // `dayNumber` has an arbitrary epoch (it is only ever used for differences), so the weekday is
+  // measured from a KNOWN day rather than assumed from the epoch: 1970-01-01 was a Thursday (4).
+  const first = dayNumber(isoDay(year, month, 1)) ?? 0;
+  const leading = (((first - THURSDAY_1970 + 4) % 7) + 7) % 7; // 0 = Sunday
+  const inMonthDays = daysInMonth(year, month);
+
+  const prev = shiftCalendarMonth(cm, -1);
+  const next = shiftCalendarMonth(cm, 1);
+  const prevDays = daysInMonth(prev.year, prev.month);
+
+  const cells: CalendarDay[] = [];
+  for (let i = leading; i > 0; i--) {
+    const day = prevDays - i + 1;
+    cells.push({ iso: isoDay(prev.year, prev.month, day), day, inMonth: false });
+  }
+  for (let day = 1; day <= inMonthDays; day++) {
+    cells.push({ iso: isoDay(year, month, day), day, inMonth: true });
+  }
+  const trailing = (7 - (cells.length % 7)) % 7;
+  for (let day = 1; day <= trailing; day++) {
+    cells.push({ iso: isoDay(next.year, next.month, day), day, inMonth: false });
+  }
+
+  const weeks: CalendarDay[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
+/**
+ * Bucket rows by due day, keyed by the `YYYY-MM-DD` string exactly as stored, so a cell looks
+ * its tasks up with `buckets.get(cell.iso)`. Input order is kept within a day (the query's
+ * priority → due → created order, so urgent work is the first chip).
+ *
+ * **Undated tasks are omitted** — they have no day to sit on. So is a malformed date, rather
+ * than being guessed onto a wrong one.
+ */
+export function bucketTasksByDay<T extends { dueDate: string | null }>(
+  rows: readonly T[],
+): Map<string, T[]> {
+  const buckets = new Map<string, T[]>();
+  for (const row of rows) {
+    if (row.dueDate === null || dayNumber(row.dueDate) === null) continue;
+    const day = buckets.get(row.dueDate);
+    if (day === undefined) buckets.set(row.dueDate, [row]);
+    else day.push(row);
+  }
+  return buckets;
+}

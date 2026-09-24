@@ -269,8 +269,63 @@ describe('getFilteredTasks — the computed columns', () => {
     );
   });
 
+  it('names the blocking task in blockedByTitle only while the dependency blocks', async () => {
+    await db
+      .update(projectTasks)
+      .set({ dependsOn: 'pt_seed_3', title: 'Upstream audit' })
+      .where(eq(projectTasks.id, 'pt_seed_2'));
+    await db
+      .update(projectTasks)
+      .set({ title: 'Keyword research' })
+      .where(eq(projectTasks.id, 'pt_seed_3'));
+
+    // pt_seed_3 is `submitted` — not finished — so pt_seed_2 is blocked BY it.
+    const blocked = (await getFilteredTasks()).find((r) => r.id === 'pt_seed_2');
+    expect(blocked).toMatchObject({ dependencyBlocked: true, blockedByTitle: 'Keyword research' });
+
+    // Once the upstream is approved the lock lifts, and the title goes with it — a satisfied
+    // dependency must not leave a tooltip naming a task that no longer blocks anything.
+    await db
+      .update(projectTasks)
+      .set({ status: 'approved' })
+      .where(eq(projectTasks.id, 'pt_seed_3'));
+    const freed = (await getFilteredTasks()).find((r) => r.id === 'pt_seed_2');
+    expect(freed).toMatchObject({ dependencyBlocked: false, blockedByTitle: null });
+
+    // No dependency at all → null, never an empty string.
+    expect((await getFilteredTasks()).find((r) => r.id === 'pt_seed_1')?.blockedByTitle).toBeNull();
+  });
+
+  it('returns the row version, so an inline status write can carry the optimistic lock', async () => {
+    await db
+      .update(projectTasks)
+      .set({ version: 7 })
+      .where(eq(projectTasks.id, 'pt_seed_2'));
+
+    const rows = await getFilteredTasks();
+    expect(rows.find((r) => r.id === 'pt_seed_2')?.version).toBe(7);
+    expect(rows.every((r) => Number.isInteger(r.version))).toBe(true);
+  });
+
   it('reports dependencyBlocked false when there is no dependency at all', async () => {
     expect((await getFilteredTasks()).every((r) => r.dependencyBlocked === false)).toBe(true);
+  });
+
+  it('returns estimatedHours as a number (not pg’s numeric string), or null when unestimated', async () => {
+    // PUL-410's Est column. `numeric(6,2)` comes back from pg as '2.50'; the row must carry
+    // 2.5, or `fmtHM` renders a string and sums concatenate instead of adding.
+    await db
+      .update(projectTasks)
+      .set({ estimatedHours: '2.50' })
+      .where(eq(projectTasks.id, 'pt_seed_2'));
+    await db
+      .update(projectTasks)
+      .set({ estimatedHours: null })
+      .where(eq(projectTasks.id, 'pt_seed_1'));
+
+    const rows = await getFilteredTasks();
+    expect(rows.find((r) => r.id === 'pt_seed_2')?.estimatedHours).toBe(2.5);
+    expect(rows.find((r) => r.id === 'pt_seed_1')?.estimatedHours).toBeNull();
   });
 
   it('returns the assignee as one nullable object, never a half-built person', async () => {

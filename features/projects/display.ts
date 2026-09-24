@@ -575,3 +575,161 @@ export function overdueDays(
   if (due === null || now === null || due >= now) return null;
   return now - due;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3.4 List — Month → Category → Task tree, collapse state, category colors (PUL-410)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The category color-dot palette. Full static class strings so Tailwind's scanner keeps them —
+ * a template-built `bg-${hue}-500` would be purged from the production CSS.
+ */
+const CATEGORY_DOT_PALETTE = [
+  'bg-sky-500',
+  'bg-violet-500',
+  'bg-emerald-500',
+  'bg-amber-500',
+  'bg-rose-500',
+  'bg-cyan-500',
+  'bg-lime-500',
+  'bg-fuchsia-500',
+] as const;
+
+/**
+ * A stable color for a category NAME (§14.3.4's "color dot").
+ *
+ * `project_tasks.category` is free text with no stored color (§11), so the color is derived: a
+ * djb2 hash of the name, modulo the palette. Stable across renders, sessions and users — "SEO"
+ * is the same dot on every screen — which is the only property a category color needs. Two
+ * categories can collide on a hue; with eight hues and a handful of categories per project
+ * that is accepted rather than engineered around.
+ */
+export function categoryDotClass(category: string): string {
+  let hash = 5381;
+  for (let i = 0; i < category.length; i++) {
+    hash = ((hash * 33) ^ category.charCodeAt(i)) >>> 0;
+  }
+  return CATEGORY_DOT_PALETTE[hash % CATEGORY_DOT_PALETTE.length]!;
+}
+
+/** The minimum a row needs for the tree to place it. `FilteredTaskRow` satisfies it. */
+interface TreePlaceable {
+  month: number | null;
+  category: string;
+  status: TaskStatus;
+}
+
+export interface TaskTreeCategory<T> {
+  /** Unique across the whole tree — the collapse-state key. */
+  key: string;
+  category: string;
+  /** `DONE_STATUSES` tasks in this group. */
+  done: number;
+  total: number;
+  tasks: T[];
+}
+
+export interface TaskTreeMonth<T> {
+  /** Unique across the whole tree — the collapse-state key. */
+  key: string;
+  /** `null` is the Unscheduled group: one-off work with no retainer month (§11.3). */
+  month: number | null;
+  done: number;
+  total: number;
+  categories: TaskTreeCategory<T>[];
+}
+
+/** Month key → `month:3`, or `month:none` for Unscheduled. */
+function monthKey(month: number | null): string {
+  return month === null ? 'month:none' : `month:${month}`;
+}
+
+/**
+ * Group the filtered rows into §14.3.4's Month → Category → Task tree.
+ *
+ * - **Months ascend; Unscheduled (`month === null`) is always LAST.**
+ * - **Categories sort alphabetically within a month.** The row carries no template position, and
+ *   first-appearance order would follow the query's priority sort, so a category would jump
+ *   whenever one of its tasks changed priority. Alphabetical is the stable choice.
+ * - **Tasks keep the input order** — `getFilteredTasks`' priority → due → created ordering.
+ * - `done` counts `DONE_STATUSES`. Note what `total` can't include: `getFilteredTasks` already
+ *   drops `completed` and `cancelled`, so a group's count is "approved of what's still shown",
+ *   not the project header's whole-project progress.
+ *
+ * Keys are structural (`month:3`, `month:3/category:SEO`) so the same group keeps the same key
+ * across refetches and filter changes — which is what lets collapse state survive them.
+ */
+export function groupTaskTree<T extends TreePlaceable>(rows: readonly T[]): TaskTreeMonth<T>[] {
+  const months = new Map<number | null, Map<string, T[]>>();
+
+  for (const row of rows) {
+    let categories = months.get(row.month);
+    if (categories === undefined) {
+      categories = new Map();
+      months.set(row.month, categories);
+    }
+    const tasks = categories.get(row.category);
+    if (tasks === undefined) categories.set(row.category, [row]);
+    else tasks.push(row);
+  }
+
+  const isDone = (t: T) => DONE_STATUSES.includes(t.status);
+
+  return [...months.entries()]
+    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a - b))
+    .map(([month, categories]) => {
+      const mKey = monthKey(month);
+      const cats = [...categories.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([category, tasks]) => ({
+          key: `${mKey}/category:${category}`,
+          category,
+          done: tasks.filter(isDone).length,
+          total: tasks.length,
+          tasks,
+        }));
+      return {
+        key: mKey,
+        month,
+        done: cats.reduce((n, c) => n + c.done, 0),
+        total: cats.reduce((n, c) => n + c.total, 0),
+        categories: cats,
+      };
+    });
+}
+
+/** Every group key in the tree → whether it is expanded. Complete: no key is ever missing. */
+export type TreeOpenState = Record<string, boolean>;
+
+/**
+ * Resolve the List view's collapse state — §16.10 applied to a tree whose keys come from data.
+ *
+ * The component holds ONE declared state object, `overrides` (starts `{}`), recording only what
+ * the user has toggled. This function turns it into the COMPLETE map for the current tree: every
+ * month and category key present, each either the user's choice or its default. Nothing ever
+ * reads a key that may not exist, and nothing lazily creates one on first touch — the
+ * prototype's `if (!S.collapsed[k])` pattern that made months vanish (§14.16) has no place to live.
+ *
+ * Defaults:
+ * - **Categories: expanded.**
+ * - **Months: only the current cycle expanded** when the current retainer month is known (one
+ *   project selected) — that's the work in flight, and the rest of a 12-month retainer would
+ *   otherwise bury it. Also expanded: **Unscheduled** (one-off work has no cycle to wait for),
+ *   **everything** when no current month is known (All projects — nothing to prefer), and **a
+ *   tree with a single month** (e.g. Month ▾ narrowed to one — collapsing the only group would
+ *   show an empty list).
+ */
+export function treeOpenState<T>(
+  tree: readonly TaskTreeMonth<T>[],
+  overrides: Readonly<Record<string, boolean>>,
+  currentMonth: number | null,
+): TreeOpenState {
+  const state: TreeOpenState = {};
+  for (const m of tree) {
+    const monthDefault =
+      tree.length === 1 || currentMonth === null || m.month === null || m.month === currentMonth;
+    state[m.key] = overrides[m.key] ?? monthDefault;
+    for (const c of m.categories) state[c.key] = overrides[c.key] ?? true;
+  }
+  return state;
+}

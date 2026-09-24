@@ -459,6 +459,12 @@ export interface FilteredTaskRow {
   status: TaskStatus;
   /** `YYYY-MM-DD` string, never a `Date` — render with `fmtDate` (§14.15 r.2). */
   dueDate: string | null;
+  /**
+   * Decimal hours, or `null` when unestimated — the List view's Est column (§14.3.4, PUL-410).
+   * `numeric` arrives from pg as a string; converted with `hoursOrNull` like `getTaskDetail`.
+   * Render with `fmtHM`, never raw.
+   */
+  estimatedHours: number | null;
   assignee: DetailPerson | null;
   /** For §14.3.1's subtask badge, which hides itself at `subtaskTotal === 0`. */
   subtaskDone: number;
@@ -469,6 +475,17 @@ export interface FilteredTaskRow {
    * `blocked` back.
    */
   dependencyBlocked: boolean;
+  /**
+   * The upstream task's title when `dependencyBlocked`, else `null` — for the List view's inline
+   * status pill, whose tooltip names the blocking task (§14.3.2). Comes off the SAME upstream
+   * join as `dependencyBlocked`, so the two cannot disagree about whether a task is blocked.
+   */
+  blockedByTitle: string | null;
+  /**
+   * The optimistic-lock version (§13.4.4 / §13.4.5). The List view's inline status control
+   * sends it with every status write; `getTaskDetail` carries the same column for the modal.
+   */
+  version: number;
 }
 
 /**
@@ -559,6 +576,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
       priority: projectTasks.priority,
       status: projectTasks.status,
       dueDate: projectTasks.dueDate,
+      estimatedHours: projectTasks.estimatedHours,
       assigneeId: user.id,
       assigneeName: user.name,
       assigneeImage: user.image,
@@ -571,6 +589,10 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
         ${projectTasks.dependsOn} is not null
         and coalesce(${upstream.status}::text not in (${satisfied}), true)
       )`,
+      // The upstream title, read off the same join. Paired with `dependencyBlocked` in the map
+      // below rather than in SQL, so the "is it blocked" predicate exists exactly once.
+      upstreamTitle: upstream.title,
+      version: projectTasks.version,
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
@@ -593,6 +615,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     priority: row.priority,
     status: row.status,
     dueDate: row.dueDate,
+    estimatedHours: hoursOrNull(row.estimatedHours),
     // The LEFT JOIN gives three NULL columns for an unassigned task; `assignee` is one nullable
     // object rather than three nullable fields so no caller can render half a person.
     assignee:
@@ -602,6 +625,9 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     subtaskDone: Number(row.subtaskDone),
     subtaskTotal: Number(row.subtaskTotal),
     dependencyBlocked: row.dependencyBlocked,
+    // Only when blocked: a satisfied dependency names nothing, so the pill draws no tooltip.
+    blockedByTitle: row.dependencyBlocked ? row.upstreamTitle : null,
+    version: row.version,
   }));
 }
 

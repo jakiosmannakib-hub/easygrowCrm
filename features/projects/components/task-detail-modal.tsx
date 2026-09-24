@@ -10,6 +10,11 @@
 //   Stage 3b — the body: checklist, subtasks and comments, gated on the four server-computed
 //              capabilities (`features/projects/capabilities.ts`).
 //
+// PUL-410 moved Stage 3a's status dropdown + revision-note modal out to `task-status-control.tsx`
+// so the List view can reuse them, unchanged in behavior. The control owns its status writes and
+// busy flag; this modal still owns the re-fetch (passed as `onChanged`) and folds the control's
+// busy into its own (`anyBusy`), so every control still disables together.
+//
 // STILL READ-ONLY, deliberately: **actual time** and **proof**. `logActualHours` and the Submit
 // modal are Phase 6 (PUL-601) — do not add inputs for them here.
 //
@@ -26,15 +31,7 @@ import { CheckIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -52,23 +49,14 @@ import {
   addComment,
   addSubtask,
   assignTask,
-  changeTaskStatusOpen,
   deleteChecklistItem,
   deleteSubtask,
   loadTaskDetail,
-  setTaskStatusProtected,
   toggleChecklistItem,
   toggleSubtask,
 } from '../actions';
-import {
-  DEPENDENCY_SATISFIED_STATUSES,
-  PRIORITY_LABELS,
-  isProtectedStatus,
-  statusMenuLabel,
-  statusMenuOptions,
-  type TaskStatus,
-} from '../display';
-import { StatusPill } from './status-pill';
+import { DEPENDENCY_SATISFIED_STATUSES, PRIORITY_LABELS } from '../display';
+import { TaskStatusControl } from './task-status-control';
 
 /** Any action's result — `run()` only ever reads the failure half. */
 type ActionOutcome = ActionResult<unknown>;
@@ -153,10 +141,14 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
    * exactly as Stage 2 set it.
    */
   const [nonce, setNonce] = useState(0);
-  /** True while a mutation is in flight — every header control disables together. */
+  /** True while a mutation run through `run()` is in flight. */
   const [busy, setBusy] = useState(false);
-  /** §13.4.5's revision note is collected in its own modal before the write happens. */
-  const [revisionOpen, setRevisionOpen] = useState(false);
+  /**
+   * True while `<TaskStatusControl>` has a status write in flight. The control owns its own
+   * busy state since PUL-410 extracted it; it reports it here so the rest of the modal still
+   * disables with it — see `anyBusy` below.
+   */
+  const [statusBusy, setStatusBusy] = useState(false);
 
   useEffect(() => {
     // Guards a stale response from an earlier opening landing on a newer one: React 19 Strict
@@ -196,7 +188,8 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
   }, [taskId, nonce]);
 
   /**
-   * Run a mutation, then re-read. THE one path every header control goes through.
+   * Run a mutation, then re-read. The path every control in this modal goes through, except
+   * `<TaskStatusControl>`, which carries an identical `run()` of its own (PUL-410).
    *
    * Not optimistic: a status change and an assignment are accountability actions (§14.15 r.5),
    * so the UI waits for the server rather than guessing. On failure the result goes to
@@ -274,44 +267,11 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
   // and a manager's override out of it is §13.4.5's separate act.
   const locked = task.status === 'submitted';
 
-  // §14.3.2's option set for THIS viewer on THIS task. Empty ⇒ the pill renders read-only.
-  // Convenience only: every option is re-authorized by the action behind it.
-  const statusOptions = viewer
-    ? statusMenuOptions(task.status, viewer, task.assigneeId)
-    : [];
-
   /**
-   * Route a chosen status to the right §13 action.
-   *
-   * `revision_required` does NOT write here — §13.4.5 requires a note, so it opens the note
-   * modal and the write happens on that modal's submit. Everything else splits on
-   * `isProtectedStatus`: the open set goes to §13.4.4, `completed` / `cancelled` to §13.4.5.
-   *
-   * `version` is the one the last load returned, which is why `run()` re-fetches: without that,
-   * a second change in a row would CONFLICT on a row nobody else touched.
+   * ONE busy state across the whole modal, as before the extraction: a status write disables
+   * Assign ▾ and the body, and any `run()` mutation disables the status control.
    */
-  function onStatusSelect(next: TaskStatus) {
-    if (next === task.status) return;
-
-    if (next === 'revision_required') {
-      setRevisionOpen(true);
-      return;
-    }
-
-    void run(() =>
-      isProtectedStatus(next)
-        ? setTaskStatusProtected({
-            taskId,
-            version: task.version,
-            status: next as 'completed' | 'cancelled',
-          })
-        : changeTaskStatusOpen({
-            taskId,
-            version: task.version,
-            status: next as 'planned' | 'in_progress' | 'blocked',
-          }),
-    );
-  }
+  const anyBusy = busy || statusBusy;
 
   // §14.3.3 Proof: the LATEST submission's proof. There is no task-level proof field — the
   // editable proof input belongs to the Phase-6 Submit modal, and must not be added here.
@@ -348,22 +308,24 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
         {/*
-          §14.3.2: "current status always shown even if outside the option set". With no options
-          the pill IS the display — which covers the locked states, HR, and a non-assignee EMP.
-          The dependency-blocked override rides on both paths, so a blocked-by-dependency task
-          still reads as Blocked even while its owner can change the underlying status.
+          §14.3.2's status control (read-only pill or dropdown, plus the revision-note modal),
+          extracted in PUL-410 so the List view can reuse it. `onChanged` is this modal's
+          re-fetch — the same nonce bump `run()` does, so the held `version` stays current.
         */}
-        {statusOptions.length === 0 ? (
-          <StatusPill status={task.status} dependencyBlocked={dependencyBlocked} />
-        ) : (
-          <StatusMenu
-            status={task.status}
-            options={statusOptions}
-            dependencyBlocked={dependencyBlocked}
-            disabled={busy}
-            onSelect={(next) => onStatusSelect(next)}
-          />
-        )}
+        <TaskStatusControl
+          task={{
+            id: taskId,
+            title: task.title,
+            status: task.status,
+            version: task.version,
+            assigneeId: task.assigneeId,
+          }}
+          viewer={viewer}
+          dependencyBlocked={dependencyBlocked}
+          disabled={busy}
+          onBusyChange={setStatusBusy}
+          onChanged={() => setNonce((n) => n + 1)}
+        />
 
         <span className="text-muted-foreground">
           Priority: <span className="text-foreground">{PRIORITY_LABELS[task.priority]}</span>
@@ -394,7 +356,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
               // The stored assignee, which is NOT necessarily in `assignable` — see the
               // component's docblock.
               currentAssignee={assignee}
-              disabled={busy}
+              disabled={anyBusy}
               onSelect={(assigneeId) => void run(() => assignTask({ taskId, assigneeId }))}
             />
           </span>
@@ -464,7 +426,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
                   key={item.id}
                   text={item.text}
                   done={item.done}
-                  disabled={!caps.canToggleChecklist || busy}
+                  disabled={!caps.canToggleChecklist || anyBusy}
                   onToggle={(done) => void run(() => toggleChecklistItem({ itemId: item.id, done }))}
                   // HIDDEN, not disabled, when the viewer can't manage: an employee should never
                   // see a × they may not use (§14.1 curated visibility).
@@ -481,7 +443,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           {caps.canManageChecklist ? (
             <AddRow
               placeholder="Add a checklist item"
-              busy={busy}
+              busy={anyBusy}
               onAdd={(text) => run(() => addChecklistItem({ taskId, text }))}
             />
           ) : null}
@@ -507,7 +469,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
                   key={subtask.id}
                   text={subtask.text}
                   done={subtask.done}
-                  disabled={!caps.canManageSubtasks || busy}
+                  disabled={!caps.canManageSubtasks || anyBusy}
                   onToggle={(done) =>
                     void run(() => toggleSubtask({ subtaskId: subtask.id, done }))
                   }
@@ -524,7 +486,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           {caps.canManageSubtasks ? (
             <AddRow
               placeholder="Add a subtask"
-              busy={busy}
+              busy={anyBusy}
               onAdd={(text) => run(() => addSubtask({ taskId, text }))}
             />
           ) : null}
@@ -563,7 +525,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
 
           {caps.canComment ? (
             <CommentComposer
-              busy={busy}
+              busy={anyBusy}
               onPost={(body) => run(() => addComment({ taskId, body }))}
             />
           ) : (
@@ -586,77 +548,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           )}
         </Section>
       </div>
-
-      {/*
-        §13.4.5's revision-note modal. Nested inside the detail dialog rather than replacing it:
-        the manager is writing the note ABOUT what they are looking at, so the task stays behind
-        it. Keyed by `revisionOpen` so each opening starts with an empty textarea.
-      */}
-      <RevisionNoteDialog
-        key={revisionOpen ? 'open' : 'closed'}
-        open={revisionOpen}
-        taskTitle={task.title}
-        busy={busy}
-        onClose={() => setRevisionOpen(false)}
-        onSubmit={async (note) => {
-          const ok = await run(() =>
-            setTaskStatusProtected({
-              taskId,
-              version: task.version,
-              status: 'revision_required',
-              note,
-            }),
-          );
-          if (ok) setRevisionOpen(false);
-        }}
-      />
     </>
-  );
-}
-
-/**
- * The §14.3.2 status dropdown.
- *
- * The trigger renders the `StatusPill` itself rather than Base UI's `SelectValue`, for a reason
- * that is not cosmetic: §14.3.2 requires the CURRENT status to show "even if outside the option
- * set", and a task in `revision_required` is exactly that case for its assignee — the menu
- * offers the three open statuses while the pill must still read "Needs revision". Driving the
- * trigger off `SelectValue` would blank it whenever the value has no matching item.
- *
- * `value` is therefore deliberately NOT bound; the Select is used as a menu, not as a bound
- * input, and `onValueChange` (which yields `string | null` on Base UI) is the only signal read.
- */
-function StatusMenu({
-  status,
-  options,
-  dependencyBlocked,
-  disabled,
-  onSelect,
-}: {
-  status: TaskStatus;
-  options: TaskStatus[];
-  dependencyBlocked?: { title: string };
-  disabled: boolean;
-  onSelect: (next: TaskStatus) => void;
-}) {
-  return (
-    <Select
-      value={status}
-      onValueChange={(next: string | null) => {
-        if (next !== null) onSelect(next as TaskStatus);
-      }}
-    >
-      <SelectTrigger size="sm" aria-label="Change status" disabled={disabled} className="gap-2">
-        <StatusPill status={status} dependencyBlocked={dependencyBlocked} />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option} value={option}>
-            {statusMenuLabel(option)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 
@@ -741,75 +633,6 @@ function AssignPicker({
         ))}
       </SelectContent>
     </Select>
-  );
-}
-
-/**
- * §13.4.5's "say why" modal, shown before a task is sent back for revision.
- *
- * The empty-note check is client-side convenience only — the server returns
- * `GATE:note_required` regardless, and that is the real rule. Blocking the button here just
- * means the common mistake costs no round trip; it is not what enforces the note.
- */
-function RevisionNoteDialog({
-  open,
-  taskTitle,
-  busy,
-  onClose,
-  onSubmit,
-}: {
-  open: boolean;
-  taskTitle: string;
-  busy: boolean;
-  onClose: () => void;
-  onSubmit: (note: string) => void;
-}) {
-  const [note, setNote] = useState('');
-  const trimmed = note.trim();
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Send back for revision</DialogTitle>
-          <DialogDescription>
-            {taskTitle} — the assignee sees this note, so say what needs changing.
-          </DialogDescription>
-        </DialogHeader>
-
-        <textarea
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          rows={4}
-          autoFocus
-          aria-label="Revision note"
-          placeholder="What needs changing?"
-          className="border-input bg-input/20 focus-visible:border-ring focus-visible:ring-ring/30 w-full rounded-md border px-2 py-1.5 text-xs/relaxed outline-none focus-visible:ring-2 dark:bg-input/30"
-        />
-
-        <DialogFooter>
-          <DialogClose
-            render={
-              <Button variant="outline" type="button">
-                Cancel
-              </Button>
-            }
-          />
-          <Button
-            variant="destructive"
-            disabled={trimmed === '' || busy}
-            onClick={() => onSubmit(trimmed)}
-          >
-            {busy ? 'Sending…' : 'Send back'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

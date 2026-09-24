@@ -7,6 +7,8 @@
 // employees and clients queries, the permission check lives at the call site (route guard / the
 // consuming action), not inside the read — the PUL-207 pattern. `getTaskDetail` is the one
 // exception: it requires an authenticated, active session itself (still no per-role filter).
+// `getReviewQueue` (PUL-412) is the other: `review.read` is NOT open (EMP = own submissions
+// only, §9.6), so that query applies the row scope itself. See its docblock.
 
 import { and, asc, desc, eq, isNotNull, isNull, notInArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -22,6 +24,7 @@ import {
   taskSubtasks,
   user,
 } from '../../db/schema';
+import { can } from '../../lib/authz';
 import type { Executor } from '../../lib/mutation';
 import { getSessionUser } from '../../lib/session';
 import { dhakaToday } from '../../lib/format';
@@ -776,4 +779,245 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
     progress: { done, total, pct: progressPct(done, total) },
     health: projectHealth(Number(counts?.overdue ?? 0), Number(counts?.waitingReview ?? 0)),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getReviewQueue — THE canonical review query: three surfaces, one function (PUL-412.1, §16.9)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** §13.8's filters. Every key optional; omitting all of them is the agency-wide queue. */
+export interface ReviewQueueFilters {
+  /** The project Review tab passes its project; `/review` and the dashboard card omit it. */
+  projectId?: string;
+  /** §14.3.5's "Routed to me" chip: only tasks whose LATEST submission routes to the viewer. */
+  routedToMe?: boolean;
+  /** `'oldest'` is the dashboard card's aging view (§14.3.5); the default is newest first. */
+  sort?: 'newest' | 'oldest';
+}
+
+/** One §14.3.5 row: Task · Project · Submitted by · Routed to · Summary · Hours · Proof. */
+export interface ReviewQueueRow {
+  taskId: string;
+  taskTitle: string;
+  project: { id: string; name: string };
+  submittedBy: { id: string; name: string };
+  /** The latest submission's `reviewer_id` — a routing HINT, not a lock (§9.7). */
+  routedTo: { id: string; name: string } | null;
+  summary: string;
+  /** Self-reported decimal hours, or `null`. Render with `fmtHM`. */
+  hours: number | null;
+  proofType: (typeof taskSubmissions.$inferSelect)['proofType'];
+  proofValue: string | null;
+  /** The latest submission's `created_at` — what "newest" / "oldest" sort on. */
+  submittedAt: Date;
+  /** The TASK's optimistic-lock version, for the PUL-602 review decision. */
+  version: number;
+}
+
+/**
+ * §13.8 `getReviewQueue` — **THE canonical review query** (Amendment F, §16.9). Three surfaces
+ * call this one function, and none of them may grow a variant:
+ *
+ *   - the project **Review tab** (PUL-412)        → `{ projectId }`
+ *   - the standalone **`/review` page** (PUL-607) → `{}`, agency-wide
+ *   - the **dashboard card** (PUL-803)            → `{ sort: 'oldest' }`
+ *
+ * "Same filters, same rows" across those surfaces is the whole point, and it is only true if
+ * there is one query to change. `review-queue.test.ts` proves it (412.4): the project-scoped
+ * result is exactly the project's slice of the agency-wide one, row for row.
+ *
+ * **Base set:** `project_tasks.status = 'submitted'`, not soft-deleted, on an active,
+ * non-deleted project. Each task is joined to its **latest** `task_submissions` row, because a
+ * task that went round the revision loop has several and only the newest is under review; the
+ * summary, hours, proof and routing hint all come from it. A `submitted` task with no
+ * submission row at all (impossible through `submitTask`, PUL-601) is left out: there is
+ * nothing to review.
+ *
+ * **Role scope is applied HERE, not at the call site — the one exception to this file's
+ * header.** Every other read in this slice is `project.read`, which is open to all, so the gate
+ * lives with the caller. `review.read` is not open: §9.6 gives managers and HR every row and an
+ * employee **only their own** (`'self'`). That is a row filter, not a yes/no gate, so it belongs
+ * in the one query all three surfaces share, where no caller can forget it. The Review tab and
+ * `/review` are also gated to MGR/HR by route and tab visibility (§14.3), so in practice an
+ * employee never reaches this; the scope is defense in depth.
+ */
+export async function getReviewQueue(filters: ReviewQueueFilters = {}): Promise<ReviewQueueRow[]> {
+  const viewer = await getSessionUser();
+
+  const submitter = alias(user, 'submitter');
+  const routedTo = alias(user, 'routed_to');
+
+  /*
+   * The latest submission per task: `DISTINCT ON (task_id)` over newest-first rows. `id` breaks
+   * the tie when two submissions share a timestamp (same transaction), so "latest" is always
+   * one well-defined row. Rides the `sub_task_idx (task_id, created_at desc)` index.
+   */
+  const latest = db
+    .selectDistinctOn([taskSubmissions.taskId], {
+      taskId: taskSubmissions.taskId,
+      submittedBy: taskSubmissions.submittedBy,
+      summary: taskSubmissions.summary,
+      hours: taskSubmissions.hours,
+      proofType: taskSubmissions.proofType,
+      proofValue: taskSubmissions.proofValue,
+      reviewerId: taskSubmissions.reviewerId,
+      createdAt: taskSubmissions.createdAt,
+    })
+    .from(taskSubmissions)
+    .orderBy(taskSubmissions.taskId, desc(taskSubmissions.createdAt), desc(taskSubmissions.id))
+    .as('latest_submission');
+
+  const where: SQL[] = [
+    eq(projectTasks.status, 'submitted'),
+    isNull(projectTasks.deletedAt),
+    isNull(projects.deletedAt),
+    eq(projects.status, 'active'),
+  ];
+
+  if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
+  if (filters.routedToMe) where.push(eq(latest.reviewerId, viewer.id));
+
+  // §9.6 `review.read`: `can()` with no resource is true only for the unconditional `allow`
+  // cells (SA / TL / PM / HR). An employee's `'self'` cell needs an owner, so they fall through
+  // to their own submissions only.
+  if (!can(viewer, 'review.read')) where.push(eq(latest.submittedBy, viewer.id));
+
+  const rows = await db
+    .select({
+      taskId: projectTasks.id,
+      taskTitle: projectTasks.title,
+      version: projectTasks.version,
+      projectId: projects.id,
+      projectName: projects.name,
+      submittedById: submitter.id,
+      submittedByName: submitter.name,
+      routedToId: routedTo.id,
+      routedToName: routedTo.name,
+      summary: latest.summary,
+      hours: latest.hours,
+      proofType: latest.proofType,
+      proofValue: latest.proofValue,
+      submittedAt: latest.createdAt,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .innerJoin(latest, eq(latest.taskId, projectTasks.id))
+    .innerJoin(submitter, eq(submitter.id, latest.submittedBy))
+    .leftJoin(routedTo, eq(routedTo.id, latest.reviewerId))
+    .where(and(...where))
+    .orderBy(
+      filters.sort === 'oldest' ? asc(latest.createdAt) : desc(latest.createdAt),
+      // Stable tiebreak so two submissions in the same instant never swap between renders.
+      asc(projectTasks.id),
+    );
+
+  return rows.map((row) => ({
+    taskId: row.taskId,
+    taskTitle: row.taskTitle,
+    project: { id: row.projectId, name: row.projectName },
+    submittedBy: { id: row.submittedById, name: row.submittedByName },
+    // One nullable object, never a half-built person (same rule as FilteredTaskRow.assignee).
+    routedTo:
+      row.routedToId === null ? null : { id: row.routedToId, name: row.routedToName ?? '' },
+    summary: row.summary,
+    hours: hoursOrNull(row.hours),
+    proofType: row.proofType,
+    proofValue: row.proofValue,
+    submittedAt: row.submittedAt,
+    version: row.version,
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getWorkload — per-person open-task capacity (PUL-412.3, §14.3.6)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Statuses that are NOT open work, for §14.3.6 ("data from open statuses only").
+ *
+ * Deliberately its own constant rather than `OPEN_STATUSES_FOR_HEALTH` inverted: the health
+ * calc (§3.1.3) and workload answer different questions and agree by coincidence today, the
+ * same reasoning that keeps `DONE_STATUSES` and `DEPENDENCY_SATISFIED_STATUSES` apart.
+ */
+const WORKLOAD_CLOSED_STATUSES = ['approved', 'completed', 'cancelled'] as const;
+
+export interface WorkloadFilters {
+  /**
+   * Scope to one project: the Workload tab with a project selected. Omitted → agency-wide, the
+   * tab with "All projects", which is the truer capacity number: a person's load is everything
+   * they hold, not one engagement's share of it. Both are supported.
+   */
+  projectId?: string;
+}
+
+export interface WorkloadRow {
+  user: { id: string; name: string; image: string | null };
+  openCount: number;
+  /** SUM of `estimated_hours` over the open tasks; an unestimated task adds 0. Render with `fmtHM`. */
+  estHours: number;
+  /**
+   * §14.3.6's live on-break dot. **ALWAYS `false`: a stub.** TODO(Phase 3 / attendance): the
+   * attendance and breaks tables are PUL-301, and Phase 3 was taken out of order and has not
+   * been built (§17's phase-order note), so there is no data source for "on a break right now".
+   * Wire this to the open-break row once PUL-303 lands. Until then the field exists so the tab's
+   * shape is final and the dot becomes a data change, not a layout change.
+   */
+  onBreak: boolean;
+}
+
+/**
+ * §13.8 `getWorkload` — per-person open task count + estimated hours (§14.3.6).
+ *
+ * - **Open** = every status except approved / completed / cancelled, on a non-deleted task on an
+ *   active, non-deleted project (archived work is hidden from default views, §13.3.4 — the same
+ *   exclusion as `getFilteredTasks`).
+ * - **Dependency-blocked tasks count as open** (§3.2.5, §14.3.6). Nothing special is needed: the
+ *   dependency lock is display-only and never rewrites the stored status, which is already open.
+ * - **Unassigned tasks are excluded**: there is no person to attribute them to. They are visible
+ *   in the Board's pinned group and the List's banner instead.
+ * - **Only people holding at least one open task appear**, because the rows are grouped from
+ *   tasks; an idle person is absent rather than a `0` row. A deactivated user still holding open
+ *   work DOES appear — that is exactly the orphaned work a manager needs to see.
+ * - Ordered by open count DESC, then name, so the most loaded person is first.
+ *
+ * **Access:** §13.8 says MGR + HR, but §9.6 has no workload action to authorize against, so this
+ * follows the slice convention (authenticated and active via `getSessionUser()`), with the
+ * MGR/HR gate on the Workload tab (§14.3) and its consuming action. Flagged in §17 / PUL-412.
+ */
+export async function getWorkload(filters: WorkloadFilters = {}): Promise<WorkloadRow[]> {
+  await getSessionUser();
+
+  const where: SQL[] = [
+    isNotNull(projectTasks.assigneeId),
+    notInArray(projectTasks.status, [...WORKLOAD_CLOSED_STATUSES]),
+    isNull(projectTasks.deletedAt),
+    isNull(projects.deletedAt),
+    eq(projects.status, 'active'),
+  ];
+  if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
+
+  const openCount = sql<number>`count(*)::int`;
+
+  const rows = await db
+    .select({
+      id: user.id,
+      name: user.name,
+      image: user.image,
+      openCount,
+      // A `numeric` SUM comes back as a string; unestimated tasks contribute 0, not NULL.
+      estHours: sql<string>`coalesce(sum(${projectTasks.estimatedHours}), 0)`,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .innerJoin(user, eq(user.id, projectTasks.assigneeId))
+    .where(and(...where))
+    .groupBy(user.id, user.name, user.image)
+    .orderBy(desc(openCount), asc(user.name), asc(user.id));
+
+  return rows.map((row) => ({
+    user: { id: row.id, name: row.name, image: row.image },
+    openCount: Number(row.openCount),
+    estHours: Number(row.estHours),
+    onBreak: false, // TODO(Phase 3 / attendance): see WorkloadRow.onBreak.
+  }));
 }

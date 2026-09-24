@@ -623,6 +623,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** invariant enforced at both layers; exceeded flag flips at exactly allowance+1min under a frozen clock.
 
+> **Inherited from PUL-412:** `getWorkload`'s `onBreak` is stubbed `false` until this ticket
+> lands (`TODO(Phase 3 / attendance)` in `features/projects/queries.ts`). Wire it to "has an open
+> `attendance_breaks` row right now" and the Workload tab's dot lights up with no UI change. That
+> also closes 412.3.
+
 ---
 
 ### PUL-304 — `getMyTimer` + timer card component
@@ -1110,12 +1115,79 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §13.8, §14.3.5–6, §16.9 · **Depends:** PUL-407
 
-- [ ] 412.1 One canonical `getReviewQueue(filters)` (§16.9 — three surfaces, one query)
-- [ ] 412.2 Review tab: columns per §14.3.5, tab-title count, "Routed to me" chip _(decision modal itself is PUL-602)_
-- [ ] 412.3 Workload tab (MGR/HR): per-person open count + est hours + on-break live dot; dependency-blocked counts as open
-- [ ] 412.4 Test: same filters through the project tab and (future) `/review` page return identical rows
+- [x] 412.1 One canonical `getReviewQueue(filters)` (§16.9 — three surfaces, one query) — `features/projects/queries.ts`. Filters `{ projectId?, routedToMe?, sort?: 'newest' | 'oldest' }`: the project tab passes `projectId`, `/review` (PUL-607) passes nothing, the dashboard card (PUL-803) passes `sort: 'oldest'`. `submitted` tasks joined to their **latest** submission; `routedToMe` matches the latest routing hint.
+- [x] 412.2 Review tab: columns per §14.3.5, tab-title count, "Routed to me" chip _(decision modal itself is PUL-602)_ — `review-tab.tsx` via `loadReviewQueue`. **Interim:** its Review button opens the Task Detail modal until PUL-602's decision modal replaces it.
+- [ ] 412.3 Workload tab (MGR/HR): per-person open count + est hours + on-break live dot; dependency-blocked counts as open — **done except the live dot.** `workload-tab.tsx` via `loadWorkload` shows count, est hours, and a dot that is always grey: `onBreak` is stubbed `false` because attendance (Phase 3) was skipped and there is no breaks table. Closes when PUL-303 wires it (`TODO(Phase 3 / attendance)` in `getWorkload` and the tab).
+- [x] 412.4 Test: same filters through the project tab and (future) `/review` page return identical rows — `review-queue.test.ts`, "QUERY IDENTITY".
 
-**Done when:** query identity across surfaces is proven by test.
+**Done when:** query identity across surfaces is proven by test — ✅ for three filter sets (default, oldest, routed-to-me) and both seeded projects, the project-scoped result `toEqual`s the agency-wide result filtered to that project: whole rows, in order. The test was checked against a deliberate project-path-only predicate and failed as it should (3 cases), then restored.
+
+> **Built in two stages** (`3aaa7fd` the two queries + identity test → Stage 2: load actions, the
+> Review and Workload tabs, role-gated tab strip, QA fixtures).
+>
+> **First real consumer of `task_submissions`** (unused since PUL-401 Stage 3). The latest
+> submission is a `DISTINCT ON (task_id)` over `created_at DESC, id DESC`, riding `sub_task_idx`.
+> The `id` tiebreak makes "latest" well-defined when two submissions share a timestamp. A
+> `submitted` task with no submission row is left out of the queue: there is nothing to review.
+>
+> **Review and Workload fetch their own data.** Board, List and Calendar share one task array; these
+> two tabs don't, because they read different queries. Each fetches when opened and when the
+> project changes. A Review modal close also bumps `taskNonce`, so Board, List and the header stay
+> current. The tab-title count (§14.3.5) shows once the Review tab has loaded. Before the first
+> visit it shows nothing rather than a guessed number.
+>
+> **Two access decisions that need a ruling** (Jaki):
+> 1. **§9.6 has no workload permission.** §13.8 and §14.3 say "MGR + HR", but there is no
+>    `workload.read` row to `authorize()` against. `loadWorkload` therefore calls
+>    `authorize('project.read')` first (which keeps the authorize-first rule satisfied), then
+>    role-checks SA/TL/PM/HR → otherwise `FORBIDDEN`.
+>    `lib/authz.ts` was **not** extended, because it must match §9.6. The fix is a §9.6
+>    amendment adding `workload.read`, after which the action becomes
+>    `authorize('workload.read')`.
+> 2. **`getReviewQueue` applies the `review.read` row scope inside the query**, unlike every other
+>    read in this slice (whose file header puts gates at the call site). §9.6 gives managers and
+>    HR every row, but an employee **only their own** (`self`). That is a row filter rather than a
+>    gate, and §13.8 says queries apply §9.6 scope, so it lives in the one query all three
+>    surfaces share. `loadReviewQueue` authorizes `review.read` too, and with no resource the
+>    employee's `self` cell fails closed. So an employee is refused at the action, and the
+>    in-query scope is defense in depth.
+>
+> **Tab visibility** is now an explicit `visibleTo` role list per tab in `projects-filter-bar.tsx`
+> (the `lib/nav.ts` convention, not a live `can()`). Board/List/Calendar are visible to all roles,
+> Review and Workload to SA/TL/PM/HR. Hiding a tab is cosmetic: both actions refuse employees
+> anyway. Manager QA (SA + TL) is **not** offered; it is PUL-604.
+>
+> **`getWorkload` scope.** It supports agency-wide and per-project. It counts open statuses (not
+> approved/completed/cancelled) on active projects. Dependency-blocked tasks count, with no special
+> handling, because the lock never rewrites the stored status.
+>
+> It deliberately does not count or show:
+> - **unassigned tasks**: there's no one to attribute them to;
+> - **idle people**: rows are grouped from tasks, so someone with no open work is absent rather
+>   than a `0` row. Decide whether the tab should list idle people too.
+>
+> A deactivated user who still holds open work **does** appear, which is the orphaned work a
+> manager needs to see.
+>
+> **Proof links** render only for `http(s)` values. `proof_value` is text an employee typed, and
+> putting an arbitrary string into `href` is how a `javascript:` value gets clicked.
+>
+> **Tests:**
+> - `review-queue.test.ts` (19): base set, latest-wins, both sorts, routed-to-me,
+>   archived/soft-deleted exclusions, row shape, role scope, and the identity block;
+> - `workload.test.ts` (10);
+> - `load-review-workload.test.ts` (6): both actions let SA/TL/PM/HR through and refuse employees
+>   with FORBIDDEN; the project filter is passed through; a bad filter fails validation.
+>
+> **QA fixtures:** `app/dev/task-detail/qa-states.sql` now adds:
+> - `qa_reviewer`, a project manager used only as a routing target;
+> - two submissions on `qa_submitted`: an older one routed to `qa_reviewer`, and the latest routed
+>   to whoever you QA as;
+> - a new `qa_submitted_2`, routed to `qa_reviewer` only.
+>
+> Expected Review tab: **2 rows, and 1 with "Routed to me" on.** The cleanup removes
+> submissions/reviews before tasks and users. The file was dry-run on the test DB in a rolled-back
+> transaction.
 
 ---
 
@@ -1254,6 +1326,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 602.4 Test: `features/projects/review.test.ts` → CI manifest
 
 **Done when:** both decisions round-trip with audit + notification.
+
+> **Inherited from PUL-412:** the Review tab's **Review** button (`review-tab.tsx`) currently
+> opens the Task Detail modal as a stand-in. Re-point it at this modal. `ReviewQueueRow` already
+> carries the task's `version` for the decision's optimistic lock.
 
 ---
 

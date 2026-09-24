@@ -273,6 +273,23 @@ describe('getFilteredTasks — the computed columns', () => {
     expect((await getFilteredTasks()).every((r) => r.dependencyBlocked === false)).toBe(true);
   });
 
+  it('returns estimatedHours as a number (not pg’s numeric string), or null when unestimated', async () => {
+    // PUL-410's Est column. `numeric(6,2)` comes back from pg as '2.50'; the row must carry
+    // 2.5, or `fmtHM` renders a string and sums concatenate instead of adding.
+    await db
+      .update(projectTasks)
+      .set({ estimatedHours: '2.50' })
+      .where(eq(projectTasks.id, 'pt_seed_2'));
+    await db
+      .update(projectTasks)
+      .set({ estimatedHours: null })
+      .where(eq(projectTasks.id, 'pt_seed_1'));
+
+    const rows = await getFilteredTasks();
+    expect(rows.find((r) => r.id === 'pt_seed_2')?.estimatedHours).toBe(2.5);
+    expect(rows.find((r) => r.id === 'pt_seed_1')?.estimatedHours).toBeNull();
+  });
+
   it('returns the assignee as one nullable object, never a half-built person', async () => {
     const rows = await getFilteredTasks();
 

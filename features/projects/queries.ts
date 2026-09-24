@@ -459,6 +459,12 @@ export interface FilteredTaskRow {
   status: TaskStatus;
   /** `YYYY-MM-DD` string, never a `Date` — render with `fmtDate` (§14.15 r.2). */
   dueDate: string | null;
+  /**
+   * Decimal hours, or `null` when unestimated — the List view's Est column (§14.3.4, PUL-410).
+   * `numeric` arrives from pg as a string; converted with `hoursOrNull` like `getTaskDetail`.
+   * Render with `fmtHM`, never raw.
+   */
+  estimatedHours: number | null;
   assignee: DetailPerson | null;
   /** For §14.3.1's subtask badge, which hides itself at `subtaskTotal === 0`. */
   subtaskDone: number;
@@ -559,6 +565,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
       priority: projectTasks.priority,
       status: projectTasks.status,
       dueDate: projectTasks.dueDate,
+      estimatedHours: projectTasks.estimatedHours,
       assigneeId: user.id,
       assigneeName: user.name,
       assigneeImage: user.image,
@@ -593,6 +600,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     priority: row.priority,
     status: row.status,
     dueDate: row.dueDate,
+    estimatedHours: hoursOrNull(row.estimatedHours),
     // The LEFT JOIN gives three NULL columns for an unassigned task; `assignee` is one nullable
     // object rather than three nullable fields so no caller can render half a person.
     assignee:

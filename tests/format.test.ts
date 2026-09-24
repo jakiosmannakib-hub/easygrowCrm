@@ -62,6 +62,29 @@ describe('fmtDate', () => {
     expect(fmtDate('2026-13-01')).toBe('2026-13-01');
     expect(fmtDate('Aug 8')).toBe('Aug 8');
   });
+
+  // PUL-409 — the Board card's opt-out. The default must not move: every test above calls
+  // fmtDate with no options and still expects the suffix.
+  describe('{ relative }', () => {
+    it('defaults to relative: true — identical to passing nothing', () => {
+      for (const d of ['2026-08-07', '2026-08-08', '2026-08-09', null]) {
+        expect(fmtDate(d, { relative: true })).toBe(fmtDate(d));
+        expect(fmtDate(d, {})).toBe(fmtDate(d));
+      }
+    });
+
+    it('relative: false drops " · Today" and " · Overdue", keeping the year', () => {
+      expect(fmtDate('2026-08-08', { relative: false })).toBe('Aug 8, 2026');
+      expect(fmtDate('2026-08-07', { relative: false })).toBe('Aug 7, 2026');
+      expect(fmtDate('2025-12-31', { relative: false })).toBe('Dec 31, 2025');
+      expect(fmtDate('2026-08-09', { relative: false })).toBe('Aug 9, 2026');
+    });
+
+    it('relative: false keeps the null and malformed-input behavior', () => {
+      expect(fmtDate(null, { relative: false })).toBe('');
+      expect(fmtDate('2026-13-01', { relative: false })).toBe('2026-13-01');
+    });
+  });
 });
 
 describe('fmtHM', () => {

@@ -114,6 +114,7 @@ export function ProjectsFilterBar({
   projectMonths,
   assignees,
   canExport,
+  canCreateTask,
   initialTasks,
 }: {
   clients: PickableClient[];
@@ -124,6 +125,11 @@ export function ProjectsFilterBar({
   assignees: AssigneeOption[];
   /** MGR-only (§14.3). Controls whether the export slot renders at all. */
   canExport: boolean;
+  /**
+   * `can(viewer, 'project_task.create')`, decided server-side by the page (§9.6 — MGR only).
+   * Gates the Board's `+ Add task`. Convenience, not security: `createTask` re-authorizes.
+   */
+  canCreateTask: boolean;
   /** The server's first result, so the page has rows before the client ever runs. */
   initialTasks: FilteredTaskRow[];
 }) {
@@ -342,6 +348,9 @@ export function ProjectsFilterBar({
         <ProjectHeader
           key={selectedProject.id}
           projectId={selectedProject.id}
+          // The page's one refetch counter: a Task Detail edit on the Board reloads the header
+          // too, so progress and health move with the card (PUL-409 Stage 2).
+          refreshKey={taskNonce}
           onChanged={() => setTaskNonce((n) => n + 1)}
         />
       )}
@@ -375,6 +384,11 @@ export function ProjectsFilterBar({
         <TaskBoard
           tasks={tasks}
           loading={loading}
+          // `+ Add task` needs ONE project to add to — with "All projects" there is none, so the
+          // board is handed null and the button does not render.
+          addToProjectId={canCreateTask && selectedProject !== null ? selectedProject.id : null}
+          // After a task is created from the board, re-read list + header together.
+          onTaskCreated={() => setTaskNonce((n) => n + 1)}
           // Re-read after the Task Detail modal closes, through the same nonce New Task and
           // Archive use — a status or assignee change made in the modal moves the card.
           onTaskClosed={() => setTaskNonce((n) => n + 1)}

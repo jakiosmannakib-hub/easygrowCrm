@@ -3,10 +3,13 @@
 // Dev-only harness for the §14.3.3 Task Detail modal: every live task in the database, each
 // with a button that opens the modal on it.
 //
-// **THROWAWAY QA SCAFFOLDING.** The Board (PUL-409) is the real opener — a card click opens the
-// same modal on that card's task. This page exists only so Stage 2's read + rendering can be
-// eyeballed against real rows before there is a board to click, and this whole directory should
-// be deleted when PUL-409 lands. Nothing outside /dev may import from it.
+// **KEPT AS AN ISOLATED-MODAL QA HARNESS.** Originally throwaway until PUL-409; the Board is now
+// the real opener (a card click opens the same modal on that card's task), but this page stays
+// on purpose. It reaches tasks the Board never shows — `completed` / `cancelled` rows and tasks
+// on an archived project, all excluded by `getFilteredTasks` — and opens the modal with no
+// filter bar or board state in the way, which is what you want when QA'ing the modal alone.
+// `qa-states.sql` beside it is the shared fixture that arranges those states, for this harness
+// and for manual QA of the Board. Nothing outside /dev may import from it.
 //
 // Guarded exactly like app/dev/errors: `notFound()` in production, before any render.
 //

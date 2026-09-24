@@ -31,13 +31,26 @@ type HeaderPayload = NonNullable<
 
 export function ProjectHeader({
   projectId,
+  refreshKey,
   onChanged,
 }: {
   projectId: string;
   /**
-   * Called after any mutation that can change the filtered task list — a created task, an
-   * archived project. The filter bar owns that list, so the header reports upward rather than
-   * refetching someone else's data.
+   * The filter bar's `taskNonce` — the ONE refetch counter for the page (PUL-409 Stage 2).
+   *
+   * Every mutation that can move this header's numbers bumps it: New Task and Archive here, and
+   * closing the Task Detail modal on the Board. It sits in the load effect's dependencies, so a
+   * status change made in the modal re-reads `getProjectHeader` in the same tick the board
+   * re-reads its list, and the progress bar and health chip move in lockstep with the card.
+   *
+   * It replaced a private nonce this component used to hold. With both, a New Task here would
+   * have bumped the private one AND the parent's, and fetched the header twice.
+   */
+  refreshKey: number;
+  /**
+   * Called after any mutation that can change the task list — a created task, an archived
+   * project. The filter bar owns the nonce, so the header reports upward and the bump comes
+   * back down as `refreshKey`.
    */
   onChanged: () => void;
 }) {
@@ -45,15 +58,6 @@ export function ProjectHeader({
   const [failed, setFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState(false);
-
-  /**
-   * The refetch nonce. Bumping it re-runs the load effect, which is how the header picks up a
-   * new task's effect on `X/Y · N%` and on the health chip.
-   *
-   * A counter rather than a boolean: two mutations in quick succession must each trigger a
-   * fetch, and a flag that is already `true` would swallow the second.
-   */
-  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     // Guards a stale response from an earlier project landing on a newer one — switching
@@ -82,11 +86,13 @@ export function ProjectHeader({
     return () => {
       current = false;
     };
-  }, [projectId, nonce]);
+  }, [projectId, refreshKey]);
 
-  /** Refetch the header AND tell the filter bar to refetch its list. */
+  /**
+   * Refetch the header AND the filter bar's list — one bump of the parent's nonce does both,
+   * because it comes back down as `refreshKey`.
+   */
   function refetchAll() {
-    setNonce((n) => n + 1);
     onChanged();
   }
 

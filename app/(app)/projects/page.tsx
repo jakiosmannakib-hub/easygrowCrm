@@ -17,6 +17,7 @@ import {
   projectMonthsQuery,
 } from '@/features/projects/queries';
 import { isManagerRole } from '@/features/projects/display';
+import { can } from '@/lib/authz';
 import { requireRouteAccess } from '@/lib/route-guard';
 
 export default async function ProjectsPage() {
@@ -65,6 +66,9 @@ export default async function ProjectsPage() {
         // §14.3: the Excel exports are MGR-only. admin_hr is manager-level for people ops but
         // is not a delivery manager, and `isManagerRole` is the §9.6 delivery set.
         canExport={isManagerRole(viewer.role)}
+        // The Board's `+ Add task` (PUL-409). Read off the §9.6 table rather than restated —
+        // the same `can()` call `loadProjectHeader` makes for the header's `+ New Task`.
+        canCreateTask={can(viewer, 'project_task.create')}
         initialTasks={initialTasks}
       />
     </div>

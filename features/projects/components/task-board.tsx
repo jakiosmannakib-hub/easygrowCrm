@@ -11,13 +11,15 @@
 // `onTaskClosed`, which re-reads the task list, so a status or assignee change made in the modal
 // moves the card — to another column, or out of (or into) the Unassigned group.
 //
-// Stage 2 (not here): per-column `+ Add task` for managers, reusing `NewTaskModal`.
+// Stage 2: `+ Add task` (MGR) at the foot of the Not Started column ONLY, opening PUL-408's
+// `NewTaskModal` — see the comment at the button for why it isn't on every column.
 
 'use client';
 
-import { LockIcon } from 'lucide-react';
+import { LockIcon, PlusIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import { fmtDate, dhakaToday } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { initials } from '@/features/employees/display';
@@ -30,24 +32,36 @@ import {
   groupBoardTasks,
   overdueDays,
 } from '../display';
+import { NewTaskModal } from './new-task-modal';
 import { TaskDetailModal } from './task-detail-modal';
 import type { FilteredTaskRow } from '../queries';
 
 export function TaskBoard({
   tasks,
   loading,
+  addToProjectId,
   onTaskClosed,
+  onTaskCreated,
 }: {
   /** The filter bar's current `getFilteredTasks` result — the board never fetches its own. */
   tasks: FilteredTaskRow[];
   /** True while the filter bar is re-reading. */
   loading: boolean;
+  /**
+   * The project `+ Add task` creates into, or `null` to hide the button. `null` when the viewer
+   * can't create tasks (§9.6: MGR only) OR no single project is selected — with "All projects"
+   * there is nothing to add to. The parent decides both; the board only draws.
+   */
+  addToProjectId: string | null;
   /** Called when the Task Detail modal closes, so the parent can re-read the list. */
   onTaskClosed: () => void;
+  /** Called after `+ Add task` creates a task, so the parent can re-read list + header. */
+  onTaskCreated: () => void;
 }) {
   // One piece of state, not a boolean plus an id: `openTaskId` IS the open flag, so the two can
-  // never disagree (same shape as the PUL-407 QA harness this replaces).
+  // never disagree (same shape as the PUL-407 QA harness).
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   // Read once per render and shared by every card, so two cards can't straddle midnight and
   // disagree about what "today" is. `dhakaToday()` reads the clock port (§16.6).
@@ -127,7 +141,25 @@ export function TaskBoard({
                   />
                 ))}
               </div>
-              {/* Stage 2: the MGR-only `+ Add task` button lands here, at the column's foot. */}
+              {/*
+                §14.3.1's `+ Add task` (MGR) — on the Not Started column ONLY, deliberately not
+                "each column" as the spec words it. `createTask` always yields a `planned` task
+                (§13.4.1), so a card added from "Working on it" would land in Not Started and
+                read as a bug. Offering it where the card will actually appear is the honest
+                version. No category prefill: board columns are statuses, not categories — the
+                prefill belongs to the List view's category groups (PUL-410).
+              */}
+              {status === 'planned' && addToProjectId !== null ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground mt-2 justify-start"
+                  onClick={() => setAdding(true)}
+                >
+                  <PlusIcon />
+                  Add task
+                </Button>
+              ) : null}
             </section>
           ))}
         </div>
@@ -146,6 +178,16 @@ export function TaskBoard({
           onTaskClosed();
         }}
       />
+
+      {/* PUL-408's New Task modal, reused — not a second create form (§14.3.8). */}
+      {addToProjectId !== null ? (
+        <NewTaskModal
+          projectId={addToProjectId}
+          open={adding}
+          onOpenChange={setAdding}
+          onCreated={onTaskCreated}
+        />
+      ) : null}
     </>
   );
 }
@@ -218,8 +260,14 @@ function TaskCard({
       </span>
 
       <span className="flex items-center justify-between gap-2">
-        {/* Always through fmtDate — the full date with year, never a bare month-day (§14.15 r.2). */}
-        <span className="text-muted-foreground">{fmtDate(task.dueDate) || 'No due date'}</span>
+        {/*
+          Always through fmtDate — the full date with year, never a bare month-day (§14.15 r.2).
+          `relative: false` because the red `Overdue Nd` line below is the card's one overdue
+          signal, and unlike the suffix it knows approved work cannot be late.
+        */}
+        <span className="text-muted-foreground">
+          {fmtDate(task.dueDate, { relative: false }) || 'No due date'}
+        </span>
         {task.assignee ? (
           <Avatar size="sm" title={task.assignee.name}>
             {task.assignee.image ? <AvatarImage src={task.assignee.image} alt="" /> : null}

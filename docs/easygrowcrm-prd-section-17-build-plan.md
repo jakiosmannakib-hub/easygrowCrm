@@ -849,7 +849,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [x] 407.2 Sections in §14.3.3 order: description/SOP/expected output → checklist `(3/5)` → subtasks `(2/4)` + inline "+ Add subtask" (Enter adds) → actual `HMInput` → proof → comments → submission & review history — **all sections render; two stay READ-ONLY by design:** actual time and proof. `logActualHours` and the Submit modal are PUL-601, so the `HMInput` and the proof input are deliberately **not** built here (there is no task-level proof column — proof belongs to a submission).
 - [x] 407.3 `submitted` lock banner exact copy: _"Awaiting review — checklist, subtasks and hours are locked. Comments stay open."_
 - [x] 407.4 `CONFLICT` on stale write → refresh toast — every mutation runs through one `run()` helper that re-fetches on success **and** on CONFLICT, so the held `version` stays current (without it, a second status change in a row would conflict against a row nobody else touched).
-- [ ] 407.5 Manual QA: assignee, non-assignee EMP, MGR, dependency-blocked — **in progress.** `app/dev/task-detail` + `qa-states.sql` (prod-guarded, throwaway until PUL-409) arrange every state: submitted, approved, completed, cancelled, unmet dependency, unassigned and an archived project. First QA pass found the Assign trigger rendering a user **id** instead of a name (`6a83f54`).
+- [ ] 407.5 Manual QA: assignee, non-assignee EMP, MGR, dependency-blocked — **in progress.** `app/dev/task-detail` + `qa-states.sql` (prod-guarded; originally throwaway until PUL-409, now **kept** as the isolated-modal harness + shared QA fixtures — see PUL-409's note) arrange every state: submitted, approved, completed, cancelled, unmet dependency, unassigned and an archived project. First QA pass found the Assign trigger rendering a user **id** instead of a name (`6a83f54`).
 
 **Done when:** every §14.3.3 behavior demonstrable from this one modal.
 
@@ -894,7 +894,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [x] 408.2 Header: breadcrumb `📁 Client › Project · type · Month N`, progress `9/21 · 43%` + bar, health chip (whole-project calc per §14.3), **+ New Task** (MGR), Archive in overflow (→ 402.3) — `getProjectHeader(projectId)` takes a **projectId, not a `TaskFilters`**, so the header cannot drift onto the filtered set. New Task modal is §14.3.8's, reusing `CreateTaskInput` rather than restating it.
 - [x] 408.3 Filters drive one canonical filtered-tasks query shared by all tabs — `getFilteredTasks(filters)` in `features/projects/queries.ts`.
 
-**Done when:** filter changes update every tab identically — **not yet demonstrable: there are no tabs.** The query is shared *by construction* (one function, one call site, `tab` deliberately excluded from the refetch effect's dependencies so switching tabs cannot re-read), but "identically across tabs" becomes provable only once PUL-409/410/411 render it. The assertion belongs in PUL-409, not here.
+**Done when:** filter changes update every tab identically — **not yet demonstrable: there are no tabs.** The query is shared *by construction* (one function, one call site, `tab` deliberately excluded from the refetch effect's dependencies so switching tabs cannot re-read), but "identically across tabs" becomes provable only once PUL-409/410/411 render it. ~~The assertion belongs in PUL-409, not here.~~ PUL-409 built the Board as a pure presentation of this one result, but a cross-tab check needs a second tab, so **the assertion now lands in PUL-410**.
 
 > **Built in two stages** (`6730885` query + filter bar + page shell → `a9052b7` header + New Task
 > modal + Archive overflow).
@@ -960,8 +960,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > still returns a header**, carrying `status`, so a manager can see what they archived while the
 > write affordances hide.
 >
-> **Still open:** the `/projects` body is scaffolding — a dashed `"N tasks match"` block, commented
-> for PUL-409 to delete. The Weekly/Monthly export buttons render **inert** (PUL-413).
+> **Still open:** ~~the `/projects` body is scaffolding — a dashed `"N tasks match"` block,
+> commented for PUL-409 to delete~~ (deleted in PUL-409; the Board replaced it). The
+> Weekly/Monthly export buttons render **inert** (PUL-413).
 
 ---
 
@@ -969,21 +970,64 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.1 · **Depends:** PUL-407, PUL-408
 
-- [ ] 409.1 Kanban by status, columns top-bordered in status color + count chips
-- [ ] 409.2 Card: title · category tag · priority · avatar · **date with year** · **`☑ 2/4` subtask badge** (hidden at zero) · red overdue line
-- [ ] 409.3 Unassigned group pinned on top (managers assign from here)
-- [ ] 409.4 Card → Task Detail; per-column + Add task (MGR) — **`NewTaskModal` already takes a `defaultCategory` prop** for exactly this (§14.3.8: "category pre-filled when opened from a category group"); reuse it rather than building a second create form.
+- [x] 409.1 Kanban by status, columns top-bordered in status color + count chips — six columns in §14.3.1 order (`BOARD_STATUSES` in `display.ts`), labels from `STATUS_DISPLAY`, borders from `BOARD_COLUMN_BORDER`. All six always render, empty ones included. No `completed` / `cancelled` column: `getFilteredTasks` already excludes both.
+- [x] 409.2 Card: title · category tag · priority · avatar · **date with year** · **`☑ 2/4` subtask badge** (hidden at zero) · red overdue line — plus a padlock when `dependencyBlocked`. The card date is `fmtDate(due, { relative: false })` (bare `Aug 8, 2026`), so the red `Overdue Nd` line from `overdueDays()` is the card's **one** overdue signal (see note).
+- [x] 409.3 Unassigned group pinned on top (managers assign from here) — rendered only when at least one unassigned task matches. **Each task appears exactly once:** an unassigned task sits in this group and NOT also in its status column (see note).
+- [x] 409.4 Card → Task Detail; per-column + Add task (MGR) — card opens PUL-407's `TaskDetailModal`; closing it re-reads the list **and** the project header. `+ Add task` reuses PUL-408's `NewTaskModal`, but renders on the **Not Started column only**, not every column — a deliberate deviation from §14.3.1's wording (see note). No `defaultCategory` prefill: board columns are statuses, not categories; that prefill belongs to PUL-410's category groups.
 
-**Done when:** board matches §14.3.1 pixel-for-behavior.
+**Done when:** board matches §14.3.1 pixel-for-behavior — **code complete, awaiting Jaki's manual QA.** The open-edit-close loop, `+ Add task`, and the live header are browser-only behavior (no component tests, per §15.2).
 
-> **Start here:** delete the dashed `"N tasks match"` block in `projects-filter-bar.tsx` — it is
-> scaffolding PUL-408 left so `getFilteredTasks` was verifiable in a browser before any view
-> existed. The rows it counts are already the right shape: `FilteredTaskRow` carries
-> `subtaskDone`/`subtaskTotal` for 409.2's `☑ 2/4` badge (hidden at zero) and `dependencyBlocked`
-> for the padlock, so no new query is needed.
+> **Built in two stages** (`731c20b` columns + cards + Unassigned group + card → modal → Stage 2:
+> header live-refresh, bare card date, `+ Add task`).
 >
-> **PUL-408's "Done when" was deferred to this ticket** — "filter changes update every tab
-> identically" could not be demonstrated with no tabs built. The assertion lands here.
+> **The Board never fetches.** `TaskBoard` takes the filter bar's `tasks` / `loading` as props and
+> only draws them. PUL-408's dashed `"N tasks match"` scaffolding is gone and the Board is the
+> Board tab's panel; List / Calendar render "lands in PUL-410 / 411" placeholders in the same
+> slot, with a comment saying each must receive the same array.
+>
+> **PUL-408's deferred "Done when" moves on again, to PUL-410.** "Filter changes update every
+> tab identically" is now true *by construction* (one array, handed to the one view that
+> exists), but it cannot be *shown* across tabs until a second tab renders. PUL-410 is the first
+> ticket where it can be checked.
+>
+> **One refetch counter for the whole page.** The filter bar's `taskNonce` drives the task list
+> AND, as of Stage 2, the project header (new `refreshKey` prop on `ProjectHeader`). Closing the
+> Task Detail modal, New Task and Archive all bump it, so progress and the health chip move in
+> step with the card. The header's own private nonce was **removed**: keeping both would have
+> fetched the header twice after every New Task.
+>
+> **`fmtDate` gained `{ relative?: boolean }`, default `true`.** Only the Board card passes
+> `false`. Both `task-detail-modal.tsx` calls pass nothing and render identically. The suffix's
+> "· Overdue" also fires on approved work with a past due date. `overdueDays()` doesn't: it is
+> strict `<` today and open tasks only, the same rule as the header's health calc (§3.1.3).
+>
+> **Shared machinery, pure and unit-tested** (`features/projects/board.test.ts`, 15 cases;
+> `tests/format.test.ts` +3 for the `relative` option):
+> - `groupBoardTasks()` keeps `getFilteredTasks`' order within each column and places every row
+>   exactly once.
+> - `overdueDays()` counts days with plain integer arithmetic (no `Date`), tested across month,
+>   year and leap-day boundaries.
+> - `PRIORITY_PILL_CLASSNAME`: §14.3.1 names no priority colors. This is neutral for low/medium,
+>   amber for high and red for urgent.
+>
+> **Two readings of §14.3.1 that need a ruling** (Jaki). Per §16.17, if accepted, §14.3.1
+> should be amended rather than left as silent exceptions:
+> 1. **`+ Add task` on Not Started only.** §14.3.1 says "at the bottom of each column".
+>    `createTask` always yields `planned` (§13.4.1), so a card added from "Working on it" would
+>    land in Not Started and read as a bug.
+> 2. **Unassigned tasks are not duplicated into their status column.** §14.3.1 says the group is
+>    "pinned above the columns" but not whether its tasks *also* appear below. Duplicating them
+>    would double-count them in the column chips. Assigning a task is what moves it into a
+>    column.
+>
+> **Gap for QA to confirm:** a selected project with **zero** matching tasks shows the empty state
+> ("No tasks match these filters.") instead of columns, so `+ Add task` is absent. The header's
+> `+ New Task` covers that case.
+>
+> **`app/dev/task-detail` is kept, not deleted** (reversing PUL-407.5's "throwaway until
+> PUL-409"). It is now the isolated-modal QA harness and reaches tasks the Board never shows
+> (`completed`, `cancelled`, archived-project tasks). `qa-states.sql` is the shared fixture for
+> it and for Board QA. Its comments were updated to match.
 
 ---
 
@@ -997,6 +1041,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 410.4 `+ Add task in {Category}` per open group (MGR); Unassigned banner section
 
 **Done when:** tree renders and collapses identically to the prototype's list view.
+
+> **Inherited from PUL-408 → PUL-409:** "filter changes update every tab identically" is first
+> checkable here, as the second tab. Render List from the **same** `tasks` / `loading` the filter
+> bar hands the Board (the tab-panel slot in `projects-filter-bar.tsx` has a comment marking it)
+> and bump the same `taskNonce` on modal close. No second fetch.
 
 ---
 

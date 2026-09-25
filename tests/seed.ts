@@ -12,6 +12,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import { clients, projects, projectTasks, user } from '../db/schema';
+import { seedTemplates, type SeededTemplates } from './seed-templates';
 
 /**
  * True iff a database name is a test database.
@@ -102,6 +103,8 @@ export interface FullSeed extends MinimalSeed {
   secondProject: SeededProject;
   /** seedFull's extra tasks — the minimal three are still in `tasks`. */
   extraTasks: [SeededTask, SeededTask, SeededTask];
+  /** The three demo templates from the prototype (PUL-501.3), by id. */
+  templates: SeededTemplates;
 }
 
 /**
@@ -217,8 +220,10 @@ export async function seedMinimal(): Promise<MinimalSeed> {
  * and the PM/employee assignees, so multi-project reads (the board's project filter, workload
  * by assignee) have more than one row to distinguish.
  *
- * Deliberately not a full org yet: no attendance, leave, or template rows, because those tables
- * do not exist. Each phase extends this in proportion to what it lands.
+ * PUL-501 adds the three prototype templates (`seed-templates.ts`), owned by the seed PM.
+ *
+ * Deliberately not a full org yet: no attendance or leave rows, because those tables do not
+ * exist. Each phase extends this in proportion to what it lands.
  */
 export async function seedFull(): Promise<FullSeed> {
   assertTestDb();
@@ -273,5 +278,8 @@ export async function seedFull(): Promise<FullSeed> {
     },
   ]);
 
-  return { ...minimal, secondProject, extraTasks };
+  // PUL-501.3: the three prototype templates, owned by the seed PM.
+  const seededTemplates = await seedTemplates(minimal.projectManager.id);
+
+  return { ...minimal, secondProject, extraTasks, templates: seededTemplates };
 }

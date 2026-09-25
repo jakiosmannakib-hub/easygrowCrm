@@ -63,7 +63,7 @@ These are the rules that, if broken, cost the most to unwind. Most are mechanica
 - **State is declared upfront.** No lazy `if (!state.x) state.x = …` initializers; no `window.*` globals as state (both were prototype patterns that caused real bugs).
 
 ### Language (mechanically grepped by CI, PUL-809)
-- **"Completed" never appears as an employee-facing label.** Employees see **"Done — send to review."** "Completed" is a manager-only QC-bypass status.
+- **"Completed" never appears as an employee-facing label.** Employees see **"Done — send to review."** "Completed" is a manager-only QC-bypass status. The one client-facing exception is `CLIENT_STATUS_LABEL` in `features/projects/display.ts`, which the client Excel export uses (§3.1.7 relabels `approved` → "Completed" for clients). Never render it in an employee-facing component.
 - **"Score" appears nowhere** in `features/**` UI strings. The scoring system was deleted (Amendment H).
 - **"Stuck" never labels a status.** Revision Required displays as "Needs revision."
 
@@ -91,7 +91,7 @@ We are doing **critical-path testing, not full TDD** (§15.2). Test the rules th
 
 ## 4. Stack quick reference
 
-Next.js 16.2 LTS (App Router) · React 19.2 · TypeScript strict · PostgreSQL 16 · Drizzle · Better Auth (Google OAuth only — no passwords, no signup) · Tailwind 4 + shadcn/ui · TanStack Query v5 · pg-boss for jobs (no Redis) · vitest + Playwright · Hetzner Singapore VPS + Docker Compose.
+Next.js 16.2 LTS (App Router) · React 19.2 · TypeScript strict · PostgreSQL 16 · Drizzle · Better Auth (Google OAuth only — no passwords, no signup) · Tailwind 4 + shadcn/ui · TanStack Query v5 · pg-boss for jobs (no Redis) · exceljs for server-side XLSX (not SheetJS — §12, PUL-413) · vitest + Playwright · Hetzner Singapore VPS + Docker Compose.
 
 - **Auth:** Google sign-in only. Accounts are provisioned by SA/HR — provisioning *is* the invitation. No invite emails.
 - **Ports live in `lib/`:** `clock.ts`, `errors.ts`, `notifications.ts`. Feature code imports these, never the underlying library directly.

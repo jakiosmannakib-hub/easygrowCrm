@@ -970,8 +970,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > write affordances hide.
 >
 > **Still open:** ~~the `/projects` body is scaffolding — a dashed `"N tasks match"` block,
-> commented for PUL-409 to delete~~ (deleted in PUL-409; the Board replaced it). The
-> Weekly/Monthly export buttons render **inert** (PUL-413).
+> commented for PUL-409 to delete~~ (deleted in PUL-409; the Board replaced it). ~~The
+> Weekly/Monthly export buttons render **inert** (PUL-413).~~ Wired in PUL-413 (PR #40).
 
 ---
 
@@ -1242,17 +1242,84 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §13.8, §14.3 · **Depends:** PUL-408
 
-- [ ] 413.1 Server-side client-safe exports (columns per §13.8 — internal fields excluded)
-- [ ] 413.2 Buttons in the filter bar (MGR only) — **the slot already exists.** PUL-408.1 renders both buttons MGR-only and **inert** (`disabled`, titled "Exports land in PUL-413"), so this is a wiring change, not a layout change.
-- [ ] 413.3 Test: export rows byte-match on-screen rows for a fixed range
+- [x] 413.1 Server-side client-safe exports (columns per §13.8 — internal fields excluded) — `getClientExportRows({ from, to })` in `features/projects/queries.ts` → `buildClientWorkbook(rows)` in `features/projects/client-export.ts` → `GET /api/export/client-tasks?period=weekly|monthly` (`app/api/export/client-tasks/route.ts`). Library: **exceljs**, not SheetJS (§12 corrected).
+- [x] 413.2 Buttons in the filter bar (MGR only). The disabled stubs from PUL-408.1 are replaced by `ClientExportButtons` (`components/client-export-buttons.tsx`) inside the same `canExport` gate. Each button fetches the route: `{ empty: true }` → toast _"No client-visible tasks in this period"_, otherwise the `.xlsx` downloads under the server's filename.
+- [x] 413.3 Test: export rows byte-match on-screen rows for a fixed range. **Satisfied against the explicitly scoped query**, as the note below requires, not against the board's rows. `client-export.test.ts` (11 tests, CI manifest) asserts the exact row set for a fixed range, and asserts the round-tripped `.xlsx` sheets cell by cell.
 
-**Done when:** a manager downloads a client-sendable Excel from staging.
+**Done when:** a manager downloads a client-sendable Excel from staging. **Not yet:** the export works end to end locally, but staging is PUL-004, which is parked, so this line stays open.
 
 > **Note for 413.1's "on-screen rows":** the on-screen set comes from `getFilteredTasks`, which
 > **excludes `completed` and `cancelled`** (PUL-408's flagged decision). §3.1.7's client-safe rule
 > is "only completed/approved/in-progress" — so the export's row set is *deliberately not* the
 > board's, and 413.3's byte-match must compare against an explicitly-scoped query rather than
 > assuming the two agree.
+
+> **Status: merged.** Landed on `main` in PR #40 (merge commit `b910ba7`, feature commit
+> `5c3e4a4`).
+>
+> **The column contract (§3.1.7 / §6.3), as built.** One sheet per client with rows, named for
+> the client. Rows are grouped by `clientId`, so two clients with the same name never share a
+> sheet. Sheet names are sanitized to Excel's rules: `: \ / ? * [ ]` stripped, edge apostrophes
+> removed, 31-character cap, and case-insensitive collisions become ` (2)`, ` (3)`. Header:
+> Project · Month · Task · Category · Due date · Status · Time spent · Deliverable. Every cell goes
+> through the UI's own formatters:
+> - Month: `monthLabel` (`Month 9 — September`), or blank for one-off work.
+> - Due date: `fmtDate(…, { relative: false })` (`Sep 10, 2026`).
+> - Status: `CLIENT_STATUS_LABEL`.
+> - Time spent: `fmtHM`.
+>
+> **Row filter:** `due_date BETWEEN from AND to` (inclusive), status ∈ {completed, approved,
+> in_progress}, `client_visible = true`. Soft-deleted tasks, projects and clients are out.
+> Ordered by client, project, due date, then id. The range is validated (`YYYY-MM-DD`,
+> `from ≤ to`), because a malformed string in `BETWEEN` would compare as text and silently return
+> wrong rows.
+>
+> **Window:** computed from the clock port. Weekly = `dhakaToday()−6 … dhakaToday()` and Monthly
+> = `−29 … today`, both inclusive. The day arithmetic is `shiftIsoDay` in `display.ts`, integer
+> day-number math with no `Date`, which is tested across month, year and leap-day rollovers.
+>
+> **Time spent / Deliverable** come from the task's **latest** submission, the same
+> `DISTINCT ON` as `getReviewQueue`. `actual_hours` wins when set. Only `http(s)` proof values
+> become clickable hyperlinks; any other proof text (e.g. `javascript:`, a drive path) is
+> written as plain text, the same rule the Review tab applies to `href` (PUL-412).
+>
+> **Not in the export, by construction:** assignee, priority, comments, submission summary,
+> issues and reviewer. The query never selects them. The test pins every row to an 11-key
+> allow-list, and fails if marker text planted in those internal columns appears in the rows or
+> in any workbook cell.
+>
+> **The route returns plain HTTP, not `ActionResult`:** 400 for a bad `period`; 403 plain text
+> for no session, a deactivated user, or a non-manager; `{ empty: true }` (200) for zero rows,
+> since a workbook with no sheets won't open in Excel. Otherwise it returns the `.xlsx` with
+> `Content-Disposition: attachment; filename="client-tasks-<period>-<today>.xlsx"`, following the
+> §1–§8 filename convention, and `Cache-Control: no-store`. No write, so no transaction and no
+> audit row: §13.8 lists the export with the reads.
+>
+> **Three decisions that need a ruling** (Jaki):
+> 1. **§9.6 has no export permission** — the same gap PUL-412 hit with workload. The route
+>    therefore applies the buttons' own gate: `getSessionUser()` (role + active re-read from the
+>    DB, §16.5), then `isManagerRole` (SA / TL / PM). `lib/authz.ts` was not extended, because it
+>    must match §9.6. The fix is a §9.6 amendment (e.g. `project_task.export_client`), after
+>    which the route calls `authorize()` on it.
+> 2. **Archived projects are INCLUDED.** This is a report of a date window, and last week's
+>    delivered work should not vanish from a client's report because the project was archived
+>    yesterday. `getFilteredTasks` hides archived projects because the board shows live work,
+>    which is a different question.
+> 3. **The export ignores the filter bar.** It is always agency-wide for the window, one sheet
+>    per client, as §3.1.7 describes. Scoping it to the selected client would be a small change
+>    in the button if wanted.
+>
+> **"Completed" in `features/**`.** `CLIENT_STATUS_LABEL` (`display.ts`) prints "Completed" for
+> `approved` and `completed`, as §3.1.7 requires. It is client-facing and used only by the
+> workbook builder. PUL-809's grep targets `features/attendance` and `features/daily-plan`
+> (§16 / §15.9), so it does not collide. Keep this map out of every employee-facing component.
+>
+> **Tests:** `client-export.test.ts` (11): the exact row set for a fixed range, with both edges
+> inclusive; all eight excluded cases (submitted / blocked / cancelled / planned / revision,
+> hidden, out of range on either side, soft-deleted); the key allow-list; the `VALIDATION`
+> refusals; the window math; the round-tripped workbook (sheet per client, every cell, "Completed"
+> relabel, latest-submission hours fallback, hyperlink vs text); and sheet-name sanitizing.
+> Mutation-checked: dropping the `client_visible` predicate fails 4 of them.
 
 ---
 

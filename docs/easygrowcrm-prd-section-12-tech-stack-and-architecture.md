@@ -24,7 +24,7 @@
 | Forms + validation | **react-hook-form + Zod** | current | Zod schemas double as input validators inside server actions. |
 | Data fetching (client) | **TanStack Query** | v5 | Server components handle most reads; TanStack Query handles interactive lists (Board, review queue, break timer polls). |
 | Charts | **Recharts** | current | Kept from prototype. |
-| Excel export | **SheetJS (xlsx)** | current | Server-side only (§12.7). |
+| Excel export | **exceljs** | ^4.4 | Server-side only (route handlers under `app/api/export/`). **Changed at PUL-413, was SheetJS (xlsx):** the `xlsx` package on npm is frozen at 0.18.5 with known advisories, and exceljs writes cell hyperlinks and styling, which the client export's Deliverable column needs. |
 | Queue / cron | **pg-boss** | current | Uses our Render Postgres — no Redis. Handles the webhook outbox, the 10-hour auto-close, and any nightly jobs. Runs in a **dedicated Render Background Worker** (Vercel serverless can't host a long-lived queue), sharing the same repo and DB as the app. |
 | Email (second notification channel) | **TBD** (Resend / SendGrid / etc.) | current | **DECIDED (Phase 1): email is a real delivery channel, not "future alerts only".** It rides the same `webhook_outbox` + Render worker as the Discord webhook; the adapter is chosen in PUL-801. |
 | Testing | **Vitest** + **Playwright** | current | Vitest for `can()` + business rules; Playwright for the sign-in/sign-out and QC end-to-end flows. |

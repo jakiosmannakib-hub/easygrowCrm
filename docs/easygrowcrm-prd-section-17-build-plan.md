@@ -725,6 +725,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > | 007 (rest) | `0005_projects_personal_tasks.sql` | `projects`, `personal_tasks` | PUL-401 |
 > | 008 | `0006_project_tasks.sql` | `project_tasks` + 3 children + `pt_no_sa_assignee` | PUL-401 |
 > | 009 | `0007_qc_trail.sql` | `task_submissions`, `task_reviews` | PUL-401 |
+> | 010 | `0008_templates_hierarchy.sql` | `templates` + months / categories / tasks / subtasks | PUL-501 |
 >
 > Always read `db/migrations/meta/_journal.json` for the next free index rather than inferring it
 > from a §11.9 number. Generated files are renamed to descriptive slugs (drizzle emits names like
@@ -1335,11 +1336,74 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §11 (010), §14.4, §16.7 · **Depends:** PUL-401
 
-- [ ] 501.1 `templates`, `template_months`, `template_cats`, `template_tasks`, `template_task_subtasks` — strict FK chain (task→cat→month→template; no orphans possible)
-- [ ] 501.2 Month rows carry `num`, `name`, `start_month`, `start_day`
-- [ ] 501.3 Seed the three demo templates (with subtasks) from the prototype into `seedFull`
+- [x] 501.1 `templates`, `template_months`, `template_categories`, `template_tasks`, `template_task_subtasks` — strict FK chain (task→category→month→template; no orphans possible). **Table name corrected:** this line originally read `template_cats`; §11.4 is authoritative on schema and names it `template_categories`, which is what shipped. `db/schema/templates.ts`, drizzle file `0008_templates_hierarchy.sql`.
+- [x] 501.2 Month rows carry `num`, `name`, `start_month`, `start_day`, with `uq_month_num (template_id, num)` and the CHECKs `start_month 0..11` / `start_day 1..31`.
+- [x] 501.3 Seed the three demo templates (with subtasks) from the prototype into `seedFull`. They are transcribed from the prototype's `tpls` array (**not** its older flat `templates` array) into `tests/seed-templates.ts`, and are reachable as `FullSeed.templates`.
 
-**Done when:** hierarchy is FK-enforced; schema diff vs §11 empty.
+**Done when:** ✅ hierarchy is FK-enforced; schema diff vs §11 empty. `drizzle-kit generate` reports no changes and `drizzle-kit check` is green. Probed on the dev DB in rolled-back transactions:
+- an orphan month raises `template_months_template_id_templates_id_fk`;
+- `start_month = 12` raises `template_months_start_month_check`;
+- `{"kind":"before"}` raises `due_rule_kind`;
+- deleting a template leaves 0 / 0 / 0 / 0 months / categories / tasks / subtasks (the cascade).
+
+> **Built in two stages on `feat/pul-501-template-tables`** (Stage 1: schema + migration; Stage
+> 2: seed data), committed as `f80853e`. Full local gate green: `tsc --noEmit`, ESLint,
+> `vitest run` (605 passing), `drizzle-kit check`, and the manifest.
+>
+> **Schema — matches §11.4 column for column, with two notes:**
+> - `updated_at` has **no trigger**. It follows the `clients` / `projects` convention (written
+>   explicitly from the clock port by the actions), not §11.0's "maintained by trigger". Only
+>   `templates` carries `updated_at` / `deleted_at`; §11.4 gives the four children neither,
+>   because they are hard-deleted by the cascade.
+> - §11.4's two inline month CHECKs are unnamed. They are named explicitly
+>   `template_months_start_month_check` / `template_months_start_day_check`, which is exactly
+>   what Postgres would have generated, so the database matches the DDL.
+>
+> `due_rule` is typed in TS as the `DueRule` discriminated union
+> (`day` | `before_deadline` | `after`). The DB CHECKs only the `kind`; the `after.ref` rules
+> (same template, no self-reference, no cycle) remain app-side at template save (§11.4), which
+> is PUL-503's job. `projects.template_id` stays a bare `text` provenance column with **no FK**
+> to `templates` (§11.2), even though the table now exists.
+>
+> **`reset()`** truncates all five tables children-first, before `user` (because of
+> `templates.created_by`). `seedMinimal` is untouched: templates are a `seedFull` concern.
+>
+> **Seed mapping** (`tests/seed-templates.ts` keeps the prototype's field names, so it diffs
+> line for line against `tpls`):
+> - Ids are `seed_tpl_<slug>` / `seed_tm_<slug>_<num>` / `seed_tcat_<cat id>` /
+>   `seed_tt_<task id>` / `seed_tts_<subtask id>`. The prototype's task id rides in the suffix,
+>   so `ruleRef: "ttN"` becomes `due_rule.ref = "seed_tt_ttN"`.
+> - Positions are 1-based in array order. `created_by = seed_pm`.
+> - `pri` is lowercased. `ruleKind` 'before' becomes `before_deadline`. `client_visible` is
+>   false, and `sop_url` / `expected_output` are null.
+> - No prototype month carries a start month or day, so every seeded month is `start_month = 0`,
+>   `start_day = 1`.
+> - **`tt23` "Go live + DNS cutover" is `Urgent`** in the prototype and is seeded as the enum's
+>   `urgent`.
+>
+> **What seeds** (verified by walking the inserted rows on the test DB, no FK error):
+>
+> | Template | Months | Categories | Tasks | Subtasks | §3.3.6 says |
+> |---|---|---|---|---|---|
+> | Local SEO Monthly Campaign | 2 | 6 | **15** | 9 | 10 ⚠ |
+> | Website Design Project | 2 | 4 | 7 | 3 | 7 |
+> | Technical SEO Audit | 1 | 2 | 4 | 0 | 4 |
+>
+> All 9 `after` refs resolve to an earlier-seeded task in the same template: `tt3→tt2`; the
+> Website Design chain `tt18→tt17`, `tt19→tt17`, `tt20→tt18`, `tt21→tt20`, `tt22→tt21`,
+> `tt23→tt22`; and `tt25→tt24`, `tt26→tt25`. Rule kinds across the 26 tasks are 13 `day`, 4
+> `before_deadline` and 9 `after`.
+>
+> **⚠ Local SEO is 15 tasks, not §3.3.6's 10 — seeded as-is, not trimmed.** §3.3.6 describes a
+> *different* task list (prev-month review, GBP performance check, a *recurring* weekly rank
+> check…) that predates Amendment D's removal of recurring tasks. The prototype's `tpls` carries
+> the post-Amendment-D shape: explicit `Rank check — week 1…4` rows, 11 tasks in Month 1 and 4
+> in Month 2. **Needs a ruling** (Jaki): §3.3.6 should be amended to describe the seeded
+> template. A note there points here.
+>
+> **No test file was added; the manifest stays at 16.** The constraint probes and the seed
+> walk were throwaway checks. The hierarchy's contract test is PUL-502's
+> `hierarchy-walker.test.ts`, which will walk these seeded templates.
 
 ---
 

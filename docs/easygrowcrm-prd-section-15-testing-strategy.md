@@ -185,8 +185,8 @@ its own ticket before anyone claims this layer is covered.
 ## 15.5 Fixtures & test DB
 
 - One Postgres schema `easygrowcrm_test` per CI worker, migrated fresh every run (all migrations 001–012 applied).
-- Seed helper `seedMinimal()` — 1 SA, 2 managers, 3 employees, 1 client, 1 project, 0 tasks. Every test starts from this and adds only what it needs.
-- Seed helper `seedFull()` — realistic org (matches the prototype's demo data) for flow tests only.
+- Seed helper `seedMinimal()` — 1 SA, 2 managers, 3 employees, 1 client, 1 project, 3 tasks *(PUL-401 added the tasks; this line previously said 0)*. Every test starts from this and adds only what it needs.
+- Seed helper `seedFull()` — realistic org (matches the prototype's demo data) for flow tests only. Today it is `seedMinimal` + a second project with 3 more tasks (PUL-401) + the prototype's three templates with their full month → category → task → subtask trees (PUL-501, `tests/seed-templates.ts`).
 - **No test uses production data. Ever.**
 - Time is injected via a `clock` port (default `Date.now()` in prod, freezable in tests). No `new Date()` in business code — every date read goes through the clock port, enforced mechanically by the `easygrowcrm/no-direct-date` ESLint rule (§12.5). This makes "did the auto-close fire at hour 10?" a two-line test.
 

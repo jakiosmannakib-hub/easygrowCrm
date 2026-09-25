@@ -114,7 +114,12 @@ export const PERMISSIONS = {
   'leave.reverse_decision': { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
 
   // ── Templates ────────────────────────────────────────────────────────────────
-  'template.read':   { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: D },
+  // §9.6 ⁹: HR may READ templates (the /templates grid, read-only), but editing is manager-only:
+  // HR does not build delivery workflows. The prototype's `canEdit` includes HR; the PRD wins.
+  // `template.update` covers the whole hierarchy (months, categories, tasks, subtasks), so every
+  // PUL-503 hierarchy action authorizes it; `template.create` / `template.delete` are the
+  // template row itself (§13.3.6a / c). EMP has no template access at all.
+  'template.read':{ super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: D },
   'template.create': { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },
   'template.update': { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },
   'template.delete': { super_admin: A, team_leader: A, project_manager: A, admin_hr: D, employee: D },

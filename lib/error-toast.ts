@@ -58,6 +58,13 @@ export const GATE_REASONS: Record<string, string> = {
   // PUL-404 Stage 2 (§13.4.5). `use_review` was already seeded above from the PRD's own list;
   // this is the note gate that goes with it.
   note_required: 'Say what needs changing before you send this task back for revision.',
+  // PUL-503 (§13.3.6–7d). `bad_ref` is the §13.3.6 reason for an `after` due rule that points
+  // outside the template, at the task itself, or into a cycle. Start Project (§13.3.2) re-checks
+  // the same reason at clone time.
+  bad_ref: 'A task can only be scheduled after another task in this template, without a loop.',
+  // Thrown by the task, category and month deletes alike, so it names no level.
+  task_has_dependents:
+    'Another task is scheduled after something you’re deleting. Change that task’s due rule first.',
 };
 
 const FALLBACK: Record<string, string> = {

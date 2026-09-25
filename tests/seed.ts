@@ -37,7 +37,9 @@ export function assertTestDb(): void {
   const name = new URL(url).pathname.replace(/^\//, '').split('?')[0];
 
   if (!isTestDbName(name)) {
-    throw new Error("Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')");
+    throw new Error(
+      "Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')",
+    );
   }
 }
 
@@ -59,7 +61,7 @@ export async function reset(): Promise<void> {
   // one statement and CASCADE would reach the children anyway. Being explicit means a new table
   // that nothing references yet still gets wiped instead of quietly surviving a reset.
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -139,9 +141,7 @@ export async function seedMinimal(): Promise<MinimalSeed> {
     { id: 'seed_e3', name: 'Seed Employee Three', email: 'e3@test.local', role: 'employee' },
   ];
 
-  await db.insert(user).values(
-    cast.map((u) => ({ ...u, emailVerified: true, active: true })),
-  );
+  await db.insert(user).values(cast.map((u) => ({ ...u, emailVerified: true, active: true })));
 
   const client: SeededClient = { id: 'seed_client', name: 'Seed Client' };
   await db.insert(clients).values(client);

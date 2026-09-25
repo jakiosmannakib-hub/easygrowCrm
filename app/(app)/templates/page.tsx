@@ -4,7 +4,7 @@ import { NewTemplateDialog } from '@/features/templates/components/new-template-
 import type { TemplateCardData } from '@/features/templates/components/template-summary';
 import { TemplatesGrid } from '@/features/templates/components/templates-grid';
 import { templatesListQuery } from '@/features/templates/queries';
-import { templateMeta } from '@/features/templates/template-meta';
+import { templateMeta, templateRoles } from '@/features/templates/template-meta';
 import { can } from '@/lib/authz';
 import { PAGE_META } from '@/lib/nav';
 import { requireRouteAccess } from '@/lib/route-guard';
@@ -26,7 +26,8 @@ export default async function TemplatesPage() {
     name: tree.name,
     description: tree.description,
     category: tree.category,
-    roles: tree.roles,
+    // The roles the template's tasks use, not the declared palette (§14.4.1).
+    roles: templateRoles(tree),
     meta: templateMeta(tree),
   }));
 

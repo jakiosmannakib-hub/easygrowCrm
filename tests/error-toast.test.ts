@@ -89,6 +89,25 @@ describe('errorToToast — GATE reasons (§14.15 r.3: name the blocked thing)', 
       expect(message.length, reason).toBeGreaterThan(20);
     }
   });
+
+  it('task_has_dependents names the blocking task from the details (PUL-503)', () => {
+    // The shape showErrorToast forwards: the ActionResult's `details` arrive as `meta`.
+    const toast = errorToToast({
+      code: 'GATE',
+      reason: 'task_has_dependents',
+      message: '"Build citations" is scheduled after a task being deleted',
+      meta: { taskIds: ['tt_1', 'tt_2'], titles: ['Build citations', 'Report'] },
+    });
+
+    expect(toast.message).toContain('Build citations');
+    expect(toast.message).not.toBe(GATE_REASONS.task_has_dependents);
+  });
+
+  it('task_has_dependents without titles falls back to the registry sentence', () => {
+    expect(errorToToast({ code: 'GATE', reason: 'task_has_dependents' }).message).toBe(
+      GATE_REASONS.task_has_dependents,
+    );
+  });
 });
 
 describe('errorToToast — refresh is CONFLICT-only (§14.15 r.3)', () => {

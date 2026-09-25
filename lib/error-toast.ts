@@ -67,6 +67,30 @@ export const GATE_REASONS: Record<string, string> = {
     'Another task is scheduled after something you’re deleting. Change that task’s due rule first.',
 };
 
+/** The first string in `meta[key]` when it is a non-empty string array. */
+function firstString(meta: Record<string, unknown>, key: string): string | undefined {
+  const value = meta[key];
+  return Array.isArray(value) && typeof value[0] === 'string' && value[0] ? value[0] : undefined;
+}
+
+/**
+ * GATE reasons whose sentence can NAME the blocker from the error's details (§14.15 r.3: "name
+ * the specific field or task"). Consulted before `GATE_REASONS`; when the detail it needs is
+ * missing it returns `undefined`, and the fixed registry sentence is used instead.
+ *
+ * Kept separate from `GATE_REASONS` so that registry stays a plain string table.
+ */
+const GATE_REASONS_NAMED: Record<string, (meta: Record<string, unknown>) => string | undefined> = {
+  // PUL-503: the task, category and month deletes all carry `titles` of the tasks scheduled
+  // `after` something being deleted.
+  task_has_dependents: (meta) => {
+    const title = firstString(meta, 'titles');
+    return title
+      ? `“${title}” is scheduled after something you’re deleting. Change its due rule first.`
+      : undefined;
+  },
+};
+
 const FALLBACK: Record<string, string> = {
   UNAUTHENTICATED: 'Please sign in again.',
   DEACTIVATED: 'This account has been deactivated.',
@@ -95,8 +119,9 @@ export function errorToToast(err: ErrorLike): ToastContent {
     case 'GATE': {
       const reason =
         err.reason ?? (typeof err.meta?.reason === 'string' ? err.meta.reason : undefined);
+      const named = reason && err.meta ? GATE_REASONS_NAMED[reason]?.(err.meta) : undefined;
       const known = reason ? GATE_REASONS[reason] : undefined;
-      return { message: known ?? err.message ?? FALLBACK.GATE, refresh: false };
+      return { message: named ?? known ?? err.message ?? FALLBACK.GATE, refresh: false };
     }
 
     case 'CONFLICT':

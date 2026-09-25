@@ -9,6 +9,8 @@
 // constrains what an older or seeded template may hold: an unknown category just gets the
 // fallback badge.
 
+import type { DueRule } from '../../db/schema/templates';
+
 /** The template-level categories the New Template modal offers (§14.4.1 "category ▾"). */
 export const TEMPLATE_CATEGORIES = [
   'SEO',
@@ -53,3 +55,67 @@ export function catBadgeClass(category: string | null): string {
 
 /** What the badge says when a template has no category. */
 export const UNCATEGORISED = 'Uncategorised';
+
+// ── Detail tree (§14.4.2, PUL-503 Stage 3a) ─────────────────────────────────────
+
+/** `template_months.start_month` is 0-based (0 = January, §11.4). No `Date` involved. */
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+/**
+ * A month's cycle anchor, e.g. `Cycle starts January 10`.
+ *
+ * This is deliberately NOT `fmtDate`: a template month has no year. `start_month` /
+ * `start_day` are a recurring anchor that only becomes a real date when Start Project resolves
+ * it against a project's start date (PUL-505/506), where the day is also clamped (Feb 30 → Feb
+ * 28/29). The "Cycle starts" wording says it is an anchor, not a calendar date, so the
+ * year-on-every-date rule is not being dodged by a bare `January 10`.
+ */
+export function monthStartLabel(startMonth: number, startDay: number): string {
+  return `Cycle starts ${MONTH_NAMES[startMonth] ?? `month ${startMonth + 1}`} ${startDay}`;
+}
+
+/**
+ * A due rule in words (§11.4, Amendment D):
+ *   - `{kind:'day', n}` → `Day N`
+ *   - `{kind:'before_deadline', n}` → `N days before deadline` (`1 day…`, and `On the deadline`
+ *     for 0)
+ *   - `{kind:'after', ref}` → `After "<referenced task title>"`, or `After a deleted task` if
+ *     the ref no longer resolves (the delete gates should prevent that; this is the fallback).
+ *
+ * `titleById` covers every task in the template, because an `after` ref may point into another
+ * month or category.
+ */
+export function dueRuleSummary(
+  rule: DueRule,
+  titleById: ReadonlyMap<string, string>,
+): string {
+  switch (rule.kind) {
+    case 'day':
+      return `Day ${rule.n}`;
+    case 'before_deadline':
+      if (rule.n === 0) return 'On the deadline';
+      return `${rule.n} ${rule.n === 1 ? 'day' : 'days'} before deadline`;
+    case 'after': {
+      const title = titleById.get(rule.ref);
+      return title ? `After “${title}”` : 'After a deleted task';
+    }
+  }
+}
+
+/** Whether a title carries a `{{token}}` replaced at project launch (§3.3.3, §14.4.2 badge). */
+export function hasTitleToken(title: string): boolean {
+  return /\{\{\s*\w+\s*\}\}/.test(title);
+}

@@ -18,6 +18,7 @@ export interface TemplateCardData {
   name: string;
   description: string | null;
   category: string | null;
+  /** `templateRoles(tree)`: the roles the tasks use, NOT the `templates.roles` palette. */
   roles: string[];
   meta: TemplateMeta;
 }

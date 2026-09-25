@@ -12,7 +12,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -22,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
+import { ClientExportButtons } from './client-export-buttons';
 import { monthLabel, type Role, type StatusMenuViewer } from '../display';
 import { ProjectHeader } from './project-header';
 import { ReviewTab } from './review-tab';
@@ -352,20 +352,11 @@ export function ProjectsFilterBar({
         </Select>
 
         {/*
-          §14.3's export slot — MGR only. Rendered but INERT: the server-side XLSX is PUL-413
-          (§13.8 `exportClientTasks`), which owns both the route and the client-safe column
-          rules. The slot exists here so 413 is a wiring change, not a layout change.
+          §14.3's export slot, MGR only (PUL-413). The buttons hit the server-side XLSX route
+          (§13.8 `exportClientTasks`), which re-checks the role. They export agency-wide by
+          due date, independent of this bar's filters (§3.1.7: one sheet per client).
         */}
-        {canExport ? (
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled title="Exports land in PUL-413">
-              Weekly (Excel)
-            </Button>
-            <Button variant="outline" size="sm" disabled title="Exports land in PUL-413">
-              Monthly (Excel)
-            </Button>
-          </div>
-        ) : null}
+        {canExport ? <ClientExportButtons /> : null}
       </div>
 
       {/*

@@ -93,6 +93,34 @@ export const STATUS_DISPLAY = {
 export const DEPENDENCY_BLOCKED_CLASSNAME = STATUS_DISPLAY.blocked.className;
 
 /**
+ * The status labels the **client** Excel export prints (PUL-413, §3.1.7 / §6.3). Only used in
+ * that workbook, never in the app UI.
+ *
+ * The export includes only `approved`, `completed` and `in_progress`. §3.1.7 relabels
+ * `approved` as "Completed" for the client, because a client does not need to know whether the
+ * work closed through QC or by a manager.
+ *
+ * **This is the one sanctioned "Completed" string in `features/**`.** CLAUDE.md bans the word
+ * as an *employee-facing* label. This map is *client-facing*, and §3.1.7 requires the word
+ * here. PUL-809's forbidden-words grep must allow-list this map; do not reuse it in any
+ * component.
+ *
+ * `satisfies Record<TaskStatus, string>` makes it exhaustive, so adding a status to the enum
+ * without labelling it is a compile error. Statuses outside the export's filter never reach
+ * the workbook, so they keep their normal §14.3.2 label.
+ */
+export const CLIENT_STATUS_LABEL = {
+  planned: STATUS_DISPLAY.planned.label,
+  in_progress: 'In Progress',
+  blocked: STATUS_DISPLAY.blocked.label,
+  submitted: STATUS_DISPLAY.submitted.label,
+  revision_required: STATUS_DISPLAY.revision_required.label,
+  approved: 'Completed',
+  completed: 'Completed',
+  cancelled: STATUS_DISPLAY.cancelled.label,
+} as const satisfies Record<TaskStatus, string>;
+
+/**
  * The four `task_priority` values, labelled. Same compile-time exhaustiveness as above.
  *
  * Plain labels rather than a display object: priority renders as text next to the pill in the
@@ -551,6 +579,37 @@ function dayNumber(iso: string): number | null {
   const doy = Math.floor((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1;
   const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
   return era * 146097 + doe;
+}
+
+/**
+ * The inverse of `dayNumber`: a day number → `YYYY-MM-DD` (Hinnant's `civil_from_days`).
+ * Integer arithmetic only, for the same reason `dayNumber` avoids `Date`.
+ */
+function isoFromDayNumber(z: number): string {
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor(
+    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
+  );
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  return isoDay(y, m, d);
+}
+
+/**
+ * Move a `YYYY-MM-DD` Asia/Dhaka calendar day by `days`, which may be negative. Month, year and
+ * leap-day rollover are all handled by the day-number round trip. No `Date` is involved, so
+ * nothing can slip across a UTC offset.
+ *
+ * Used for the client export windows (PUL-413): `shiftIsoDay(dhakaToday(), -6)` is the first
+ * day of a 7-day inclusive window. Returns the input unchanged if it is not `YYYY-MM-DD`.
+ */
+export function shiftIsoDay(iso: string, days: number): string {
+  const n = dayNumber(iso);
+  return n === null ? iso : isoFromDayNumber(n + days);
 }
 
 /**

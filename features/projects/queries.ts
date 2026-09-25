@@ -10,7 +10,19 @@
 // `getReviewQueue` (PUL-412) is the other: `review.read` is NOT open (EMP = own submissions
 // only, §9.6), so that query applies the row scope itself. See its docblock.
 
-import { and, asc, desc, eq, isNotNull, isNull, notInArray, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  between,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  notInArray,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '../../db';
 import {
@@ -25,6 +37,7 @@ import {
   user,
 } from '../../db/schema';
 import { can } from '../../lib/authz';
+import { AppError } from '../../lib/errors';
 import type { Executor } from '../../lib/mutation';
 import { getSessionUser } from '../../lib/session';
 import { dhakaToday } from '../../lib/format';
@@ -917,8 +930,7 @@ export async function getReviewQueue(filters: ReviewQueueFilters = {}): Promise<
     project: { id: row.projectId, name: row.projectName },
     submittedBy: { id: row.submittedById, name: row.submittedByName },
     // One nullable object, never a half-built person (same rule as FilteredTaskRow.assignee).
-    routedTo:
-      row.routedToId === null ? null : { id: row.routedToId, name: row.routedToName ?? '' },
+    routedTo: row.routedToId === null ? null : { id: row.routedToId, name: row.routedToName ?? '' },
     summary: row.summary,
     hours: hoursOrNull(row.hours),
     proofType: row.proofType,
@@ -1019,5 +1031,141 @@ export async function getWorkload(filters: WorkloadFilters = {}): Promise<Worklo
     openCount: Number(row.openCount),
     estHours: Number(row.estHours),
     onBreak: false, // TODO(Phase 3 / attendance): see WorkloadRow.onBreak.
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getClientExportRows — the client-safe Weekly / Monthly Excel export (PUL-413, §13.8)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** An inclusive `YYYY-MM-DD` due-date window. The caller computes it from the clock port. */
+export interface ClientExportRange {
+  from: string;
+  to: string;
+}
+
+/**
+ * The statuses a client may see (§3.1.7 / §6.3): Completed, Approved and In Progress, and
+ * nothing else. Submitted, Blocked, Cancelled and Planned are deliberately excluded.
+ */
+export const CLIENT_EXPORT_STATUSES = ['completed', 'approved', 'in_progress'] as const;
+
+/**
+ * One export row. **This interface is the client-safe contract, so only widen it if the field
+ * belongs in something a client can read.** §3.1.7 / §6.3 rule out the assignee, priority,
+ * comments and every submission note (summary, issues, reviewer), and none of them is selected
+ * below.
+ */
+export interface ClientExportRow {
+  clientId: string;
+  clientName: string;
+  projectName: string;
+  /**
+   * The project's `start_date`. It is not a printed column: `monthLabel` needs it to name the
+   * retainer month (`Month 3 — March`).
+   */
+  projectStartDate: string;
+  /** Retainer month number; NULL for one-off work. */
+  month: number | null;
+  title: string;
+  category: string;
+  /** `YYYY-MM-DD`. Never null here: the range filter only matches dated tasks. */
+  dueDate: string;
+  status: (typeof CLIENT_EXPORT_STATUSES)[number];
+  /** `actual_hours` if set, else the latest submission's `hours` (§3.1.7), else null. */
+  timeSpentHours: number | null;
+  /** The latest submission's proof link, or null. Never the summary. */
+  proofUrl: string | null;
+}
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * §13.8 `exportClientTasks`: the rows behind the client Excel export (PUL-413.1).
+ *
+ * **Filter:** `due_date BETWEEN from AND to` (inclusive), status in `CLIENT_EXPORT_STATUSES`,
+ * and `client_visible = true`. Soft-deleted tasks, projects and clients are excluded, as in
+ * every read in this file.
+ *
+ * **Archived projects are INCLUDED, and that is a decision.** `getFilteredTasks` hides them
+ * because the board shows live work. This is a report of what was done in a date window, and
+ * work finished last week does not disappear from the client's report because the project was
+ * archived yesterday. This is also why 413.3 compares against this query rather than against
+ * the board's rows (see the note under PUL-413 in §17).
+ *
+ * **Time spent / proof** come from the task's latest submission: the same `DISTINCT ON` as
+ * `getReviewQueue`, because after a revision loop only the newest submission is current.
+ *
+ * **No session check inside.** The MGR gate lives at the route handler, the only caller (the
+ * PUL-207 call-site pattern this file's header describes). The range is validated because a
+ * malformed string reaching `BETWEEN` would be compared as text and silently return the wrong
+ * rows.
+ *
+ * Ordered by client name, project name and due date, then `id` for a stable tie-break.
+ */
+export async function getClientExportRows(range: ClientExportRange): Promise<ClientExportRow[]> {
+  if (!YMD.test(range.from) || !YMD.test(range.to) || range.from > range.to) {
+    throw new AppError('VALIDATION', 'Export range must be YYYY-MM-DD, from ≤ to.');
+  }
+
+  const latest = db
+    .selectDistinctOn([taskSubmissions.taskId], {
+      taskId: taskSubmissions.taskId,
+      hours: taskSubmissions.hours,
+      proofValue: taskSubmissions.proofValue,
+    })
+    .from(taskSubmissions)
+    .orderBy(taskSubmissions.taskId, desc(taskSubmissions.createdAt), desc(taskSubmissions.id))
+    .as('latest_submission');
+
+  const rows = await db
+    .select({
+      clientId: clients.id,
+      clientName: clients.name,
+      projectName: projects.name,
+      projectStartDate: projects.startDate,
+      month: projectTasks.month,
+      title: projectTasks.title,
+      category: projectTasks.category,
+      dueDate: projectTasks.dueDate,
+      status: projectTasks.status,
+      actualHours: projectTasks.actualHours,
+      submissionHours: latest.hours,
+      proofUrl: latest.proofValue,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .innerJoin(clients, eq(clients.id, projects.clientId))
+    .leftJoin(latest, eq(latest.taskId, projectTasks.id))
+    .where(
+      and(
+        between(projectTasks.dueDate, range.from, range.to),
+        inArray(projectTasks.status, [...CLIENT_EXPORT_STATUSES]),
+        eq(projectTasks.clientVisible, true),
+        isNull(projectTasks.deletedAt),
+        isNull(projects.deletedAt),
+        isNull(clients.deletedAt),
+      ),
+    )
+    .orderBy(
+      asc(clients.name),
+      asc(projects.name),
+      asc(projectTasks.dueDate),
+      asc(projectTasks.id),
+    );
+
+  return rows.map((row) => ({
+    clientId: row.clientId,
+    clientName: row.clientName,
+    projectName: row.projectName,
+    projectStartDate: row.projectStartDate,
+    month: row.month,
+    title: row.title,
+    category: row.category,
+    // BETWEEN never matches NULL, so this is always set. `?? ''` only narrows the type.
+    dueDate: row.dueDate ?? '',
+    status: row.status as ClientExportRow['status'],
+    timeSpentHours: hoursOrNull(row.actualHours ?? row.submissionHours),
+    proofUrl: row.proofUrl,
   }));
 }

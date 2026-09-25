@@ -309,7 +309,7 @@ Reads go through `queries.ts` per feature; every query calls `requireUser()` and
 | `previewLeave` | self — server-computed `{days, remaining}` for the live modal preview (PUL-703.2); **same function** as 13.6.1's computation, so preview and submission can never disagree |
 | `getAuditLog` | SA all; HR auto-scoped `resource_type IN ('leave_request','employee')` (§9.6 ⁶); filters `{actorId?, resourceType?, resourceId?, from?, to?}`; paginated; **read is audited** |
 | `getNotifications` | recipient only |
-| `exportClientTasks (weekly/monthly)` | MGR; server-side XLSX (§12); client-safe rules from PRD §3.1.7 (only completed/approved/in-progress; `approved` relabeled "Completed" for the client; proof link only, no internal fields) |
+| `exportClientTasks (weekly/monthly)` | MGR; server-side XLSX (§12); client-safe rules from PRD §3.1.7 (only completed/approved/in-progress; `approved` relabeled "Completed" for the client; proof link only, no internal fields). **As built (PUL-413):** `GET /api/export/client-tasks?period=weekly\|monthly`, a route handler because the response is a file. It returns plain HTTP (400 bad period / 403 not a manager / `{empty:true}` for zero rows), not `ActionResult`. Reads via `getClientExportRows({from,to})`; the window is `dhakaToday()−6` or `−29` through today, inclusive. **Gap:** §9.6 has no export row, so the gate is `isManagerRole` on the DB-read role until §9.6 adds one (§17 PUL-413) |
 | `exportAttendance` | MGR/HR; server-side XLSX |
 
 ---

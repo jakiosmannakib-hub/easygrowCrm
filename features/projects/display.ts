@@ -102,8 +102,8 @@ export const DEPENDENCY_BLOCKED_CLASSNAME = STATUS_DISPLAY.blocked.className;
  *
  * **This is the one sanctioned "Completed" string in `features/**`.** CLAUDE.md bans the word
  * as an *employee-facing* label. This map is *client-facing*, and §3.1.7 requires the word
- * here. PUL-809's forbidden-words grep must allow-list this map; do not reuse it in any
- * component.
+ * here. PUL-809's grep targets `features/attendance` and `features/daily-plan` (§16), so this
+ * file is outside it. Do not reuse this map in any component.
  *
  * `satisfies Record<TaskStatus, string>` makes it exhaustive, so adding a status to the enum
  * without labelling it is a compile error. Statuses outside the export's filter never reach

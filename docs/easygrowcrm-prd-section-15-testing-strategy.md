@@ -128,8 +128,8 @@ That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees 
 The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
 names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
 `scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
-(§15.9 gate 5), and it grows as each phase lands. It currently holds **11 files**, every one of which
-also appears in §15.4 above:
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **16 files** *(updated at
+PUL-413; this listing had fallen behind the script at 11)*:
 
 ```
 features/auth/session-from-google.test.ts          // PUL-103.5
@@ -143,7 +143,17 @@ features/employees/role-change.test.ts             // PUL-204.3
 features/employees/deactivate.test.ts              // PUL-205.5
 features/employees/reactivate.test.ts              // PUL-206 Stage 3
 features/employees/action-result-boundary.test.ts  // PUL-111
+features/clients/clients.test.ts                   // PUL-207.4                 ¹
+features/auth/oauth-link-provisioned.test.ts       // PUL-202 "Done when"       ¹
+features/projects/assign.test.ts                   // PUL-403.5
+features/projects/status-transitions.test.ts       // PUL-404.6
+features/projects/client-export.test.ts            // PUL-413.3                 ¹
 ```
+
+¹ **CI-enforced but NOT on the locked §15.4 list.** These were added to the script by their
+tickets without amending §15.4, which contradicts the "adds it to both" rule below. Either §15.4
+gains them (raising 35 → 38) or they stay script-only as "welcome but not required". **Needs a
+ruling.** Until then the script decides CI and §15.4 decides v1, as stated below.
 
 **When these two lists disagree, the script wins for "is CI green" and §15.4 wins for "may we
 ship v1".** A ticket that adds a mandatory test adds it to both.

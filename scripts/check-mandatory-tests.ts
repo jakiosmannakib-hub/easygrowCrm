@@ -23,6 +23,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/projects/assign.test.ts', // PUL-403.5 — SA never assignable, app + DB trigger
   'features/projects/status-transitions.test.ts', // PUL-404.6 — legal + illegal transitions per role
   'features/projects/client-export.test.ts', // PUL-413.3 — client-safe export rows + workbook
+  'features/templates/hierarchy-walker.test.ts', // PUL-502.2 — tplAllTasks visits every task once, in order
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

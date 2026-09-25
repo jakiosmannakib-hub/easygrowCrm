@@ -128,8 +128,8 @@ That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees 
 The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
 names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
 `scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
-(§15.9 gate 5), and it grows as each phase lands. It currently holds **16 files** *(updated at
-PUL-413; this listing had fallen behind the script at 11)*:
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **17 files** *(updated at
+PUL-502; at PUL-413 this listing had fallen behind the script at 11)*:
 
 ```
 features/auth/session-from-google.test.ts          // PUL-103.5
@@ -148,6 +148,7 @@ features/auth/oauth-link-provisioned.test.ts       // PUL-202 "Done when"       
 features/projects/assign.test.ts                   // PUL-403.5
 features/projects/status-transitions.test.ts       // PUL-404.6
 features/projects/client-export.test.ts            // PUL-413.3                 ¹
+features/templates/hierarchy-walker.test.ts        // PUL-502.2
 ```
 
 ¹ **CI-enforced but NOT on the locked §15.4 list.** These were added to the script by their

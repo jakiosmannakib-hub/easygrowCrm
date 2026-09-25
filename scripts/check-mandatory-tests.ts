@@ -25,6 +25,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/projects/client-export.test.ts', // PUL-413.3 — client-safe export rows + workbook
   'features/templates/hierarchy-walker.test.ts', // PUL-502.2 — tplAllTasks visits every task once, in order
   'features/templates/template-actions.test.ts', // PUL-503 — hierarchy CRUD, bad_ref + dependents gates, diff audit
+  'features/templates/template-meta.test.ts', // PUL-503 Stage 2 — card/header counts via tplAllTasks
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

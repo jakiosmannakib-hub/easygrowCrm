@@ -640,6 +640,7 @@ describe('createTemplateMonths (§13.3.7a, PUL-504)', () => {
       await createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 1, month1: ONE_TASK }),
     );
 
+    expect(result.firstNum).toBe(2);
     const months = await monthsOf(template.id);
     expect(months).toHaveLength(13);
     const wizardFirst = months.find((m) => m.id === result.monthIds[0])!;

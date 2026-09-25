@@ -448,6 +448,9 @@ export async function addTemplateMonth(input: AddTemplateMonthInput) {
  * `bad_ref` check is needed here.
  *
  * Audit: ONE `template.months_created` row, `after: { monthIds, taskCount, subtaskCount }`.
+ * Returns `{ monthIds, firstNum, month1Tasks, month1Subtasks }`; `firstNum` is Month 1's `num`,
+ * which the wizard's success toast names.
+ *
  * Notify: none.
  */
 export async function createTemplateMonths(input: CreateTemplateMonthsInput) {
@@ -539,7 +542,12 @@ export async function createTemplateMonths(input: CreateTemplateMonthsInput) {
         after: { monthIds, taskCount: taskRows.length, subtaskCount: subtaskRows.length },
       });
 
-      return { monthIds, month1Tasks: taskRows.length, month1Subtasks: subtaskRows.length };
+      return {
+        monthIds,
+        firstNum,
+        month1Tasks: taskRows.length,
+        month1Subtasks: subtaskRows.length,
+      };
     });
 
     // 5. NOTIFY — none.

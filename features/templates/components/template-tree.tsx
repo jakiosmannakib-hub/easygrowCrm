@@ -2,8 +2,9 @@
 //
 // The template detail body: toolbar, then Month → Category → Task → Subtask.
 //
-// - Months and categories: inline add / rename / delete through the §13.3.7b–c actions (and the
-//   PUL-503 `addTemplateMonth`).
+// - Months: added through the Add Month wizard (PUL-504, §14.4.3: a whole 12-month cycle per
+//   save); renamed / deleted inline. Categories: inline add / rename / delete (§13.3.7b–c). The
+//   PUL-503 `addTemplateMonth` action still exists but no UI calls it any more.
 // - Tasks: added and edited through the one Add/Edit Task modal (§14.4.4, Stage 3b), opened from a
 //   category's Add task button or a task's title. Subtasks are edited only inside that modal; the
 //   tree shows them read-only (§13.3.7e's inline subtask actions are not built).
@@ -34,7 +35,6 @@ import { showErrorToast } from '@/lib/show-error-toast';
 import { cn } from '@/lib/utils';
 import {
   addTemplateCategory,
-  addTemplateMonth,
   deleteTemplateCategory,
   deleteTemplateMonth,
   renameTemplateCategory,
@@ -48,6 +48,7 @@ import {
   type TemplateTaskNode,
   type TemplateTree as Tree,
 } from '../hierarchy';
+import { AddMonthWizard } from './add-month-wizard';
 import { ConfirmDeleteButton } from './confirm-delete-button';
 import { InlineNameForm } from './inline-name-form';
 import { TaskModal, type DependencyOption, type TaskModalTarget } from './task-modal';
@@ -83,17 +84,19 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
   // ── Collapse state: DECLARED UPFRONT, in memory only (§503.5) ──────────────────────
   // A deliberate decision: no persistence, no URL params, no localStorage. The sets hold what is
   // COLLAPSED, so everything starts expanded (months included, as §503 asks), and a month or
-  // category added later appears expanded without anyone seeding it. The state survives
-  // `router.refresh()`, because refreshing re-renders this component rather than remounting it.
+  // category added later appears expanded without anyone seeding it. That is also why the Add
+  // Month wizard's new Month 1 lands open after its refresh with no extra wiring: its id is new,
+  // so it is in neither set. The state survives `router.refresh()`, because refreshing
+  // re-renders this component rather than remounting it.
   const [collapsedMonths, setCollapsedMonths] = useState<ReadonlySet<string>>(() => new Set());
   const [collapsedCategories, setCollapsedCategories] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [addingMonth, setAddingMonth] = useState(false);
   // The task modal's target (add into a category, or edit a task), also declared upfront.
   const [taskModal, setTaskModal] = useState<TaskModalTarget | null>(null);
 
   const settle = useSettle();
+  const router = useRouter();
 
   // Every task's title by id, for `After "<title>"`: an `after` ref may point into any month.
   // The flat list is built by `tplAllTasks`, the only flattener (§16.7), and is never stored.
@@ -113,27 +116,20 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
     return next;
   }
 
-  async function onAddMonth() {
-    setAddingMonth(true);
-    try {
-      await settle(addTemplateMonth({ templateId: tree.id }), (m) => `${m.name} added.`);
-    } finally {
-      setAddingMonth(false);
-    }
-  }
-
   return (
     <div className="space-y-3">
-      {/* Toolbar (§14.4.2): month/task summary + Add month. */}
+      {/* Toolbar (§14.4.2): month/task summary + Add month (the PUL-504 wizard). */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-xs">
           {plural(tree.months.length, 'month', 'months')} ·{' '}
           {plural(allTasks.length, 'task', 'tasks')}
         </p>
         {canEdit ? (
-          <Button size="sm" onClick={onAddMonth} disabled={addingMonth}>
-            {addingMonth ? 'Adding…' : '+ Add month'}
-          </Button>
+          <AddMonthWizard
+            templateId={tree.id}
+            templateRoles={tree.roles}
+            onSuccess={() => router.refresh()}
+          />
         ) : null}
       </div>
 

@@ -124,6 +124,29 @@ All **Who:** MGR (`template.create/update/delete`; HR reads only, §9.6 ⁹). Al
 - **13.3.7d task ops** — `addTemplateTask { categoryId, …task fields, subtasks?: string[] }` · `updateTemplateTask { templateTaskId, version-free (small table), …fields, subtasks: full replacement list }` (the §14.4.4 modal saves task + subtasks in one call) · `deleteTemplateTask { templateTaskId }`. **Audit:** `template.task_added|updated|deleted`.
 - **13.3.7e subtask ops** — `addTemplateSubtask { templateTaskId, title }` · `renameTemplateSubtask { subtaskId, title }` · `deleteTemplateSubtask { subtaskId }` (the inline `└ + Add subtask` affordances, §14.4.2). **Audit:** `template.subtask_added|renamed|deleted`.
 
+> **As built (PUL-503), `features/templates/actions.ts`.** Built: 13.3.6a, 13.3.6c, 13.3.7b,
+> 13.3.7c, 13.3.7d. **Not built yet:** 13.3.6b `updateTemplate`, 13.3.7a `createTemplateMonths`
+> (PUL-504) and 13.3.7e (the §14.4.4 modal edits subtasks through `updateTemplateTask`'s
+> replacement list instead). Where the build goes beyond the entries above:
+> - **`addTemplateMonth { templateId, name?, startMonth?, startDay? }`** is NOT listed here. It
+>   adds one blank month (`num` = max + 1, default name `Month {num}`, start 0 / 1), audited as
+>   `template.month_added`, so a template can be built before PUL-504's wizard exists. **Needs a
+>   row here, or removal once the wizard ships.**
+> - **`GATE:task_has_dependents`** blocks `deleteTemplateTask`, `deleteTemplateCategory` and
+>   `deleteTemplateMonth` when a task outside what is being deleted has an `after` rule pointing
+>   at a task inside it. Dependents inside the deleted part do not block. Without it, a delete
+>   would leave a dangling `after.ref` that only surfaces as `GATE:bad_ref` at Start Project
+>   (§13.3.2).
+> - **`bad_ref`** is checked in the write's transaction on `addTemplateTask` and on
+>   `updateTemplateTask` when the rule changes (same template, no self-reference, no cycle).
+> - **Task fields** on both task actions: `title, roleHint, priority, estHours, dueRule,
+>   qcRequired, proofRequired, clientVisible, sopUrl, expectedOutput, checklist`. There is no
+>   category field: a task cannot move between categories. Edits follow the PUL-203
+>   partial-update convention with a diff-only audit row.
+> - **Audit rows are keyed on the template** (`resource_type = 'template'`), each naming the
+>   month / category / task it touched. Every hierarchy edit locks the template row, and a
+>   soft-deleted template is NOT_FOUND for all of them.
+
 ---
 
 ## 13.4 Project Tasks

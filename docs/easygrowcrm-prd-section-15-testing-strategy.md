@@ -128,8 +128,8 @@ That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees 
 The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
 names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
 `scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
-(§15.9 gate 5), and it grows as each phase lands. It currently holds **17 files** *(updated at
-PUL-502; at PUL-413 this listing had fallen behind the script at 11)*:
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **20 files** *(updated at
+PUL-503; at PUL-413 this listing had fallen behind the script at 11)*:
 
 ```
 features/auth/session-from-google.test.ts          // PUL-103.5
@@ -149,12 +149,18 @@ features/projects/assign.test.ts                   // PUL-403.5
 features/projects/status-transitions.test.ts       // PUL-404.6
 features/projects/client-export.test.ts            // PUL-413.3                 ¹
 features/templates/hierarchy-walker.test.ts        // PUL-502.2
+features/templates/template-actions.test.ts        // PUL-503 Stage 1          ¹
+features/templates/template-meta.test.ts           // PUL-503 Stage 2          ¹
+features/templates/task-form.test.ts               // PUL-503 Stage 3b         ¹
 ```
 
 ¹ **CI-enforced but NOT on the locked §15.4 list.** These were added to the script by their
 tickets without amending §15.4, which contradicts the "adds it to both" rule below. Either §15.4
-gains them (raising 35 → 38) or they stay script-only as "welcome but not required". **Needs a
-ruling.** Until then the script decides CI and §15.4 decides v1, as stated below.
+gains them (raising 35 → 41 with the three PUL-503 files) or they stay script-only as "welcome
+but not required". **Needs a ruling.** Until then the script decides CI and §15.4 decides v1, as
+stated below. *(`template-actions.test.ts` is the one with the strongest claim: it covers the
+template hierarchy actions, their `bad_ref` and `task_has_dependents` gates and the diff audit.
+`template-meta` and `task-form` are pure-helper tests.)*
 
 **When these two lists disagree, the script wins for "is CI green" and §15.4 wins for "may we
 ship v1".** A ticket that adds a mandatory test adds it to both.

@@ -1456,7 +1456,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > **Not built here:** nothing loads a `TemplateTree` from the database yet. The query that
 > assembles one (template → months → categories → tasks → subtasks) belongs to PUL-503's
 > detail view, and it must return the nested tree for this function to walk, never a
-> pre-flattened list.
+> pre-flattened list. *(Built in PUL-503 as `loadTemplateTree` / `templatesListQuery`, both
+> returning nested trees.)*
 
 ---
 
@@ -1464,14 +1465,111 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.4.1–2, §14.4.4–5 · **Depends:** PUL-502, PUL-110
 
-- [ ] 503.1 Grid page per §14.4.1: cards (category badge, name, desc, role pills, `N tasks · N months · N roles · N QC gates`), View / Start Project / delete
-- [ ] 503.2 New Template modal → empty template → straight into detail
-- [ ] 503.3 Detail view per §14.4.2: header card, breadcrumb hint, collapsible month → category → task tree with `└ N.M` subtask rows, all inline add/rename/delete
-- [ ] 503.4 Add/Edit Task modal per §14.4.4 incl. the subtask panel (+ Create subtask, live list, one Save writes all)
-- [ ] 503.5 All mutations = audited actions; collapse state upfront-declared
-- [ ] 503.6 Manual QA of the full hierarchy edit flow
+- [x] 503.1 Grid page per §14.4.1: cards (category badge, name, desc, role pills, `N tasks · N months · N roles · N QC gates`), View / Start Project / delete
+- [x] 503.2 New Template modal → empty template → straight into detail
+- [x] 503.3 Detail view per §14.4.2: header card, breadcrumb hint, collapsible month → category → task tree with `└ N.M` subtask rows, all inline add/rename/delete *(months and categories inline; tasks through the 503.4 modal; subtasks only inside that modal, see below)*
+- [x] 503.4 Add/Edit Task modal per §14.4.4 incl. the subtask panel (+ Create subtask, live list, one Save writes all)
+- [x] 503.5 All mutations = audited actions; collapse state upfront-declared
+- [ ] 503.6 Manual QA of the full hierarchy edit flow *(not yet run: every stage passed the automated gate only)*
 
-**Done when:** a template with 2 months, 3 categories, tasks + subtasks is buildable entirely from this UI.
+**Done when:** a template with 2 months, 3 categories, tasks + subtasks is buildable entirely from this UI. *(Buildable in code; unconfirmed until 503.6's manual pass.)*
+
+> **Build notes (PUL-503).** Built in four stages on `feat/pul-503-template-crud`:
+> Stage 1 actions + tree loader, including the subtree dependents-gate amendment (`4c687ae`),
+> Stage 2 grid (`213f140`, committed under Stage 1's message), Stage 3a detail tree (`c0aba75`),
+> Stage 3b task modal (`5933e9c`). Full
+> local gate green at the end: `tsc --noEmit`, ESLint, `vitest run` (658 passing),
+> `drizzle-kit check` (no schema change in this ticket), manifest at **20**.
+>
+> **Permissions: §9.6 kept, the ticket overruled.** The Stage 1 ticket asked for
+> `template.create/update/delete` = SA + PM and `template.read` = SA + PM + TL. That contradicts
+> §9.6 ⁹, §13.3.6 and §14.4.1 (TL edits, HR reads), so the matrix PUL-104 already encoded was
+> kept, on Toki's instruction. `authorize.test.ts` is unchanged at 53 keys / 265 cells.
+>
+> **Actions (`features/templates/actions.ts`).** §13 names throughout: `createTemplate`,
+> `deleteTemplate` (soft; re-delete is a no-op with no audit row), `renameTemplateMonth`,
+> `deleteTemplateMonth`, `addTemplateCategory`, `renameTemplateCategory`,
+> `deleteTemplateCategory`, `addTemplateTask`, `updateTemplateTask`, `deleteTemplateTask`.
+> Conventions:
+> - Every hierarchy edit locks the template row (`SELECT … FOR UPDATE`). That makes
+>   `max(num) + 1` safe and keeps a dependent from appearing mid-delete.
+> - A soft-deleted template is NOT_FOUND for every hierarchy edit.
+> - Audit rows are keyed on the template (`resource_type = 'template'`), each naming the node it
+>   touched, so one query returns a template's whole editing history.
+> - Every real edit bumps `templates.updated_at` from the clock port; a no-op writes nothing.
+> - Positions are 1-based, as seeded; a new row goes at `max + 1`.
+>
+> **Not built in PUL-503:** §13.3.6b `updateTemplate` (so the header's Edit details button and
+> editing a template's `roles` palette do not exist yet), §13.3.7a `createTemplateMonths`
+> (PUL-504), and the §13.3.7e inline subtask actions. Moving a task between categories is out of
+> scope: `updateTemplateTask` takes no category.
+>
+> **`addTemplateMonth` is not a §13 entry.** It adds ONE blank month (`num` / `position` =
+> max + 1, name `Month {num}`, start 0 / 1) so a template can be built before PUL-504's wizard
+> lands. **Needs a §13 row, or removal once the wizard ships. Ruling needed.**
+>
+> **`after`-rule validation is `GATE:bad_ref`**, the reason §13.3.6 already names: the ref must
+> be a task in the same template, not the task itself, and not close a cycle. Only a CHANGED
+> rule is re-checked on edit.
+>
+> **Dependents gate, extended to subtrees.** `deleteTemplateTask`, `deleteTemplateCategory` and
+> `deleteTemplateMonth` all go through one check, `assertNoOutsideDependents`: the delete is
+> blocked (`GATE:task_has_dependents`) when a task OUTSIDE what is being deleted has an `after`
+> rule pointing at a task INSIDE it. A dependent inside the deleted part does not block. It runs
+> in the delete's own transaction, on the locked template row, before the cascade.
+>
+> **Task columns.** `addTemplateTask` / `updateTemplateTask` cover every editable §11.4 column,
+> including `client_visible`, `sop_url` and `expected_output` (added in Stage 3b for the modal).
+> `updateTemplateTask` follows the PUL-203 partial-update convention and diff-only audit. Its
+> `subtasks` list, when sent, is reconciled: listed ids kept (renamed/reordered), id-less rows
+> inserted, missing rows deleted. An id from another task is VALIDATION. Resubmitting the same
+> list renumbers nothing and audits nothing.
+>
+> **Queries (`features/templates/queries.ts`).** `loadTemplateTree(executor, id)` returns the
+> nested tree, every level ordered by `position` (then `id`), or `null` for a missing or
+> soft-deleted template; `executor` comes first so PUL-506 can read it on its `tx`.
+> `templatesListQuery()` returns full trees for every live template, name-ordered, in five
+> queries total. Neither authorizes: the `/templates` route guard is their call-site check.
+>
+> **Meta and roles (`template-meta.ts`).** `templateMeta(tree)` gives the card/header counts
+> (tasks and QC gates via `tplAllTasks`, months, roles). **Roles are the distinct `role_hint`
+> values the tasks use** (§14.4.1 "roles used by any task"), not `templates.roles`, which stays
+> the task modal's role palette (§3.3.5). Changed at Stage 3a after the Stage 2 review.
+>
+> **UI.**
+> - `/templates` grid: HR sees it read-only (no + New Template, no delete, no Start Project),
+>   decided on the server with `can()`. Start Project renders disabled until PUL-506.
+> - `/templates/[id]`: header card, breadcrumb hint, then the tree. Months and categories have
+>   inline add / rename / delete; tasks open the Add/Edit Task modal.
+> - Collapse state is two in-memory sets declared upfront in `TemplateTree` (the 503.5
+>   decision: no persistence, no URL params, no localStorage). Everything starts expanded.
+> - A month's start shows as `Cycle starts January 10`: a template month has no year, so this is
+>   deliberately not `fmtDate`. **Worth a review against the year-on-every-date rule.**
+> - The task modal is one component for add and edit, its body keyed by task id (or
+>   `new:<categoryId>`), so mounting is the reset. Role is a Select of the palette, or free text
+>   when the template declares none (because the palette cannot be edited yet). Estimate is
+>   plain decimal hours: the repo has `fmtHM` but no `HMInput`. The tree renders estimates
+>   with `fmtHM`.
+>
+> **Toasts.** `GATE_REASONS` gained `bad_ref` and `task_has_dependents`. A small named layer
+> (`GATE_REASONS_NAMED`) builds the dependents toast from the error's `titles`, so it names the
+> blocking task, falling back to the fixed sentence. The three pre-existing toast strings with em
+> dashes (`self_role_change`, `self_deactivate`, `CONFLICT`) were reworded.
+>
+> **shadcn:** `components/ui/textarea.tsx` added, with the usual `cn` import fix and
+> `pnpm remove cn`; `package.json` and `pnpm-lock.yaml` match main.
+>
+> **Tests (manifest 17 → 20):**
+> - `template-actions.test.ts` (23, real DB). Mutation-checked: flipping the task gate's
+>   predicate failed its two tests; dropping the subtask delete-missing step failed the reconcile
+>   test; inverting the inside/outside subtree filter failed four tests.
+> - `template-meta.test.ts` (8, pure), including a task role absent from the palette and a
+>   palette role no task uses.
+> - `task-form.test.ts` (13, pure): checklist parse and the form ⇄ action-field conversion.
+> - `tests/error-toast.test.ts` gained two cases for the named dependents toast.
+>
+> None of the three are on the locked §15.4 list; see the §15.4.1 footnote. No jsdom component
+> tests, per the accepted UI-test gap: 503.6's manual pass is the catcher.
 
 ---
 

@@ -45,6 +45,7 @@ const {
   addTemplateMonth,
   addTemplateTask,
   createTemplate,
+  createTemplateMonths,
   deleteTemplate,
   deleteTemplateCategory,
   deleteTemplateMonth,
@@ -542,6 +543,210 @@ describe('subtree deletes and the dependents gate (month / category)', () => {
     expectOk(await deleteTemplateMonth({ monthId: month.id }));
     expect(await db.select().from(templateMonths).where(eq(templateMonths.id, month2.id))).toHaveLength(
       1,
+    );
+  });
+});
+
+describe('createTemplateMonths (§13.3.7a, PUL-504)', () => {
+  /** The template's months in position order. */
+  async function monthsOf(templateId: string) {
+    return db
+      .select()
+      .from(templateMonths)
+      .where(eq(templateMonths.templateId, templateId))
+      .orderBy(templateMonths.position);
+  }
+
+  async function categoriesOf(monthId: string) {
+    return db
+      .select()
+      .from(templateCategories)
+      .where(eq(templateCategories.monthId, monthId))
+      .orderBy(templateCategories.position);
+  }
+
+  async function emptyTemplate() {
+    actAs(seed.projectManager.id);
+    return expectOk(await createTemplate({ name: 'Wizard' }));
+  }
+
+  const ONE_TASK = {
+    cats: [{ name: 'Content', tasks: [{ title: 'Write blog', dueRule: { kind: 'day' as const, n: 5 } }] }],
+  };
+
+  it('creates 12 months with correct cascade dates', async () => {
+    const template = await emptyTemplate();
+
+    const result = expectOk(
+      await createTemplateMonths({ templateId: template.id, startMonth: 8, startDay: 10, month1: ONE_TASK }),
+    );
+    expect(result.monthIds).toHaveLength(12);
+    expect(result).toMatchObject({ month1Tasks: 1, month1Subtasks: 0 });
+
+    const months = await monthsOf(template.id);
+    expect(months.map((m) => m.id)).toEqual(result.monthIds);
+    expect(months.map((m) => m.num)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(months.map((m) => m.startMonth)).toEqual([8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(months.every((m) => m.startDay === 10)).toBe(true);
+    expect(months[0]!.name).toBe('Month 1 — September 10');
+    expect(months[4]!.name).toBe('Month 5 — January 10');
+    expect(months[11]!.name).toBe('Month 12 — August 10');
+
+    // Month 1 is populated; months 2–12 are empty scaffolds.
+    const month1Cats = await categoriesOf(months[0]!.id);
+    expect(month1Cats.map((c) => [c.name, c.position])).toEqual([['Content', 1]]);
+    const tasks = await db
+      .select()
+      .from(templateTasks)
+      .where(eq(templateTasks.categoryId, month1Cats[0]!.id));
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ title: 'Write blog', position: 1, dueRule: { kind: 'day', n: 5 } });
+    for (const m of months.slice(1)) expect(await categoriesOf(m.id)).toEqual([]);
+
+    const audit = (await auditFor(template.id)).filter((a) => a.action === 'template.months_created');
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.after).toEqual({ monthIds: result.monthIds, taskCount: 1, subtaskCount: 0 });
+  });
+
+  it('clamps Feb to 29 for a Jan 31 start', async () => {
+    const template = await emptyTemplate();
+    expectOk(
+      await createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 31, month1: ONE_TASK }),
+    );
+
+    const months = await monthsOf(template.id);
+    expect(months[1]).toMatchObject({ startMonth: 1, startDay: 29, name: 'Month 2 — February 29' });
+    expect(months[2]).toMatchObject({ startMonth: 2, startDay: 31 });
+    expect(months[3]).toMatchObject({ startMonth: 3, startDay: 30 });
+  });
+
+  it('rejects a soft-deleted template (NOT_FOUND, as every hierarchy edit does)', async () => {
+    const template = await emptyTemplate();
+    expectOk(await deleteTemplate({ templateId: template.id }));
+
+    expectFail(
+      await createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 1, month1: ONE_TASK }),
+      'NOT_FOUND',
+    );
+    expect(await monthsOf(template.id)).toEqual([]);
+  });
+
+  it('numbers the new cycle after the months the template already has', async () => {
+    const template = await emptyTemplate();
+    const existing = expectOk(await addTemplateMonth({ templateId: template.id }));
+    expect(existing.num).toBe(1);
+
+    const result = expectOk(
+      await createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 1, month1: ONE_TASK }),
+    );
+
+    const months = await monthsOf(template.id);
+    expect(months).toHaveLength(13);
+    const wizardFirst = months.find((m) => m.id === result.monthIds[0])!;
+    expect(wizardFirst).toMatchObject({ num: 2, position: 2, name: 'Month 2 — January 1' });
+    expect(months.at(-1)).toMatchObject({ num: 13, position: 13 });
+  });
+
+  it('requires at least one category', async () => {
+    const template = await emptyTemplate();
+
+    // A ZodError, not an AppError, so it stays a throw (the house convention, see clients.test.ts).
+    await expect(
+      createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 1, month1: { cats: [] } }),
+    ).rejects.toThrow();
+    expect(await monthsOf(template.id)).toEqual([]);
+  });
+
+  it('creates the subtasks with their titles and 1-based positions', async () => {
+    const template = await emptyTemplate();
+    const result = expectOk(
+      await createTemplateMonths({
+        templateId: template.id,
+        startMonth: 0,
+        startDay: 1,
+        month1: {
+          cats: [
+            {
+              name: 'On-page',
+              tasks: [
+                {
+                  title: 'Optimise homepage',
+                  dueRule: { kind: 'before_deadline', n: 2 },
+                  subtasks: ['Keyword map', 'Rewrite H1'],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    expect(result).toMatchObject({ month1Tasks: 1, month1Subtasks: 2 });
+
+    const [cat] = await categoriesOf(result.monthIds[0]!);
+    const [task] = await db.select().from(templateTasks).where(eq(templateTasks.categoryId, cat!.id));
+    expect((await subtaskRows(task!.id)).map((s) => [s.title, s.position])).toEqual([
+      ['Keyword map', 1],
+      ['Rewrite H1', 2],
+    ]);
+  });
+
+  it('stores the checklist', async () => {
+    const template = await emptyTemplate();
+    const result = expectOk(
+      await createTemplateMonths({
+        templateId: template.id,
+        startMonth: 0,
+        startDay: 1,
+        month1: {
+          cats: [
+            {
+              name: 'Technical',
+              tasks: [
+                {
+                  title: 'Crawl site',
+                  dueRule: { kind: 'day', n: 1 },
+                  checklist: ['Check robots.txt', 'Check sitemap'],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    const [cat] = await categoriesOf(result.monthIds[0]!);
+    const [task] = await db.select().from(templateTasks).where(eq(templateTasks.categoryId, cat!.id));
+    expect(task!.checklist).toEqual(['Check robots.txt', 'Check sitemap']);
+    // Defaults: QC on (§11.4, same as addTemplateTask), proof and client-visible off.
+    expect(task).toMatchObject({ qcRequired: true, proofRequired: false, clientVisible: false });
+  });
+
+  it('refuses an after rule in the wizard', async () => {
+    const template = await emptyTemplate();
+    await expect(
+      createTemplateMonths({
+        templateId: template.id,
+        startMonth: 0,
+        startDay: 1,
+        month1: {
+          cats: [
+            {
+              name: 'X',
+              // Deliberately off-schema: the wizard only takes day / before_deadline.
+              tasks: [{ title: 'Y', dueRule: { kind: 'after', ref: 'tt_x' } as never }],
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('denies an employee', async () => {
+    const template = await emptyTemplate();
+    actAs(seed.employees[0].id);
+    expectFail(
+      await createTemplateMonths({ templateId: template.id, startMonth: 0, startDay: 1, month1: ONE_TASK }),
+      'FORBIDDEN',
     );
   });
 });

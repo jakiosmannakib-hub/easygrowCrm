@@ -74,6 +74,59 @@ export const AddTemplateMonthInput = z.object({
 });
 export type AddTemplateMonthInput = z.infer<typeof AddTemplateMonthInput>;
 
+/**
+ * The Add Month wizard's due rules (§14.4.3): `day` and `before_deadline` only. `after` needs a
+ * task to point at, and the wizard's tasks do not exist yet when it is filled in; dependency
+ * rules are set afterwards in the task modal (§14.4.2 "dependency-based rules deferred to
+ * per-task edit").
+ */
+export const wizardDueRuleSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('day'), n: z.number().int().min(0) }),
+  z.object({ kind: z.literal('before_deadline'), n: z.number().int().min(0) }),
+]);
+
+/** One Month 1 task in the wizard. Same columns as `addTemplateTask`, minus an `after` rule. */
+const WizardTaskInput = z.object({
+  title: Title,
+  roleHint: z.string().trim().optional(),
+  priority: Priority.default('medium'),
+  estHours: z.number().min(0).max(9999.99).optional(),
+  dueRule: wizardDueRuleSchema,
+  // §11.4's column default, the same as `addTemplateTask`: a task goes through QC review unless
+  // the wizard says otherwise. (The PUL-504 ticket text said `false`; see the §17 note.)
+  qcRequired: z.boolean().default(true),
+  proofRequired: z.boolean().default(false),
+  clientVisible: z.boolean().default(false),
+  sopUrl: z.string().optional(),
+  expectedOutput: z.string().optional(),
+  checklist: z.array(Title).default([]),
+  /** Titles, in display order. */
+  subtasks: z.array(Title).default([]),
+});
+
+/**
+ * §13.3.7a `createTemplateMonths`: the Add Month wizard's save. Month 1 fully populated
+ * (at least one category), then Months 2–12 as empty scaffolds with cascaded dates.
+ *
+ * `startDay` is 1..31 whatever the month; Month 1 keeps it as given (see `cascadeMonthDates`).
+ */
+export const CreateTemplateMonthsInput = z.object({
+  templateId: z.string().min(1),
+  startMonth: z.number().int().min(0).max(11),
+  startDay: z.number().int().min(1).max(31),
+  month1: z.object({
+    cats: z
+      .array(
+        z.object({
+          name: Title,
+          tasks: z.array(WizardTaskInput).default([]),
+        }),
+      )
+      .min(1),
+  }),
+});
+export type CreateTemplateMonthsInput = z.input<typeof CreateTemplateMonthsInput>;
+
 /** §13.3.7b. */
 export const RenameTemplateMonthInput = z.object({ monthId: z.string().min(1), name: Title });
 export type RenameTemplateMonthInput = z.infer<typeof RenameTemplateMonthInput>;

@@ -1403,7 +1403,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 >
 > **No test file was added; the manifest stays at 16.** The constraint probes and the seed
 > walk were throwaway checks. The hierarchy's contract test is PUL-502's
-> `hierarchy-walker.test.ts`, which will walk these seeded templates.
+> `hierarchy-walker.test.ts`. *(Correction at PUL-502: that test walks an in-memory fixture,
+> not these seeded rows. Nothing loads a `TemplateTree` from the DB yet; the first walk of the
+> seeded templates comes with PUL-503's detail query or PUL-506's `start-project.test.ts`.)*
 
 ---
 
@@ -1411,10 +1413,50 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** §14.4, §16.7 · **Depends:** PUL-501
 
-- [ ] 502.1 The canonical flattener → `[{...task, _catName, _monthNum}]`; **the only** way to flatten (no parallel caches)
-- [ ] 502.2 Test: `features/templates/hierarchy-walker.test.ts` — every task visited exactly once, correct parents → CI manifest
+- [x] 502.1 The canonical flattener → `[{...task, _catName, _monthNum}]`; **the only** way to flatten (no parallel caches) — `tplAllTasks(tree)` in `features/templates/hierarchy.ts`. Each row carries **five** parent fields, not two: `_monthId`, `_monthNum`, `_monthName`, `_catId`, `_catName`.
+- [x] 502.2 Test: `features/templates/hierarchy-walker.test.ts` — every task visited exactly once, correct parents → CI manifest (**file 17**)
 
-**Done when:** round-trip proof on a 3-month fixture.
+**Done when:** ✅ round-trip proof on a 3-month fixture. The walker test uses 3 months and 8 tasks, stored out of `position` order at every level.
+
+> **Committed as `84be696`** on `feat/pul-502-hierarchy-walker`. Full local gate green:
+> `tsc --noEmit`, ESLint, `vitest run` (612 passing, +7), and the manifest at **17**.
+>
+> **Types.** The tree is built from the Drizzle table types, so a schema change flows through
+> without edits here:
+> - `TemplateSubtaskNode` is a `template_task_subtasks` row.
+> - `TemplateTaskNode` is a `template_tasks` row plus `subtasks[]`.
+> - `TemplateCategoryNode` is a category row plus `tasks[]`, and `TemplateMonthNode` a month
+>   row plus `categories[]`.
+> - `TemplateTree` is a `templates` row plus `months[]`.
+> - `FlatTemplateTask` is a task node plus the five `_` fields. They exist only on the walker's
+>   return value and are never stored.
+>
+> **Order is `position`, not array order.** Each level is sorted by `position` on a shallow
+> copy, so the stored order of months / categories / tasks is never trusted and the input tree
+> is never mutated. Each task's own `subtasks` array rides along untouched. The walker does NOT
+> sort subtasks: that is the clone's concern (PUL-506), and a flattener that reorders a child
+> array it does not walk would be doing two jobs.
+>
+> **Pure:** no DB, no clock, no I/O, no `authorize()`. The schema import is `import type` only,
+> so the module has no runtime dependency on `db/` and is safe to import from client
+> components (the template detail view, PUL-503).
+>
+> **Tests (7):** the ticket's six assertions — (a) count, (b) every id once, (c)
+> month → category → task position order (as an exact id list AND as a strictly-ascending
+> triple property), (d) real parent identity on every row, (e) subtasks survive, (f) input
+> unmutated — plus the empty-template case. It is a pure test: no db import, no pool, no
+> `assertTestDb`.
+>
+> **Mutation-checked, not only claimed in the header:**
+> - Removing the position sort fails (c).
+> - Walking only the first category of each month fails (a), (b), (c) and (e).
+>
+> `hierarchy.ts` was restored and re-verified after each run.
+>
+> **Not built here:** nothing loads a `TemplateTree` from the database yet. The query that
+> assembles one (template → months → categories → tasks → subtasks) belongs to PUL-503's
+> detail view, and it must return the nested tree for this function to walk, never a
+> pre-flattened list.
 
 ---
 

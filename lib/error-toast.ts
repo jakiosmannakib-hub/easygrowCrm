@@ -38,10 +38,10 @@ export const GATE_REASONS: Record<string, string> = {
   pending_reviews: 'You still have tasks waiting on your review.',
   client_in_use: 'This client still has live projects and cannot be archived.',
   last_managers: 'The team must keep at least two active managers.',
-  self_role_change: 'You cannot change your own role — ask another super admin to do it.',
+  self_role_change: 'You cannot change your own role. Ask another super admin to do it.',
   unresolved_assignments: 'This user still has tasks assigned. Reassign them first.',
   unresolved_reviews: 'This user still has reviews routed to them. Reroute them first.',
-  self_deactivate: 'You cannot deactivate your own account — ask another admin to do it.',
+  self_deactivate: 'You cannot deactivate your own account. Ask another admin to do it.',
   sa_has_assignments: 'A super admin cannot hold task assignments.',
   use_review: 'Use the review screen to approve or return this task.',
   // PUL-403 (§13.4.1). `project_archived` is thrown by `updateProject` (PUL-402) as well as by
@@ -98,7 +98,7 @@ const FALLBACK: Record<string, string> = {
   NOT_FOUND: 'That item no longer exists.',
   VALIDATION: 'Please check the form and try again.',
   GATE: 'This action is blocked.',
-  CONFLICT: 'This changed while you were editing — refresh.',
+  CONFLICT: 'This changed while you were editing. Refresh to see the latest.',
 };
 
 /** Map a thrown error to the toast the user should see. Pure; safe on the client. */

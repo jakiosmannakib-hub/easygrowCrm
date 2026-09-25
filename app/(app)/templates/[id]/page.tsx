@@ -1,10 +1,11 @@
 // app/(app)/templates/[id]/page.tsx — PUL-503, §14.4.2
 //
 // The template detail view: Back link, header card, breadcrumb hint, then the month → category →
-// task → subtask tree (Stage 3a: month / category inline CRUD, tasks read-only).
+// task → subtask tree with month / category inline CRUD (Stage 3a) and the Add/Edit Task modal
+// (Stage 3b, §14.4.4).
 //
-// TODO(PUL-503 Stage 3b): task add / edit / delete and the Add/Edit Task modal (§14.4.4). The
-// header card's Edit details / Start Project buttons are not built yet either.
+// Not built yet: the header card's Edit details (§13.3.6b `updateTemplate`) and Start Project
+// (PUL-506) buttons.
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';

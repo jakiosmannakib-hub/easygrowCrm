@@ -125,6 +125,10 @@ export const AddTemplateTaskInput = z.object({
   dueRule: dueRuleSchema,
   qcRequired: z.boolean().default(true),
   proofRequired: z.boolean().default(false),
+  // PUL-503 Stage 3b: the remaining §11.4 task columns the §14.4.4 modal edits.
+  clientVisible: z.boolean().default(false),
+  sopUrl: z.string().nullable().optional(),
+  expectedOutput: z.string().nullable().optional(),
   checklist: z.array(Title).default([]),
   subtasks: z.array(z.object({ title: Title })).default([]),
 });
@@ -132,7 +136,11 @@ export type AddTemplateTaskInput = z.input<typeof AddTemplateTaskInput>;
 
 /**
  * §13.3.7d `updateTemplateTask`. The partial-update convention (PUL-203): an ABSENT field is
- * left alone; an explicit `null` clears a nullable one (`roleHint`, `estHours`).
+ * left alone; an explicit `null` clears a nullable one (`roleHint`, `estHours`, `sopUrl`,
+ * `expectedOutput`).
+ *
+ * There is deliberately no `categoryId`: a task stays in the category it was added to. Moving a
+ * task between categories is not in PUL-503's scope.
  *
  * `subtasks`, when present, is the FULL replacement list (§13.3.7d, §14.4.4 "one Save writes
  * the task and its subtasks together"): rows with an `id` are kept (renamed/reordered as
@@ -148,6 +156,9 @@ export const UpdateTemplateTaskInput = z.object({
   dueRule: dueRuleSchema.optional(),
   qcRequired: z.boolean().optional(),
   proofRequired: z.boolean().optional(),
+  clientVisible: z.boolean().optional(),
+  sopUrl: z.string().nullable().optional(),
+  expectedOutput: z.string().nullable().optional(),
   checklist: z.array(Title).optional(),
   subtasks: z.array(TemplateSubtaskInput).optional(),
 });

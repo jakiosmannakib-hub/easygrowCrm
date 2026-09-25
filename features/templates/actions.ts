@@ -702,6 +702,9 @@ export async function addTemplateTask(input: AddTemplateTaskInput) {
           dueRule: canonicalRule(parsed.dueRule),
           qcRequired: parsed.qcRequired,
           proofRequired: parsed.proofRequired,
+          clientVisible: parsed.clientVisible,
+          sopUrl: parsed.sopUrl ?? null,
+          expectedOutput: parsed.expectedOutput ?? null,
           checklist: parsed.checklist,
         })
         .returning();
@@ -819,6 +822,15 @@ export async function updateTemplateTask(input: UpdateTemplateTaskInput) {
       });
       consider('proofRequired', current.proofRequired, parsed.proofRequired, () => {
         changes.proofRequired = parsed.proofRequired;
+      });
+      consider('clientVisible', current.clientVisible, parsed.clientVisible, () => {
+        changes.clientVisible = parsed.clientVisible;
+      });
+      consider('sopUrl', current.sopUrl, parsed.sopUrl, () => {
+        changes.sopUrl = parsed.sopUrl;
+      });
+      consider('expectedOutput', current.expectedOutput, parsed.expectedOutput, () => {
+        changes.expectedOutput = parsed.expectedOutput;
       });
       consider('checklist', current.checklist, parsed.checklist, () => {
         changes.checklist = parsed.checklist;

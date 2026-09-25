@@ -26,6 +26,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/templates/hierarchy-walker.test.ts', // PUL-502.2 — tplAllTasks visits every task once, in order
   'features/templates/template-actions.test.ts', // PUL-503 — hierarchy CRUD, bad_ref + dependents gates, diff audit
   'features/templates/template-meta.test.ts', // PUL-503 Stage 2 — card/header counts via tplAllTasks
+  'features/templates/task-form.test.ts', // PUL-503 Stage 3b — checklist parse + task form conversion
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

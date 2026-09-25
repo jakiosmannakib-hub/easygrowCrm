@@ -120,7 +120,7 @@ describe('errorToToast — refresh is CONFLICT-only (§14.15 r.3)', () => {
 
   it('CONFLICT falls back to the default wording', () => {
     expect(errorToToast({ code: 'CONFLICT' })).toEqual({
-      message: 'This changed while you were editing — refresh.',
+      message: 'This changed while you were editing. Refresh to see the latest.',
       refresh: true,
     });
   });

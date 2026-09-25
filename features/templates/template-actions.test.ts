@@ -253,6 +253,9 @@ describe('addTemplateTask (§13.3.7d)', () => {
         estHours: 1.5,
         dueRule: { kind: 'before_deadline', n: 3 },
         checklist: ['Title tag', 'Meta description'],
+        clientVisible: true,
+        sopUrl: 'https://sop.example/homepage',
+        expectedOutput: 'Updated homepage copy',
         subtasks: [{ title: 'Keyword map' }, { title: 'Rewrite H1' }],
       }),
     );
@@ -264,6 +267,9 @@ describe('addTemplateTask (§13.3.7d)', () => {
       estHours: '1.50',
       dueRule: { kind: 'before_deadline', n: 3 },
       checklist: ['Title tag', 'Meta description'],
+      clientVisible: true,
+      sopUrl: 'https://sop.example/homepage',
+      expectedOutput: 'Updated homepage copy',
     });
     expect((await subtaskRows(task.id)).map((s) => [s.title, s.position])).toEqual([
       ['Keyword map', 1],

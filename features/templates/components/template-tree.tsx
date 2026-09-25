@@ -4,7 +4,9 @@
 //
 // - Months and categories: inline add / rename / delete through the §13.3.7b–c actions (and the
 //   PUL-503 `addTemplateMonth`).
-// - Tasks and subtasks: READ-ONLY in this stage. Stage 3b adds the Add/Edit Task modal (§14.4.4).
+// - Tasks: added and edited through the one Add/Edit Task modal (§14.4.4, Stage 3b), opened from a
+//   category's Add task button or a task's title. Subtasks are edited only inside that modal; the
+//   tree shows them read-only (§13.3.7e's inline subtask actions are not built).
 // - `canEdit` (`template.update`, decided by the page) hides every edit affordance for HR, who
 //   sees the tree read-only (§14.4.2, §9.6 ⁹). Presentation only: every action re-authorizes.
 // - Not optimistic: each mutation awaits the server, then toasts and `router.refresh()`es, so
@@ -27,6 +29,7 @@ import {
   categoryDotClass,
 } from '@/features/projects/display';
 import type { ActionResult } from '@/lib/action-result';
+import { fmtHM } from '@/lib/format';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -47,6 +50,7 @@ import {
 } from '../hierarchy';
 import { ConfirmDeleteButton } from './confirm-delete-button';
 import { InlineNameForm } from './inline-name-form';
+import { TaskModal, type DependencyOption, type TaskModalTarget } from './task-modal';
 
 /**
  * Await an action, then report it: a failure goes through the PUL-106 mapper, a success toasts
@@ -86,6 +90,8 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
     () => new Set(),
   );
   const [addingMonth, setAddingMonth] = useState(false);
+  // The task modal's target (add into a category, or edit a task), also declared upfront.
+  const [taskModal, setTaskModal] = useState<TaskModalTarget | null>(null);
 
   const settle = useSettle();
 
@@ -93,6 +99,12 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
   // The flat list is built by `tplAllTasks`, the only flattener (§16.7), and is never stored.
   const allTasks = useMemo(() => tplAllTasks(tree), [tree]);
   const titleById = useMemo(() => new Map(allTasks.map((t) => [t.id, t.title])), [allTasks]);
+  // The after-rule picker: every task, labelled with where it lives, in walk order.
+  const dependencyOptions = useMemo<DependencyOption[]>(
+    () =>
+      allTasks.map((t) => ({ id: t.id, label: `${t._monthName} › ${t._catName} › ${t.title}` })),
+    [allTasks],
+  );
 
   function toggle(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
     const next = new Set(set);
@@ -141,9 +153,19 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
             titleById={titleById}
             canEdit={canEdit}
             settle={settle}
+            onOpenTask={setTaskModal}
           />
         ))
       )}
+
+      {canEdit ? (
+        <TaskModal
+          target={taskModal}
+          onClose={() => setTaskModal(null)}
+          rolePalette={tree.roles}
+          dependencyOptions={dependencyOptions}
+        />
+      ) : null}
     </div>
   );
 }
@@ -157,6 +179,7 @@ function MonthSection({
   titleById,
   canEdit,
   settle,
+  onOpenTask,
 }: {
   month: TemplateMonthNode;
   open: boolean;
@@ -166,6 +189,7 @@ function MonthSection({
   titleById: ReadonlyMap<string, string>;
   canEdit: boolean;
   settle: Settle;
+  onOpenTask: (target: TaskModalTarget) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [addingCategory, setAddingCategory] = useState(false);
@@ -252,6 +276,7 @@ function MonthSection({
                 titleById={titleById}
                 canEdit={canEdit}
                 settle={settle}
+                onOpenTask={onOpenTask}
               />
             ))
           )}
@@ -295,6 +320,7 @@ function CategorySection({
   titleById,
   canEdit,
   settle,
+  onOpenTask,
 }: {
   category: TemplateCategoryNode;
   open: boolean;
@@ -302,6 +328,7 @@ function CategorySection({
   titleById: ReadonlyMap<string, string>;
   canEdit: boolean;
   settle: Settle;
+  onOpenTask: (target: TaskModalTarget) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const bodyId = `category-body-${category.id}`;
@@ -352,6 +379,15 @@ function CategorySection({
             <Button
               variant="ghost"
               size="sm"
+              onClick={() =>
+                onOpenTask({ categoryId: category.id, categoryName: category.name, task: null })
+              }
+            >
+              + Add task
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setRenaming(true)}
               aria-label={`Rename ${category.name}`}
             >
@@ -379,7 +415,7 @@ function CategorySection({
           ) : (
             <>
               {/* Column header (§14.4.2), shown only where the row is laid out as columns. */}
-              <div className="text-muted-foreground hidden grid-cols-[minmax(0,1fr)_8rem_11rem_5rem_3rem] gap-2 px-1 pb-1 text-[0.625rem] uppercase tracking-wide md:grid">
+              <div className="text-muted-foreground hidden grid-cols-[minmax(0,1fr)_8rem_11rem_5rem_4rem] gap-2 px-1 pb-1 text-[0.625rem] uppercase tracking-wide md:grid">
                 <span>Task</span>
                 <span>Role</span>
                 <span>Due rule</span>
@@ -388,7 +424,18 @@ function CategorySection({
               </div>
               <ol className="divide-y">
                 {category.tasks.map((task, i) => (
-                  <TaskRow key={task.id} task={task} index={i + 1} titleById={titleById} />
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    index={i + 1}
+                    titleById={titleById}
+                    onEdit={
+                      canEdit
+                        ? () =>
+                            onOpenTask({ categoryId: category.id, categoryName: category.name, task })
+                        : undefined
+                    }
+                  />
                 ))}
               </ol>
             </>
@@ -400,24 +447,38 @@ function CategorySection({
 }
 
 /**
- * One task, read-only (Stage 3b adds editing). `index` is the task's 1-based place in its
- * category, which also numbers its subtasks `└ N.M`.
+ * One task row. `index` is the task's 1-based place in its category, which also numbers its
+ * subtasks `└ N.M`. With `onEdit` (editors only) the title is a button that opens the task
+ * modal; without it (HR) the row is read-only text.
  */
 function TaskRow({
   task,
   index,
   titleById,
+  onEdit,
 }: {
   task: TemplateTaskNode;
   index: number;
   titleById: ReadonlyMap<string, string>;
+  onEdit?: () => void;
 }) {
   return (
     <li className="px-1 py-1.5">
-      <div className="grid gap-1 md:grid-cols-[minmax(0,1fr)_8rem_11rem_5rem_3rem] md:items-center md:gap-2">
+      <div className="grid gap-1 md:grid-cols-[minmax(0,1fr)_8rem_11rem_5rem_4rem] md:items-center md:gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="text-muted-foreground text-xs tabular-nums">{index}.</span>
-          <span className="text-xs font-medium">{task.title}</span>
+          {onEdit ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="focus-visible:ring-ring/30 rounded-sm text-left text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-none"
+              aria-label={`Edit ${task.title}`}
+            >
+              {task.title}
+            </button>
+          ) : (
+            <span className="text-xs font-medium">{task.title}</span>
+          )}
           {hasTitleToken(task.title) ? <Badge variant="outline">token</Badge> : null}
           {task.qcRequired ? <Badge variant="secondary">QC required</Badge> : null}
           {task.proofRequired ? <Badge variant="secondary">Proof required</Badge> : null}
@@ -437,7 +498,8 @@ function TaskRow({
           </Badge>
         </span>
         <span className="text-muted-foreground text-xs tabular-nums">
-          {task.estHours !== null ? `${Number(task.estHours)}h` : ''}
+          {/* h+m everywhere (§3.2): fmtHM. A missing estimate stays blank. */}
+          {task.estHours !== null ? fmtHM(Number(task.estHours)) : ''}
         </span>
       </div>
 

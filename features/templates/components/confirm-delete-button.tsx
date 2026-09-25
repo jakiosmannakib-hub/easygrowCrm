@@ -28,12 +28,15 @@ export function ConfirmDeleteButton({
   description,
   confirmLabel,
   onConfirm,
+  trigger,
 }: {
   /** Accessible name of the `×`, e.g. "Delete Month 1". */
   label: string;
   description: React.ReactNode;
   confirmLabel: string;
   onConfirm: () => Promise<boolean>;
+  /** Replaces the default `×` trigger, e.g. the task modal's red "Delete task" button. */
+  trigger?: React.ReactElement;
 }) {
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -51,9 +54,11 @@ export function ConfirmDeleteButton({
     <Dialog open={open} onOpenChange={(next: boolean) => setOpen(next)}>
       <DialogTrigger
         render={
-          <Button variant="ghost" size="icon-sm" aria-label={label} title={label}>
-            <XIcon />
-          </Button>
+          trigger ?? (
+            <Button variant="ghost" size="icon-sm" aria-label={label} title={label}>
+              <XIcon />
+            </Button>
+          )
         }
       />
       <DialogContent className="sm:max-w-sm">

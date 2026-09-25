@@ -441,7 +441,9 @@ export async function addTemplateMonth(input: AddTemplateMonthInput) {
  *   Month 1's day, clamped to what that month can hold (Jan 31 → Feb 29 → Mar 31).
  * - Numbering continues after any months the template already has: `num` and `position` start at
  *   `max + 1`, as `addTemplateMonth` does. The template row lock makes that safe.
- * - Each month is named `Month {num} — {Month name} {day}` (§13.3.7a / §14.4.2's format).
+ * - Each month is named `Month {num} - {Month name} {day}`, with a plain hyphen so the saved
+ *   name matches the wizard's preview (§13.3.7a / §14.4.2 show an em dash; the no-em-dash UI
+ *   rule wins, since this name is rendered as the month's heading).
  * - Positions of categories, tasks and subtasks are 1-based, in input order.
  *
  * The wizard's due rules are `day` / `before_deadline` only (the schema refuses `after`), so no
@@ -475,7 +477,7 @@ export async function createTemplateMonths(input: CreateTemplateMonthsInput) {
           id: `tm_${crypto.randomUUID()}`,
           templateId: parsed.templateId,
           num,
-          name: `Month ${num} — ${MONTH_NAMES[start.month]} ${start.day}`,
+          name: `Month ${num} - ${MONTH_NAMES[start.month]} ${start.day}`,
           startMonth: start.month,
           startDay: start.day,
           position: firstPosition + i,

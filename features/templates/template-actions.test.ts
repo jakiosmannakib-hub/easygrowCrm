@@ -588,9 +588,9 @@ describe('createTemplateMonths (§13.3.7a, PUL-504)', () => {
     expect(months.map((m) => m.num)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     expect(months.map((m) => m.startMonth)).toEqual([8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7]);
     expect(months.every((m) => m.startDay === 10)).toBe(true);
-    expect(months[0]!.name).toBe('Month 1 — September 10');
-    expect(months[4]!.name).toBe('Month 5 — January 10');
-    expect(months[11]!.name).toBe('Month 12 — August 10');
+    expect(months[0]!.name).toBe('Month 1 - September 10');
+    expect(months[4]!.name).toBe('Month 5 - January 10');
+    expect(months[11]!.name).toBe('Month 12 - August 10');
 
     // Month 1 is populated; months 2–12 are empty scaffolds.
     const month1Cats = await categoriesOf(months[0]!.id);
@@ -615,7 +615,7 @@ describe('createTemplateMonths (§13.3.7a, PUL-504)', () => {
     );
 
     const months = await monthsOf(template.id);
-    expect(months[1]).toMatchObject({ startMonth: 1, startDay: 29, name: 'Month 2 — February 29' });
+    expect(months[1]).toMatchObject({ startMonth: 1, startDay: 29, name: 'Month 2 - February 29' });
     expect(months[2]).toMatchObject({ startMonth: 2, startDay: 31 });
     expect(months[3]).toMatchObject({ startMonth: 3, startDay: 30 });
   });
@@ -644,7 +644,7 @@ describe('createTemplateMonths (§13.3.7a, PUL-504)', () => {
     const months = await monthsOf(template.id);
     expect(months).toHaveLength(13);
     const wizardFirst = months.find((m) => m.id === result.monthIds[0])!;
-    expect(wizardFirst).toMatchObject({ num: 2, position: 2, name: 'Month 2 — January 1' });
+    expect(wizardFirst).toMatchObject({ num: 2, position: 2, name: 'Month 2 - January 1' });
     expect(months.at(-1)).toMatchObject({ num: 13, position: 13 });
   });
 

@@ -7,3 +7,4 @@ export * from './projects';
 export * from './personal-tasks';
 export * from './project-tasks';
 export * from './task-reviews';
+export * from './templates';

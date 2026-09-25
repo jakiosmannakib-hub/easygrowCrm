@@ -12,6 +12,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import { clients, projects, projectTasks, user } from '../db/schema';
+import { seedTemplates, type SeededTemplates } from './seed-templates';
 
 /**
  * True iff a database name is a test database.
@@ -37,7 +38,9 @@ export function assertTestDb(): void {
   const name = new URL(url).pathname.replace(/^\//, '').split('?')[0];
 
   if (!isTestDbName(name)) {
-    throw new Error("Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')");
+    throw new Error(
+      "Refusing to seed: DATABASE_URL is not a test database (name must contain 'test')",
+    );
   }
 }
 
@@ -59,7 +62,7 @@ export async function reset(): Promise<void> {
   // one statement and CASCADE would reach the children anyway. Being explicit means a new table
   // that nothing references yet still gets wiped instead of quietly surviving a reset.
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -100,6 +103,8 @@ export interface FullSeed extends MinimalSeed {
   secondProject: SeededProject;
   /** seedFull's extra tasks — the minimal three are still in `tasks`. */
   extraTasks: [SeededTask, SeededTask, SeededTask];
+  /** The three demo templates from the prototype (PUL-501.3), by id. */
+  templates: SeededTemplates;
 }
 
 /**
@@ -139,9 +144,7 @@ export async function seedMinimal(): Promise<MinimalSeed> {
     { id: 'seed_e3', name: 'Seed Employee Three', email: 'e3@test.local', role: 'employee' },
   ];
 
-  await db.insert(user).values(
-    cast.map((u) => ({ ...u, emailVerified: true, active: true })),
-  );
+  await db.insert(user).values(cast.map((u) => ({ ...u, emailVerified: true, active: true })));
 
   const client: SeededClient = { id: 'seed_client', name: 'Seed Client' };
   await db.insert(clients).values(client);
@@ -217,8 +220,10 @@ export async function seedMinimal(): Promise<MinimalSeed> {
  * and the PM/employee assignees, so multi-project reads (the board's project filter, workload
  * by assignee) have more than one row to distinguish.
  *
- * Deliberately not a full org yet: no attendance, leave, or template rows, because those tables
- * do not exist. Each phase extends this in proportion to what it lands.
+ * PUL-501 adds the three prototype templates (`seed-templates.ts`), owned by the seed PM.
+ *
+ * Deliberately not a full org yet: no attendance or leave rows, because those tables do not
+ * exist. Each phase extends this in proportion to what it lands.
  */
 export async function seedFull(): Promise<FullSeed> {
   assertTestDb();
@@ -273,5 +278,8 @@ export async function seedFull(): Promise<FullSeed> {
     },
   ]);
 
-  return { ...minimal, secondProject, extraTasks };
+  // PUL-501.3: the three prototype templates, owned by the seed PM.
+  const seededTemplates = await seedTemplates(minimal.projectManager.id);
+
+  return { ...minimal, secondProject, extraTasks, templates: seededTemplates };
 }

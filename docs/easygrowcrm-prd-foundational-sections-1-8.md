@@ -439,6 +439,12 @@ Fields: title (with token hint), role (from template.roles), category (from cate
 - **Website Design Project** — 7 tasks with a full dependency chain: kickoff → wireframes → copy → design → dev → pre-launch QA → launch/handover.
 - **Technical SEO Audit** — 4 tasks: crawl, CWV+indexation review, prioritized fix roadmap, QC & deliver.
 
+> **As seeded (PUL-501), the Local SEO line above is out of date.** The seeded template comes
+> from the prototype's `tpls` tree. It has **15 tasks** over 2 months: 11 in Month 1 and 4 in
+> Month 2, with rank checks as explicit `week 1…4` rows because Amendment D removed recurring
+> tasks. The 10-task list above predates Amendment D. Website Design (7) and Technical SEO Audit
+> (4) match. See §17 PUL-501; the wording above awaits an owner ruling.
+
 ### 3.4 HR & Attendance
 
 #### 3.4.1 Sign-In flow (opens a modal)

@@ -57,6 +57,13 @@
       "when": 1789569021519,
       "tag": "0007_qc_trail",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790352481564,
+      "tag": "0008_templates_hierarchy",
+      "breakpoints": true
     }
   ]
 }

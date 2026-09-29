@@ -20,10 +20,24 @@ import { isManagerRole } from '@/features/projects/display';
 import { can } from '@/lib/authz';
 import { requireRouteAccess } from '@/lib/route-guard';
 
-export default async function ProjectsPage() {
+/** The tabs `?tab=` may open. Review / Workload stay click-only (they are role-gated). */
+const LINKABLE_TABS = ['board', 'list', 'calendar'] as const;
+type LinkableTab = (typeof LINKABLE_TABS)[number];
+
+export default async function ProjectsPage({
+  searchParams,
+}: {
+  /**
+   * `?project=<id>&tab=list` opens one project, on one tab, with the month filter cleared: the
+   * Start Project wizard's landing (§14.3.8, PUL-506). An unknown or archived project id is
+   * ignored and the page opens unfiltered.
+   */
+  searchParams: Promise<{ project?: string; tab?: string }>;
+}) {
   // THE security boundary (§9.5): unauthenticated → /sign-in, wrong role → 404. The sidebar
   // hiding this item is cosmetic and is not access control.
   const viewer = await requireRouteAccess('/projects');
+  const params = await searchParams;
 
   /**
    * Who may appear in Assignee ▾.
@@ -46,13 +60,26 @@ export default async function ProjectsPage() {
     : [{ id: viewer.id, name: viewer.name, image: viewer.image ?? null }];
 
   // Independent of each other — fetched concurrently.
-  const [clients, projects, projectMonths, initialTasks] = await Promise.all([
+  const [clients, projects, projectMonths] = await Promise.all([
     activeClientsQuery(),
     activeProjectsQuery(),
     projectMonthsQuery(),
-    // The unfiltered first page, so the shell renders with real rows instead of a spinner.
-    getFilteredTasks(),
   ]);
+
+  const linked = params.project ? projects.find((p) => p.id === params.project) : undefined;
+  const initialView = linked
+    ? {
+        clientId: linked.clientId,
+        projectId: linked.id,
+        tab: LINKABLE_TABS.includes(params.tab as LinkableTab)
+          ? (params.tab as LinkableTab)
+          : 'board',
+      }
+    : null;
+
+  // The first page, so the shell renders with real rows instead of a spinner: unfiltered, or the
+  // linked project's tasks when the page was opened on one.
+  const initialTasks = await getFilteredTasks(initialView ? { projectId: initialView.projectId } : {});
 
   return (
     <div className="space-y-6 p-6">
@@ -73,6 +100,7 @@ export default async function ProjectsPage() {
         // `{ id, role }` crosses to the client — not the whole session user.
         viewer={{ id: viewer.id, role: viewer.role }}
         initialTasks={initialTasks}
+        initialView={initialView}
       />
     </div>
   );

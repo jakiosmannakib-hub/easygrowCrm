@@ -140,6 +140,7 @@ export function ProjectsFilterBar({
   canCreateTask,
   viewer,
   initialTasks,
+  initialView = null,
 }: {
   clients: PickableClient[];
   /** Every ACTIVE project, each carrying its `clientId` so Project ▾ can scope in memory. */
@@ -162,8 +163,17 @@ export function ProjectsFilterBar({
   viewer: StatusMenuViewer;
   /** The server's first result, so the page has rows before the client ever runs. */
   initialTasks: FilteredTaskRow[];
+  /**
+   * Open on one project and tab (`/projects?project=…&tab=…`, the Start Project landing,
+   * PUL-506). Month and Assignee stay at All: "month filter cleared" (§14.3.8). The page has
+   * already checked the project is active; `null` opens the default view.
+   */
+  initialView?: { clientId: string; projectId: string; tab: 'board' | 'list' | 'calendar' } | null;
 }) {
-  const [state, setState] = useState<FilterState>(INITIAL_STATE);
+  // Every key still comes from INITIAL_STATE (§16.10); `initialView` only overrides values.
+  const [state, setState] = useState<FilterState>(() =>
+    initialView ? { ...INITIAL_STATE, ...initialView } : INITIAL_STATE,
+  );
   const [tasks, setTasks] = useState<FilteredTaskRow[]>(initialTasks);
   const [loading, setLoading] = useState(false);
 

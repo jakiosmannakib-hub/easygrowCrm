@@ -32,16 +32,15 @@ import {
 import { actionResult } from '../../lib/action-result';
 import { authorize, can, type User } from '../../lib/authz';
 import { clock } from '../../lib/clock';
-import { addMonthsClamped } from '../../lib/dates';
 import { AppError } from '../../lib/errors';
 import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
-import { MONTH_NAMES } from '../templates/cascade';
 import { computeDueDates } from '../templates/due-rule-compute';
 import { tplAllTasks } from '../templates/hierarchy';
 import { loadTemplateTree } from '../templates/queries';
+import { projectTaskTitle } from '../templates/start-project';
 import { taskCapabilities } from './capabilities';
 import {
   getFilteredTasks,
@@ -254,16 +253,6 @@ export async function createProject(input: CreateProjectInput) {
 }
 
 /**
- * Replace every `{{token}}` in a template title. Only the three named tokens are known; any
- * other `{{…}}` text is left as typed rather than blanked.
- */
-function interpolateTitle(title: string, tokens: Record<string, string>): string {
-  let out = title;
-  for (const [token, value] of Object.entries(tokens)) out = out.replaceAll(`{{${token}}}`, value);
-  return out;
-}
-
-/**
  * §13.3.2 `createProjectFromTemplate` — MGR (`project.create`). The Start Project wizard's final
  * step (§14.3.8, PUL-506).
  *
@@ -383,18 +372,20 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
 
       const taskRows = flat.map((t) => {
         const override = overrides.get(t.id);
-        const monthStart = addMonthsClamped(parsed.startDate, t._monthNum - 1);
-        const monthName = MONTH_NAMES[Number(monthStart.slice(5, 7)) - 1] ?? '';
-        const roleAssignee = t.roleHint !== null ? (parsed.assignments[t.roleHint] ?? null) : null;
+        // Trimmed, as `templateRoles` trims the wizard's step-3 rows, so the keys always match.
+        const role = t.roleHint?.trim();
+        const roleAssignee = role ? (parsed.assignments[role] ?? null) : null;
         return {
           id: idOf(t.id),
           projectId,
           month: t._monthNum,
           category: t._catName,
-          title: interpolateTitle(t.title, {
-            ClientName: client.name,
-            ProjectName: parsed.name,
-            MonthName: monthName,
+          // Shared with the wizard's preview, so the preview shows exactly what is written.
+          title: projectTaskTitle(t.title, {
+            clientName: client.name,
+            projectName: parsed.name,
+            startDate: parsed.startDate,
+            monthNum: t._monthNum,
           }),
           assigneeId: override?.assigneeId !== undefined ? override.assigneeId : roleAssignee,
           roleHint: t.roleHint,

@@ -3,26 +3,40 @@
 // The template cards. No 'use client': the grid is static markup, and only the delete button is a
 // client island. Visibility of the edit affordances is decided by the page (from `can()` on the
 // DB-read viewer) and passed in; it is presentation only, since every action re-authorizes.
+// The delete button and the Start Project wizard are the client islands.
 
 import Link from 'next/link';
-import { buttonVariants, Button } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import type { StartProjectTemplate } from '../start-project';
 import { DeleteTemplateButton } from './delete-template-button';
+import { StartProjectWizard, type PickOption } from './start-project-wizard';
 import { CategoryBadge, MetaRow, RolePills, type TemplateCardData } from './template-summary';
 
 export interface TemplateGridPermissions {
   /** `template.delete`: SA · TL · PM. HR sees no `×` (§14.4.1). */
   canDelete: boolean;
-  /** `project.create`: HR sees no Start Project (§14.4.1). */
-  canStartProject: boolean;
+}
+
+/**
+ * What the Start Project wizard needs, or `null` when the viewer lacks `project.create` (HR,
+ * §14.4.1): then no card renders the button and none of this data is sent to the browser.
+ */
+export interface StartProjectData {
+  clients: PickOption[];
+  assignees: PickOption[];
+  /** Per template id. */
+  templates: Record<string, StartProjectTemplate>;
 }
 
 export function TemplatesGrid({
   templates,
   permissions,
+  startProject,
 }: {
   templates: TemplateCardData[];
   permissions: TemplateGridPermissions;
+  startProject: StartProjectData | null;
 }) {
   if (templates.length === 0) {
     return (
@@ -37,7 +51,12 @@ export function TemplatesGrid({
     // phone-width screen.
     <div className="grid grid-cols-[repeat(auto-fill,minmax(min(340px,100%),1fr))] gap-4">
       {templates.map((t) => (
-        <TemplateCard key={t.id} template={t} permissions={permissions} />
+        <TemplateCard
+          key={t.id}
+          template={t}
+          permissions={permissions}
+          startProject={startProject}
+        />
       ))}
     </div>
   );
@@ -46,10 +65,13 @@ export function TemplatesGrid({
 function TemplateCard({
   template,
   permissions,
+  startProject,
 }: {
   template: TemplateCardData;
   permissions: TemplateGridPermissions;
+  startProject: StartProjectData | null;
 }) {
+  const wizardTemplate = startProject?.templates[template.id];
   return (
     <Card>
       <CardHeader className="gap-2">
@@ -77,14 +99,12 @@ function TemplateCard({
         >
           View
         </Link>
-        {permissions.canStartProject ? (
-          // Disabled until PUL-506 ships the Start Project wizard. The title sits on a wrapper
-          // because a disabled button takes no pointer events, so its own title never shows.
-          <span title="Available once the Start Project wizard ships">
-            <Button size="sm" disabled>
-              Start Project
-            </Button>
-          </span>
+        {startProject && wizardTemplate ? (
+          <StartProjectWizard
+            template={wizardTemplate}
+            clients={startProject.clients}
+            assignees={startProject.assignees}
+          />
         ) : null}
       </CardFooter>
     </Card>

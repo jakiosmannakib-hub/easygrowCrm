@@ -85,7 +85,13 @@ Client management lives with Settings (SA + HR). TL/PM pick clients when startin
 
 ### 13.2.1 `createClient` — **Who:** SA, HR (`client.create`). **Input:** `{ name, contact?, notes? }`. **Audit:** `client.created`.
 ### 13.2.2 `updateClient` — **Who:** SA, HR (`client.update`). **Input:** `{ clientId, name?, contact?, notes? }`. **Audit:** `client.updated`.
-### 13.2.3 `archiveClient` — **Who:** SA, HR (`client.archive`). **Guards:** no non-archived projects reference it (`GATE:client_in_use`). **Tx:** soft delete. **Audit:** `client.archived`. (`client.read` is open to all roles per §9.6 ¹⁰.)
+### 13.2.3 `archiveClient` — **Who:** SA, HR (`client.archive`). **Guards:** no non-archived projects reference it (`GATE:client_in_use`). *(Amendment M: no live **accounts** reference it; same code.)* **Tx:** soft delete. **Audit:** `client.archived`. (`client.read` is open to all roles per §9.6 ¹⁰.)
+
+**Accounts (Amendment M).** A client's end businesses. Unlike clients, managers administer them too (§9.6 ¹²), from the Projects workspace (§14.3).
+
+### 13.2.4 `createAccount` — **Who:** SA, TL, PM, HR (`account.create`). **Input:** `{ clientId, name, location?, website?, notes? }`. **Guards:** client exists and is live (`NOT_FOUND`). **Audit:** `account.created`.
+### 13.2.5 `updateAccount` — **Who:** SA, TL, PM, HR (`account.update`). **Input:** `{ accountId, name?, location?, website?, notes? }` (moving an account to another client is not supported). **Audit:** `account.updated` (diff only).
+### 13.2.6 `archiveAccount` / `unarchiveAccount` — **Who:** SA, TL, PM, HR (`account.archive`). **Guards:** archive: no non-archived projects reference it (`GATE:account_in_use`); unarchive: its client is live (`NOT_FOUND`). **Tx:** set / clear `deleted_at`. **Audit:** `account.archived` / `account.unarchived`.
 
 ---
 
@@ -93,7 +99,7 @@ Client management lives with Settings (SA + HR). TL/PM pick clients when startin
 
 ### 13.3.1 `createProject` (manual)
 - **Who:** MGR (`project.create`)
-- **Input:** `{ clientId, name, type, startDate, deadline? }`
+- **Input:** `{ accountId, name, type, startDate, deadline? }` *(Amendment M: `accountId` replaces `clientId`; the account and its client must both be live, `NOT_FOUND` otherwise. The same swap applies to 13.3.2's input and 13.3.3's `clientId?`, which becomes `accountId?`.)*
 - **Audit:** `project.created`. **Notify:** `N:project_started` → all MGR.
 
 ### 13.3.2 `createProjectFromTemplate` (the Start Project Wizard's final step)
@@ -217,6 +223,11 @@ All **Who:** MGR (`template.create/update/delete`; HR reads only, §9.6 ⁹). Al
 
 ### 13.4.5 `setTaskStatusProtected` (manager overrides)
 - **Who:** MGR (`project_task.set_status_protected`)
+> **Amendment M: the `completed` bypass is removed.** `status: completed` is refused for every
+> role with `GATE:use_review`, the same refusal as a direct `approved`. The only way to close a
+> task is a manager approving its submission through `reviewTask` (13.4.7). The text below is
+> kept for history; where it describes `completed` as allowed, this note wins.
+
 - **Input:** `{ taskId, version, status: approved|completed|cancelled|revision_required, note?: string }`
 - **Guards:** `completed` from any non-terminal state = the QC-bypass override (PRD §4.2) — allowed, that's its purpose; `cancelled` from `submitted` also resolves the open submission (it will simply never receive a review — the queue query excludes non-`submitted` tasks so it disappears cleanly); direct `revision_required` requires `note` (`GATE:note_required`); direct `approved` outside `reviewTask` is **not allowed** — approving a submitted task must go through 13.4.7 so the review row exists (`GATE:use_review`).
 - **Audit:** `project_task.status_overridden` (records the bypass explicitly — this is the "silent QC bypass" made loud).
@@ -367,12 +378,13 @@ Reads go through `queries.ts` per feature; every query calls `requireUser()` and
 | `getEmployees` | SA/HR full; MGR gets the minimal active-user directory needed for assignee/reviewer dropdowns (id, name, title, role — nothing else) |
 | `getTemplates / getTemplate` | MGR + HR (§9.6 ⁹: HR reads templates; edit stays MGR) |
 | `getClients` | all roles (`client.read`, §9.6 ¹⁰) — feeds the filter bar and Start Project wizard |
+| `getWorkspaceTree` | all roles (`account.read` / `project_task.read`) — Amendment M: live clients → live accounts → active projects, each project with open / awaiting-review / done / total task counts. Feeds the §14.3 workspace tree and the client and account overviews. One read, nested, never a flat list |
 | `getDailyPlan` | self for EMP; any employee + date for MGR/HR (§14.7) |
 | `getWorkload` | MGR + HR — per-person open task count + est hours + on-break dot (§14.3.6); dependency-blocked counts as open |
 | `previewLeave` | self — server-computed `{days, remaining}` for the live modal preview (PUL-703.2); **same function** as 13.6.1's computation, so preview and submission can never disagree |
 | `getAuditLog` | SA all; HR auto-scoped `resource_type IN ('leave_request','employee')` (§9.6 ⁶); filters `{actorId?, resourceType?, resourceId?, from?, to?}`; paginated; **read is audited** |
 | `getNotifications` | recipient only |
-| `exportClientTasks (weekly/monthly)` | MGR; server-side XLSX (§12); client-safe rules from PRD §3.1.7 (only completed/approved/in-progress; `approved` relabeled "Completed" for the client; proof link only, no internal fields). **As built (PUL-413):** `GET /api/export/client-tasks?period=weekly\|monthly`, a route handler because the response is a file. It returns plain HTTP (400 bad period / 403 not a manager / `{empty:true}` for zero rows), not `ActionResult`. Reads via `getClientExportRows({from,to})`; the window is `dhakaToday()−6` or `−29` through today, inclusive. **Gap:** §9.6 has no export row, so the gate is `isManagerRole` on the DB-read role until §9.6 adds one (§17 PUL-413) |
+| `exportClientTasks (weekly/monthly)` | MGR; server-side XLSX (§12); client-safe rules from PRD §3.1.7 (only completed/approved/in-progress; `approved` relabeled "Completed" for the client; proof link only, no internal fields). **As built (PUL-413):** `GET /api/export/client-tasks?period=weekly\|monthly`, a route handler because the response is a file. It returns plain HTTP (400 bad period / 403 not a manager / `{empty:true}` for zero rows), not `ActionResult`. Reads via `getClientExportRows({from,to})`; the window is `dhakaToday()−6` or `−29` through today, inclusive. **Gap:** §9.6 has no export row, so the gate is `isManagerRole` on the DB-read role until §9.6 adds one (§17 PUL-413). **Amendment M (PUL-418):** scoped, exactly one of `?clientId=` / `?accountId=` required (400 otherwise; 404 for an unknown or archived scope). A client export has a summary sheet plus one sheet per account; an account export has one sheet. Rows gain the account name; still no internal fields |
 | `exportAttendance` | MGR/HR; server-side XLSX |
 
 ---

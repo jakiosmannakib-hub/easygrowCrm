@@ -60,10 +60,11 @@ These are the rules that, if broken, cost the most to unwind. Most are mechanica
 
 ### Data shape
 - **Templates are a strict hierarchy:** Template → Month → Category → Task → Subtask. There is no flat `tasks[]`. `tplAllTasks()` is the *only* way to flatten one. No parallel flat caches of hierarchical data.
+- **Clients are white-label partners (Amendment M):** Client › **Account** (the partner's end business) › Project. A project belongs to an account (`projects.account_id`), never directly to a client; reach the client through the account. Don't add a `client_id` back onto `projects`.
 - **State is declared upfront.** No lazy `if (!state.x) state.x = …` initializers; no `window.*` globals as state (both were prototype patterns that caused real bugs).
 
 ### Language (mechanically grepped by CI, PUL-809)
-- **"Completed" never appears as an employee-facing label.** Employees see **"Done — send to review."** "Completed" is a manager-only QC-bypass status. The one client-facing exception is `CLIENT_STATUS_LABEL` in `features/projects/display.ts`, which the client Excel export uses (§3.1.7 relabels `approved` → "Completed" for clients). Never render it in an employee-facing component.
+- **"Completed" never appears as an employee-facing label.** Employees see **"Done — send to review."** "Completed" was the manager-only QC-bypass status; **Amendment M removed that bypass**, so nothing new is ever set to `completed` and every task closes through review (`approved`). The enum value stays only so old rows read. The one client-facing exception is `CLIENT_STATUS_LABEL` in `features/projects/display.ts`, which the client Excel export uses (§3.1.7 relabels `approved` → "Completed" for clients). Never render it in an employee-facing component.
 - **"Score" appears nowhere** in `features/**` UI strings. The scoring system was deleted (Amendment H).
 - **"Stuck" never labels a status.** Revision Required displays as "Needs revision."
 

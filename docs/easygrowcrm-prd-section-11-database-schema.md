@@ -103,9 +103,24 @@ create table clients (
   deleted_at  timestamptz
 );
 
+-- Amendment M: a client's end business. Client › Account › Project.
+create table accounts (
+  id          text primary key,
+  client_id   text not null references clients(id),
+  name        text not null,
+  location    text,                           -- e.g. 'Austin, TX' (local SEO market)
+  website     text,
+  notes       text,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  deleted_at  timestamptz
+);
+
+create index accounts_client_idx on accounts(client_id) where deleted_at is null;
+
 create table projects (
   id           text primary key,
-  client_id    text not null references clients(id),
+  account_id   text not null references accounts(id),   -- Amendment M: replaces client_id
   name         text not null,
   type         text not null,                 -- 'Retainer' | 'One-off' | template category
   status       project_status not null default 'active',   -- NEW: lifecycle (review fix #12)
@@ -119,9 +134,11 @@ create table projects (
   constraint deadline_after_start check (deadline is null or deadline >= start_date)
 );
 
-create index projects_client_idx on projects(client_id) where deleted_at is null;
+create index projects_account_idx on projects(account_id) where deleted_at is null;
 create index projects_status_idx on projects(status) where deleted_at is null;
 ```
+
+- **Amendment M (PUL-414).** `accounts` sits between `clients` and `projects`; `projects.client_id` is gone, and a project's client is `accounts.client_id`. Archiving an account is a soft delete (`deleted_at`), blocked while it has live projects; archiving a client is blocked while it has live accounts. The migration backfills one account per existing client (same name) and re-points existing projects to it.
 
 - **`current_month` is not stored.** It's derived: months elapsed since `start_date` in Asia/Dhaka (resolves review issue "who increments it" — nobody; it's computed).
 - **Deleting a project** = soft delete; the app must block it while any task is `submitted` (pending review), and cascades soft-delete to its tasks.
@@ -632,6 +649,7 @@ revoke update, delete on audit_log from easygrowcrm_app;
 | 008 | project_tasks | + SA-assignee trigger + task_subtasks / task_checklist_items / task_comments | PUL-401 |
 | 009 | QC trail | task_submissions + task_reviews (+ one_review_per_submission) | PUL-401, PUL-603 |
 | 010 | templates hierarchy | templates + template_months + template_categories + template_tasks + template_task_subtasks | PUL-501 |
+| 010a | accounts (Amendment M) | accounts; `projects.client_id` → `projects.account_id` with backfill. Drizzle file `0009_accounts.sql` | PUL-414 |
 | 011 | leave | leave_requests + leave_quotas (seeded) | PUL-701 |
 | 012 | notifications | notifications + webhook_outbox | PUL-801 |
 

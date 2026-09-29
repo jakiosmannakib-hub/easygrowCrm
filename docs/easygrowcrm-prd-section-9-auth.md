@@ -277,7 +277,7 @@ Legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **
 | `project_task.delete` | ✅ | ✅ | ✅ | ⛔ | ⛔ |
 
 ¹ `Planned` / `In Progress` / `Blocked`
-² `Approved` / `Completed` / `Cancelled` / `Revision Required`
+² `Approved` / `Cancelled` / `Revision Required`. *(Amendment M removed `Completed`: no role may close a task without review. `Approved` is reached only through `reviewTask`, §13.4.7.)*
 ³ **Hard constraint: `actor.id ≠ task.submitted_by`.** See §9.7.
 ⁷ `subtask_manage` = add / toggle / remove subtasks. `checklist_toggle` = tick/untick items; `checklist_manage` = add/delete items (managers only — the checklist is the definition-of-done, so employees may complete it but not redefine it). **All three are locked while the task is `Submitted`** (the §14.3.3 lock rule); `comment` is the only action that stays open in every status. Checklist completeness gates submission; subtasks never gate anything — informational only.
 
@@ -325,6 +325,8 @@ Legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **
 | `template.create/update/delete` ⁹ | ✅ | ✅ | ✅ | ⛔ | ⛔ |
 | `client.read` ¹⁰ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `client.create/update/archive` ¹⁰ | ✅ | ⛔ | ⛔ | ✅ | ⛔ |
+| `account.read` ¹² | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `account.create/update/archive` ¹² | ✅ | ✅ | ✅ | ✅ | ⛔ |
 | `personal_task.crud` ¹¹ | own | own | own | own | ⛔ |
 | `settings.read/update` | ✅ | ⛔ | ⛔ | ✅ | ⛔ |
 | `audit_log.read` | ✅ | ⛔ | ⛔ | scoped ⁶ | ⛔ |
@@ -333,7 +335,9 @@ Legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **
 
 ⁹ **HR may read templates**, but **template editing stays manager-only** — HR does not build delivery workflows. Note the prototype's `canEdit` includes `admin_hr`; that is a prototype deviation and the PRD wins (Amendment A / §16.16). `template.create/update/delete` covers the entire hierarchy: months, categories, tasks, and subtasks within a template (add / rename / reorder / delete at every level, per §14.4.2–§14.4.5).
 
-¹⁰ Everyone can **read** clients (client names appear on projects, filters, and task titles that every employee sees). Create/update/archive is SA + HR only, consistent with its home in Settings (§14.14); archive is blocked with a `GATE` while the client has live projects.
+¹⁰ Everyone can **read** clients (client names appear on projects, filters, and task titles that every employee sees). Create/update/archive is SA + HR only, consistent with its home in Settings (§14.14); archive is blocked with a `GATE` while the client has live projects. *(Amendment M: while it has live **accounts**.)*
+
+¹² **Amendment M.** An account is a client's end business (Client › Account › Project). Everyone reads accounts, for the same reason as ¹⁰. Unlike clients, **managers as well as SA + HR** create, update and archive them, because managers onboard end businesses from the Projects workspace (§14.3). Archive is blocked with `GATE:account_in_use` while the account has live projects.
 
 ¹¹ Private per-user checklist for manager-level roles + HR, matching the §14.1 route visibility. `own` = each user reads and writes only their own rows; no user — including SA — can read another's. **Documented exception: personal tasks are NOT audited** (§14.10 — personal scratchpad, no accountability value).
 
@@ -389,7 +393,7 @@ revoke update, delete on audit_log from application_role;
 > which blocks **every** role including the owner — a stronger guarantee than a REVOKE, with no
 > second DB user to provision. The invariant in §9.7 is unchanged; only its mechanism is. See §11.8.
 
-**Log every one of these:** task status changes, submissions, review decisions, meta-ratings, subtask add/toggle/remove, checklist add/toggle/delete, EOD acknowledgments and flags, leave requests, leave decisions and reversals, employee create/update/deactivate/reactivate, role changes, project create/archive/delete, client create/update/archive, template create/delete and every template-hierarchy edit (month/category/task/subtask add/rename/delete), settings changes, **audit-log views themselves** (`audit_log.viewed` — the §14.13 banner "Viewing this log is itself logged" must be literally true), and every failed authorization attempt (`403`). The last one is your intrusion signal. The one documented exception: `personal_task` rows are never audited (§9.6 ¹¹).
+**Log every one of these:** task status changes, submissions, review decisions, meta-ratings, subtask add/toggle/remove, checklist add/toggle/delete, EOD acknowledgments and flags, leave requests, leave decisions and reversals, employee create/update/deactivate/reactivate, role changes, project create/archive/delete, client create/update/archive, account create/update/archive/unarchive (Amendment M), template create/delete and every template-hierarchy edit (month/category/task/subtask add/rename/delete), settings changes, **audit-log views themselves** (`audit_log.viewed` — the §14.13 banner "Viewing this log is itself logged" must be literally true), and every failed authorization attempt (`403`). The last one is your intrusion signal. The one documented exception: `personal_task` rows are never audited (§9.6 ¹¹).
 
 **Write it from inside the same transaction as the mutation.** If the business write commits and the log write doesn't, the log is a lie.
 

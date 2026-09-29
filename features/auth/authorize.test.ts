@@ -2,7 +2,7 @@
 //
 // §15.4 mandatory test — "every role × every action in the §9.6 table, allow and deny
 // cells both asserted". Done-check (PUL-104): the cell count here equals the cell count
-// in §9.6 — 53 actions × 5 roles = 265. Two of the 53 are actions §13 defines but §9.6 has
+// in §9.6 — 57 actions × 5 roles = 285. Two of the 57 are actions §13 defines but §9.6 has
 // no row for — `employee.reactivate` (§13.1.5) and `project.unarchive` (§13.3.4); both are
 // noted at their entries below, and §9.6 should gain the rows.
 //
@@ -92,6 +92,11 @@ const EXPECTED: Record<string, [Expected, Expected, Expected, Expected, Expected
   'client.create': ['allow', 'deny', 'deny', 'allow', 'deny'],
   'client.update': ['allow', 'deny', 'deny', 'allow', 'deny'],
   'client.archive': ['allow', 'deny', 'deny', 'allow', 'deny'],
+  // Amendment M, §9.6 note 12: everyone reads accounts; SA, TL, PM and HR administer them.
+  'account.read': ['allow', 'allow', 'allow', 'allow', 'allow'],
+  'account.create': ['allow', 'allow', 'allow', 'allow', 'deny'],
+  'account.update': ['allow', 'allow', 'allow', 'allow', 'deny'],
+  'account.archive': ['allow', 'allow', 'allow', 'allow', 'deny'],
 
   // Personal tasks — the documented audit carve-out (§9.6 note 11)
   'personal_task.crud': ['own', 'own', 'own', 'own', 'deny'],
@@ -109,7 +114,7 @@ function userFor(role: Role): User {
 }
 
 describe('can() encodes the §9.6 permission table', () => {
-  it('asserts every cell of the matrix — 265 = 53 actions × 5 roles', () => {
+  it('asserts every cell of the matrix — 285 = 57 actions × 5 roles', () => {
     let cells = 0;
 
     for (const [name, row] of Object.entries(EXPECTED)) {
@@ -154,7 +159,7 @@ describe('can() encodes the §9.6 permission table', () => {
 
     // The done-check, made mechanical: if §9.6 grows and this fixture wasn't updated to
     // match, the count differs and CI fails rather than silently under-testing.
-    expect(cells, 'cell count must equal §9.6').toBe(265);
-    expect(Object.keys(EXPECTED)).toHaveLength(53);
+    expect(cells, 'cell count must equal §9.6').toBe(285);
+    expect(Object.keys(EXPECTED)).toHaveLength(57);
   });
 });

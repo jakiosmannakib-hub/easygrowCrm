@@ -1,7 +1,7 @@
 // features/templates/components/start-project-wizard.tsx — PUL-506 Stage 2, §14.3.8
 //
 // The Start Project wizard: a 4-step modal that turns a template into a live project.
-//   1. Choose client & project name.
+//   1. Choose client, then one of its accounts (Amendment M), and the project name.
 //   2. Set dates: start date and an optional deadline.
 //   3. Assign team members to roles: one row per role the template's tasks use.
 //   4. Preview: every task that will be generated, read-only.
@@ -11,7 +11,7 @@
 // Same discipline as the Add Month wizard: ONE state object declared upfront (§16.10), the body
 // rendered only while the dialog is open so MOUNTING IS THE RESET, and a `DialogTrigger` rather
 // than an externally controlled `open`. There is no on-open fetch: the page hands down the
-// template, clients and assignable users.
+// template, clients, accounts and assignable users.
 //
 // ── Preview dates ────────────────────────────────────────────────────────────────────────
 // Computed here with `computeDueDates` (PUL-505) and an EMPTY holidays set, exactly as the action
@@ -64,10 +64,19 @@ export interface PickOption {
   name: string;
 }
 
+/** An account option: a live account of a live client (`activeAccountsQuery`). */
+export interface AccountOption {
+  id: string;
+  clientId: string;
+  name: string;
+}
+
 interface WizardState {
   step: 1 | 2 | 3 | 4;
-  /** `''` until a client is picked. */
+  /** `''` until a client is picked. Only narrows Account ▾; the project is written to the account. */
   clientId: string;
+  /** `''` until an account is picked. Cleared whenever the client changes. */
+  accountId: string;
   name: string;
   /** `YYYY-MM-DD`. */
   startDate: string;
@@ -86,12 +95,13 @@ const UNASSIGNED = '__unassigned__';
 /** No holidays table yet (PUL-301): the action uses an empty set too. */
 const NO_HOLIDAYS: ReadonlySet<string> = new Set();
 
-const STEP_LABELS = ['Client & name', 'Dates', 'Assign roles', 'Preview'] as const;
+const STEP_LABELS = ['Client & account', 'Dates', 'Assign roles', 'Preview'] as const;
 
 function initialState(template: StartProjectTemplate): WizardState {
   return {
     step: 1,
     clientId: '',
+    accountId: '',
     // §14.3.8 step 1: defaults to the template name, editable.
     name: template.name,
     startDate: dhakaToday(),
@@ -120,11 +130,14 @@ function rulePill(task: StartProjectTask, indexById: Map<string, number>): strin
 export function StartProjectWizard({
   template,
   clients,
+  accounts,
   assignees,
 }: {
   template: StartProjectTemplate;
   /** Active (non-archived) clients. */
   clients: PickOption[];
+  /** Live accounts of live clients. */
+  accounts: AccountOption[];
   /** Active, non-SA users: who may hold a task. */
   assignees: PickOption[];
 }) {
@@ -135,7 +148,12 @@ export function StartProjectWizard({
       <DialogTrigger render={<Button size="sm">Start Project</Button>} />
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         {open ? (
-          <WizardBody template={template} clients={clients} assignees={assignees} />
+          <WizardBody
+            template={template}
+            clients={clients}
+            accounts={accounts}
+            assignees={assignees}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
@@ -145,10 +163,12 @@ export function StartProjectWizard({
 function WizardBody({
   template,
   clients,
+  accounts,
   assignees,
 }: {
   template: StartProjectTemplate;
   clients: PickOption[];
+  accounts: AccountOption[];
   assignees: PickOption[];
 }) {
   const router = useRouter();
@@ -159,6 +179,8 @@ function WizardBody({
   }
 
   const clientName = clients.find((c) => c.id === s.clientId)?.name ?? '';
+  const clientAccounts = accounts.filter((a) => a.clientId === s.clientId);
+  const accountName = clientAccounts.find((a) => a.id === s.accountId)?.name ?? '';
   const needsDeadline = template.tasks.some((t) => t.dueRule.kind === 'before_deadline');
   const unroledCount = template.tasks.filter((t) => t.roleHint === null).length;
 
@@ -166,6 +188,7 @@ function WizardBody({
   function next() {
     if (s.step === 1) {
       if (!s.clientId) return setS((p) => ({ ...p, stepError: 'Pick a client.' }));
+      if (!s.accountId) return setS((p) => ({ ...p, stepError: 'Pick an account.' }));
       if (!s.name.trim()) return setS((p) => ({ ...p, stepError: 'Give the project a name.' }));
     }
     if (s.step === 2) {
@@ -200,7 +223,7 @@ function WizardBody({
     const name = s.name.trim();
     const result = await createProjectFromTemplate({
       templateId: template.id,
-      clientId: s.clientId,
+      accountId: s.accountId,
       name,
       startDate: s.startDate,
       deadline: s.deadline || undefined,
@@ -240,7 +263,8 @@ function WizardBody({
             <Label htmlFor="spw-client">Client</Label>
             <Select
               value={s.clientId || null}
-              onValueChange={(v: string | null) => patch({ clientId: v ?? '' })}
+              // A new client invalidates the picked account: it belonged to the old one.
+              onValueChange={(v: string | null) => patch({ clientId: v ?? '', accountId: '' })}
             >
               <SelectTrigger id="spw-client" className="w-full">
                 {/* The children function maps the id to a name (see new-task-modal.tsx). */}
@@ -261,6 +285,37 @@ function WizardBody({
             {clients.length === 0 ? (
               <p className="text-muted-foreground text-xs">
                 No active clients. Add one in Settings first.
+              </p>
+            ) : null}
+          </div>
+
+          {/* Amendment M: the project belongs to one of the client's accounts (its end business). */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="spw-account">Account</Label>
+            <Select
+              value={s.accountId || null}
+              onValueChange={(v: string | null) => patch({ accountId: v ?? '' })}
+              disabled={!s.clientId || clientAccounts.length === 0}
+            >
+              <SelectTrigger id="spw-account" className="w-full">
+                <SelectValue>
+                  {(v: string | null) =>
+                    (v && clientAccounts.find((a) => a.id === v)?.name) ||
+                    (s.clientId ? 'Choose an account' : 'Choose a client first')
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {clientAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {s.clientId && clientAccounts.length === 0 ? (
+              <p className="text-muted-foreground text-xs">
+                {clientName} has no active accounts. Add one in Settings, under Clients.
               </p>
             ) : null}
           </div>
@@ -376,7 +431,7 @@ function WizardBody({
         <div className="grid gap-2">
           <p className="bg-muted rounded-md p-2 text-xs">
             {plural(template.tasks.length, 'task', 'tasks')} across{' '}
-            {plural(previewMonths, 'month', 'months')} for {clientName}, starting{' '}
+            {plural(previewMonths, 'month', 'months')} for {accountName} ({clientName}), starting{' '}
             {fmtDate(s.startDate, { relative: false })}
             {s.deadline ? `, deadline ${fmtDate(s.deadline, { relative: false })}` : ''}.
           </p>
@@ -400,6 +455,7 @@ function WizardBody({
                   <span className="font-medium">
                     {projectTaskTitle(t.title, {
                       clientName,
+                      accountName,
                       projectName: s.name.trim(),
                       startDate: s.startDate,
                       monthNum: t.monthNum,

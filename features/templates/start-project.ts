@@ -2,7 +2,8 @@
 //
 // What the Start Project wizard (client) and `createProjectFromTemplate` (server) must agree on,
 // in one place so the preview can never show a title the action would not write:
-//   - `projectTaskTitle`: the `{{ClientName}}` / `{{ProjectName}}` / `{{MonthName}}` substitution;
+//   - `projectTaskTitle`: the `{{ClientName}}` / `{{AccountName}}` / `{{ProjectName}}` /
+//     `{{MonthName}}` substitution;
 //   - `toStartProjectTemplate`: the serializable slice of a template tree the wizard needs.
 //
 // Pure and client-safe: no DB, no clock, no I/O. The tree import is type-only.
@@ -24,15 +25,25 @@ export function monthNameFor(startDate: string, monthNum: number): string {
 }
 
 /**
- * A template task title as the live task carries it. Only the three named tokens are replaced;
+ * A template task title as the live task carries it. Only the four named tokens are replaced;
  * any other `{{…}}` text is left as typed rather than blanked.
+ *
+ * Amendment M: `{{ClientName}}` is the white-label partner, `{{AccountName}}` the end business
+ * the work is for. A task title about the business ("GBP posts for …") wants `{{AccountName}}`.
  */
 export function projectTaskTitle(
   title: string,
-  ctx: { clientName: string; projectName: string; startDate: string; monthNum: number },
+  ctx: {
+    clientName: string;
+    accountName: string;
+    projectName: string;
+    startDate: string;
+    monthNum: number;
+  },
 ): string {
   const tokens: Record<string, string> = {
     ClientName: ctx.clientName,
+    AccountName: ctx.accountName,
     ProjectName: ctx.projectName,
     MonthName: monthNameFor(ctx.startDate, ctx.monthNum),
   };

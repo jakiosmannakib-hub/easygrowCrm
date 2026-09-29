@@ -7,10 +7,10 @@
 // envelope; `getSessionUser()` still re-reads `role` and `active` from Postgres (§16.5), so
 // every authz case is decided by an actual database row. Time is frozen through the clock port.
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { accounts, auditLog, clients, projects, user as userTable } from '../../db/schema';
+import { accounts, auditLog, clients, user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { expectFail, expectOk } from '../../tests/expect-result';
@@ -22,7 +22,7 @@ vi.mock('next/headers', () => ({ headers: async () => new Headers() }));
 vi.mock('../../lib/auth', () => ({ auth: { api: { getSession: () => getSession() } } }));
 
 const { archiveClient, createClient, updateClient } = await import('./actions');
-const { activeClientsQuery, clientsListQuery, getClientProjectUsage } = await import('./queries');
+const { activeClientsQuery, clientsListQuery } = await import('./queries');
 
 const NOW = new Date('2026-09-15T04:00:00.000Z');
 
@@ -146,23 +146,17 @@ describe('updateClient (§13.2.2)', () => {
 });
 
 /**
- * `seedMinimal` now seeds `proj_seed` — an ACTIVE project owned by `seed_client` (PUL-401.4) —
- * so the §13.2.3 `client_in_use` gate is live and `seed_client` no longer archives by default.
- *
- * That is the correct new behaviour, not an obstacle: these cases archive the *project* first,
- * which is what an operator would genuinely have to do. Archiving the project rather than
- * deleting it keeps the case closest to real use.
+ * Since PUL-415 (Amendment M) `archiveClient` is gated on live ACCOUNTS, and `seedMinimal` gives
+ * `seed_client` one live account, so the seed client does not archive by default. These cases
+ * archive that account first, which is what an operator would have to do. The gate itself
+ * (block, release, what does and does not count as live) is tested in `accounts.test.ts`, next to
+ * the account actions that open and close it.
  */
-/** The seed client's account ids (Amendment M: projects reach their client via an account). */
-function seedClientAccounts() {
-  return db.select({ id: accounts.id }).from(accounts).where(eq(accounts.clientId, seed.client.id));
-}
-
 async function releaseSeedClient() {
   await db
-    .update(projects)
-    .set({ status: 'archived' })
-    .where(inArray(projects.accountId, seedClientAccounts()));
+    .update(accounts)
+    .set({ deletedAt: NOW })
+    .where(eq(accounts.clientId, seed.client.id));
 }
 
 describe('archiveClient (§13.2.3)', () => {
@@ -202,58 +196,11 @@ describe('archiveClient (§13.2.3)', () => {
     expect(await auditFor(seed.client.id)).toHaveLength(1);
   });
 
-  it('blocks with GATE:client_in_use while the client has a live project', async () => {
-    // This case previously asserted the OPPOSITE — that the gate was vacuous and the archive
-    // succeeded — because `projects` did not exist and `getClientProjectUsage` returned a
-    // hard-coded empty list. PUL-401 created the table and PUL-402 Stage 2 filled the query,
-    // so the gate now bites and the expectation is corrected to match.
-    actAs(seed.superAdmin.id);
-
-    // Called through a real transaction handle, the way archiveClient calls it.
-    const usage = await db.transaction((tx) => getClientProjectUsage(tx, seed.client.id));
-    expect(usage.liveProjects).toEqual([{ projectId: seed.project.id, name: seed.project.name }]);
-
-    const failure = expectFail(
-      await archiveClient({ clientId: seed.client.id }),
-      'GATE',
-      'client_in_use',
-    );
-    expect(failure.details).toMatchObject({ projectIds: [seed.project.id] });
-
-    // Blocked means blocked: still live, no audit row.
-    expect((await target()).deletedAt).toBeNull();
-    expect(await auditFor(seed.client.id)).toHaveLength(0);
-  });
-
-  it('archives once the client has only archived projects', async () => {
-    actAs(seed.superAdmin.id);
-    await releaseSeedClient();
-
-    const usage = await db.transaction((tx) => getClientProjectUsage(tx, seed.client.id));
-    expect(usage.liveProjects).toEqual([]);
-
-    expectOk(await archiveClient({ clientId: seed.client.id }));
-    expect((await target()).deletedAt).toEqual(NOW);
-  });
-
-  it('archives a client that has no projects at all', async () => {
+  it('archives a client that has no accounts at all', async () => {
     actAs(seed.superAdmin.id);
 
     const created = expectOk(await createClient({ name: 'Never Engaged' }));
     expectOk(await archiveClient({ clientId: created.id }));
-  });
-
-  it('a soft-deleted project does not block either', async () => {
-    actAs(seed.superAdmin.id);
-
-    // Deleted is not merely archived, but neither is "live" — §13.2.3's gate is about work in
-    // flight, and a deleted project has none.
-    await db
-      .update(projects)
-      .set({ deletedAt: NOW })
-      .where(inArray(projects.accountId, seedClientAccounts()));
-
-    expectOk(await archiveClient({ clientId: seed.client.id }));
   });
 });
 

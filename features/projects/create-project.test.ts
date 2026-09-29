@@ -11,7 +11,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { auditLog, clients, projects, user as userTable } from '../../db/schema';
+import { accounts, auditLog, clients, projects, user as userTable } from '../../db/schema';
 import { clock } from '../../lib/clock';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { expectFail, expectOk } from '../../tests/expect-result';
@@ -42,7 +42,7 @@ function today(): string {
 
 function newProject(overrides: Partial<Parameters<typeof createProject>[0]> = {}) {
   return {
-    clientId: seed.client.id,
+    accountId: seed.account.id,
     name: 'Acme Q1 Retainer',
     type: 'Retainer',
     startDate: today(),
@@ -70,7 +70,7 @@ describe('createProject (§13.3.1)', () => {
     const created = expectOk(await createProject(newProject()));
 
     expect(created).toMatchObject({
-      accountId: seed.account.id, // the client's account (Stage 1 bridge, TODO(PUL-415.3))
+      accountId: seed.account.id,
       name: 'Acme Q1 Retainer',
       type: 'Retainer',
       startDate: today(),
@@ -153,13 +153,28 @@ describe('createProject (§13.3.1)', () => {
     expectFail(await createProject(newProject()), 'FORBIDDEN');
   });
 
-  it('rejects a nonexistent client with NOT_FOUND', async () => {
+  it('rejects a nonexistent account with NOT_FOUND', async () => {
     actAs(seed.projectManager.id);
 
-    expectFail(await createProject(newProject({ clientId: 'cli_does_not_exist' })), 'NOT_FOUND');
+    expectFail(await createProject(newProject({ accountId: 'acc_does_not_exist' })), 'NOT_FOUND');
   });
 
-  it('rejects an archived client with NOT_FOUND', async () => {
+  it('rejects an archived account with NOT_FOUND', async () => {
+    actAs(seed.projectManager.id);
+
+    await db
+      .update(accounts)
+      .set({ deletedAt: clock.now() })
+      .where(eq(accounts.id, seed.account.id));
+
+    expectFail(await createProject(newProject()), 'NOT_FOUND');
+    expect(await db.select().from(projects).where(eq(projects.name, 'Acme Q1 Retainer'))).toEqual(
+      [],
+    );
+  });
+
+  // The account itself is live here: `requireLiveAccount` checks the client too (Amendment M).
+  it('rejects a live account whose client is archived with NOT_FOUND', async () => {
     actAs(seed.projectManager.id);
 
     await db

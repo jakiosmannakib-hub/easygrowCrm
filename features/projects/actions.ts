@@ -16,7 +16,7 @@
 
 'use server';
 
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import {
   accounts,
@@ -76,63 +76,38 @@ import {
 } from './schema';
 
 /**
- * Resolve a client that a project may legally point at: it must exist AND not be archived.
+ * Resolve an account a project may legally point at (Amendment M): the account exists and is not
+ * archived, AND its client is not archived. Both halves matter: an archived client's accounts
+ * stay live in the row (archiving a client needs its accounts archived first, but a hand-edited
+ * row or a race must still not gain a new project).
  *
- * Takes the executor FIRST so callers pass their `tx` — the check and the write then share one
- * snapshot, the §17.7 #2 fix that `getClientProjectUsage` already applies. Reading against the
- * global `db` from inside `withTx` would sit outside the transaction, and a client archived in
- * between would leave a live project pointing at it.
+ * Takes the executor FIRST so callers pass their `tx`: the check and the write then share one
+ * snapshot (the §17.7 #2 fix), so an account archived in between cannot be left with a live
+ * project on it.
  *
  * NOT_FOUND rather than GATE for the archived case, deliberately: from the caller's point of
- * view there is no such selectable client. `activeClientsQuery` never offers an archived one,
- * so a payload naming one is a stale form or a hand-made request, not a user who needs telling
- * which rule they hit.
+ * view there is no such selectable account. `activeAccountsQuery` never offers one, so a payload
+ * naming one is a stale form or a hand-made request, not a user who needs telling which rule
+ * they hit.
  *
- * Returns the client's name, which Start Project (§13.3.2) substitutes for `{{ClientName}}`.
+ * Returns the account and client names, which Start Project (§13.3.2) substitutes for
+ * `{{AccountName}}` and `{{ClientName}}`.
  */
-async function requireLiveClient(
+async function requireLiveAccount(
   executor: Executor,
-  clientId: string,
-): Promise<{ id: string; name: string }> {
+  accountId: string,
+): Promise<{ id: string; name: string; clientName: string }> {
   const [row] = await executor
-    .select({ id: clients.id, name: clients.name })
-    .from(clients)
-    .where(and(eq(clients.id, clientId), isNull(clients.deletedAt)))
-    .limit(1);
-
-  if (!row) {
-    throw new AppError('NOT_FOUND', 'Client not found');
-  }
-  return row;
-}
-
-/**
- * **TEMPORARY Stage 1 bridge (PUL-414), removed by PUL-415.3.** Amendment M put an account
- * between a client and its projects, but `createProject`, `createProjectFromTemplate` and
- * `updateProject` still take a `clientId` until PUL-415.3 switches them to `accountId`. This
- * resolves the account a client-addressed project lands in: the client's **oldest live
- * account** (`created_at`, then `id`, so the pick is deterministic).
- *
- * Every client that existed at migration 0009 has exactly one account (the backfilled
- * `acc_<client id>`), so for them behaviour is unchanged. A client created after the migration
- * has no account until PUL-415 ships `createAccount`, and gets NOT_FOUND here.
- *
- * Call after `requireLiveClient`, on the same executor, so both reads share the tx snapshot.
- */
-async function requireClientAccount(
-  executor: Executor,
-  clientId: string,
-): Promise<{ id: string; name: string }> {
-  // TODO(PUL-415.3): delete this helper when the project actions take `accountId`.
-  const [row] = await executor
-    .select({ id: accounts.id, name: accounts.name })
+    .select({ id: accounts.id, name: accounts.name, clientName: clients.name })
     .from(accounts)
-    .where(and(eq(accounts.clientId, clientId), isNull(accounts.deletedAt)))
-    .orderBy(asc(accounts.createdAt), asc(accounts.id))
+    .innerJoin(clients, eq(clients.id, accounts.clientId))
+    .where(
+      and(eq(accounts.id, accountId), isNull(accounts.deletedAt), isNull(clients.deletedAt)),
+    )
     .limit(1);
 
   if (!row) {
-    throw new AppError('NOT_FOUND', 'This client has no account yet');
+    throw new AppError('NOT_FOUND', 'Account not found');
   }
   return row;
 }
@@ -147,7 +122,7 @@ async function requireClientAccount(
  * edit gives one of them an exception nobody notices.
  *
  * Takes the executor FIRST so callers pass their `tx`, the same convention as
- * `requireLiveClient` and `getClientProjectUsage`: the check and the write then share one
+ * `requireLiveAccount` and `getAccountProjectUsage`: the check and the write then share one
  * snapshot, so a user deactivated between the guard and the UPDATE cannot slip through.
  *
  * **The app-layer check exists even though `pt_no_sa_assignee` (migration 0006) enforces the
@@ -237,8 +212,7 @@ export async function createProject(input: CreateProjectInput) {
     // 3. TRANSACT
     const row = await withTx(async (tx) => {
       // Guard and write share the transaction's snapshot.
-      await requireLiveClient(tx, parsed.clientId);
-      const account = await requireClientAccount(tx, parsed.clientId);
+      await requireLiveAccount(tx, parsed.accountId);
 
       const id = `prj_${crypto.randomUUID()}`;
       const now = clock.now();
@@ -247,7 +221,7 @@ export async function createProject(input: CreateProjectInput) {
         .insert(projects)
         .values({
           id,
-          accountId: account.id,
+          accountId: parsed.accountId,
           name: parsed.name,
           type: parsed.type,
           startDate: parsed.startDate,
@@ -291,7 +265,7 @@ export async function createProject(input: CreateProjectInput) {
  *
  * Guards, all read on the `tx` so they and the clone share one snapshot (the `loadTemplateTree`
  * docblock's reason for taking an executor):
- *   1. **Client live** — `requireLiveClient`, as `createProject`.
+ *   1. **Account and its client live** — `requireLiveAccount`, as `createProject`.
  *   2. **Template exists and is not soft-deleted** → `NOT_FOUND`, the same refusal the template
  *      actions give.
  *   3. **Every named assignee is active and not SA** — `requireAssignableUser` for each distinct
@@ -306,7 +280,8 @@ export async function createProject(input: CreateProjectInput) {
  * The clone walks `tplAllTasks` (§16.7, the only flattener): one `project_tasks` row per
  * template task, `category` = category name, `month` = month `num`, `assignee` =
  * `assignments[roleHint]` (null when the role is unmapped, mapped to null, or the task has no
- * role). The title's `{{ClientName}}` / `{{ProjectName}}` / `{{MonthName}}` are substituted;
+ * role). The title's `{{ClientName}}` / `{{AccountName}}` / `{{ProjectName}}` / `{{MonthName}}`
+ * are substituted;
  * `MonthName` is the calendar month of that task's month start (`startDate` + (month−1) months,
  * day-clamped, the same anchor `computeDueDates` uses). `checklist[]` becomes unchecked
  * `task_checklist_items`, subtasks become `task_subtasks` with `done = false`, and an `after`
@@ -337,8 +312,7 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
 
     // 3. TRANSACT
     const result = await withTx(async (tx) => {
-      const client = await requireLiveClient(tx, parsed.clientId);
-      const account = await requireClientAccount(tx, client.id);
+      const account = await requireLiveAccount(tx, parsed.accountId);
 
       const tree = await loadTemplateTree(tx, parsed.templateId);
       if (!tree) throw new AppError('NOT_FOUND', 'Template not found');
@@ -416,7 +390,8 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
           category: t._catName,
           // Shared with the wizard's preview, so the preview shows exactly what is written.
           title: projectTaskTitle(t.title, {
-            clientName: client.name,
+            clientName: account.clientName,
+            accountName: account.name,
             projectName: parsed.name,
             startDate: parsed.startDate,
             monthNum: t._monthNum,
@@ -529,8 +504,7 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
 
 /**
  * The only columns §13.3.3 may touch. Only `deadline` is nullable; the other three are NOT NULL.
- * `accountId` is what a `clientId` in the input resolves to (Stage 1 bridge, see
- * `requireClientAccount`), so the diff and the audit row name the column actually written.
+ * `accountId` moves the project to another account (Amendment M, §13.3.3).
  */
 type ProjectEdit = {
   name?: string;
@@ -597,25 +571,9 @@ export async function updateProject(input: UpdateProjectInput) {
         });
       }
 
-      // Stage 1 bridge (TODO(PUL-415.3)): the input still names a client. The same client as now
-      // is no change — so a project whose client was archived after it started stays editable,
-      // exactly as before. A different client is validated live and resolved to its account.
-      let movedTo: string | undefined;
-      if (parsed.clientId !== undefined) {
-        const [owner] = await tx
-          .select({ clientId: accounts.clientId })
-          .from(accounts)
-          .where(eq(accounts.id, current.accountId))
-          .limit(1);
-        if (owner?.clientId !== parsed.clientId) {
-          await requireLiveClient(tx, parsed.clientId);
-          movedTo = (await requireClientAccount(tx, parsed.clientId)).id;
-        }
-      }
-
       const submitted: ProjectEdit = {
         ...(parsed.name !== undefined && { name: parsed.name }),
-        ...(movedTo !== undefined && { accountId: movedTo }),
+        ...(parsed.accountId !== undefined && { accountId: parsed.accountId }),
         ...(parsed.startDate !== undefined && { startDate: parsed.startDate }),
         ...(parsed.deadline !== undefined && { deadline: parsed.deadline }),
       };
@@ -636,6 +594,13 @@ export async function updateProject(input: UpdateProjectInput) {
       // Nothing actually moved: no UPDATE, no audit row.
       if (Object.keys(changes).length === 0) {
         return current;
+      }
+
+      // Only when the account is genuinely changing: re-validating an unchanged one would block
+      // edits to a project whose account was archived after it started, which is legitimate
+      // historical work.
+      if (changes.accountId !== undefined) {
+        await requireLiveAccount(tx, changes.accountId);
       }
 
       const [row] = await tx

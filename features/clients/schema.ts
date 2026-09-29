@@ -39,3 +39,48 @@ export const ArchiveClientInput = z.object({
 });
 
 export type ArchiveClientInput = z.infer<typeof ArchiveClientInput>;
+
+// ── Accounts (Amendment M, §13.2.4 to §13.2.6) ─────────────────────────────────────────────
+// A client's end businesses. Same conventions as the client inputs above.
+
+/** §13.2.4 input. Only `name` is required; `location`, `website` and `notes` are free text. */
+export const CreateAccountInput = z.object({
+  clientId: z.string().min(1),
+  name: z.string().trim().min(1),
+  location: z.string().optional(),
+  website: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+export type CreateAccountInput = z.infer<typeof CreateAccountInput>;
+
+/**
+ * §13.2.5 input, the PUL-203 diff convention: absent is "leave alone", `null` is "clear".
+ * `name` can change but never clear. There is no `clientId`: §13.2.5 does not support moving an
+ * account to another client.
+ */
+export const UpdateAccountInput = z
+  .object({
+    accountId: z.string().min(1),
+    name: z.string().trim().min(1).optional(),
+    location: z.string().nullable().optional(),
+    website: z.string().nullable().optional(),
+    notes: z.string().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.location !== undefined ||
+      v.website !== undefined ||
+      v.notes !== undefined,
+    { message: 'Provide at least one field to update' },
+  );
+
+export type UpdateAccountInput = z.infer<typeof UpdateAccountInput>;
+
+/** §13.2.6 input, shared by `archiveAccount` and `unarchiveAccount`. */
+export const ArchiveAccountInput = z.object({
+  accountId: z.string().min(1),
+});
+
+export type ArchiveAccountInput = z.infer<typeof ArchiveAccountInput>;

@@ -44,23 +44,29 @@ async function auditFor(projectId: string) {
 }
 
 /**
- * A second client to move the project onto, with one account (Amendment M): the Stage 1 bridge
- * lands a client-addressed project in that client's account (TODO(PUL-415.3)).
+ * A second account to move the project onto (Amendment M: `updateProject` moves a project
+ * between accounts). `archived` archives the account itself; `clientArchived` puts a live
+ * account under an archived client, which `requireLiveAccount` must refuse too.
  */
-async function secondClient(deleted = false) {
-  const [row] = await db
+async function secondAccount(state: 'live' | 'archived' | 'clientArchived' = 'live') {
+  const [client] = await db
     .insert(clients)
     .values({
-      id: `cli_second_${deleted ? 'archived' : 'live'}`,
-      name: deleted ? 'Archived Client' : 'Second Client',
-      ...(deleted ? { deletedAt: clock.now() } : {}),
+      id: `cli_second_${state}`,
+      name: `Second Client (${state})`,
+      ...(state === 'clientArchived' ? { deletedAt: clock.now() } : {}),
     })
     .returning();
-  const [account] = await db
+  const [row] = await db
     .insert(accounts)
-    .values({ id: `acc_${row.id}`, clientId: row.id, name: row.name })
+    .values({
+      id: `acc_second_${state}`,
+      clientId: client.id,
+      name: `Second Account (${state})`,
+      ...(state === 'archived' ? { deletedAt: clock.now() } : {}),
+    })
     .returning();
-  return { ...row, accountId: account.id };
+  return row;
 }
 
 beforeEach(async () => {
@@ -82,7 +88,7 @@ describe('updateProject (§13.3.3)', () => {
       await updateProject({
         projectId: seed.project.id,
         name: 'Renamed Retainer',
-        clientId: seed.client.id,
+        accountId: before.accountId,
         startDate: before.startDate,
         deadline: '2027-01-31',
       }),
@@ -112,7 +118,7 @@ describe('updateProject (§13.3.3)', () => {
       await updateProject({
         projectId: seed.project.id,
         name: before.name,
-        clientId: seed.client.id,
+        accountId: before.accountId,
         startDate: before.startDate,
         deadline: before.deadline,
       }),
@@ -135,13 +141,16 @@ describe('updateProject (§13.3.3)', () => {
     expect(audit[0].after).toEqual({ deadline: null });
   });
 
-  it('moves the project to another live client', async () => {
+  it('moves the project to another live account, and audits the move', async () => {
     actAs(seed.projectManager.id);
-    const other = await secondClient();
+    const other = await secondAccount();
 
-    expectOk(await updateProject({ projectId: seed.project.id, clientId: other.id }));
+    expectOk(await updateProject({ projectId: seed.project.id, accountId: other.id }));
 
-    expect((await target()).accountId).toBe(other.accountId);
+    expect((await target()).accountId).toBe(other.id);
+    const audit = await auditFor(seed.project.id);
+    expect(audit[0].before).toEqual({ accountId: seed.account.id });
+    expect(audit[0].after).toEqual({ accountId: other.id });
   });
 
   it('rejects a payload with no editable field (the refine)', async () => {
@@ -184,19 +193,22 @@ describe('updateProject (§13.3.3)', () => {
     expect((await target()).name).toBe(seed.project.name);
   });
 
-  it('rejects moving the project onto an archived client with NOT_FOUND', async () => {
-    actAs(seed.projectManager.id);
-    const archived = await secondClient(true);
+  it.each(['archived', 'clientArchived'] as const)(
+    'rejects moving the project onto an unusable account (%s) with NOT_FOUND',
+    async (state) => {
+      actAs(seed.projectManager.id);
+      const unusable = await secondAccount(state);
 
-    expectFail(
-      await updateProject({ projectId: seed.project.id, clientId: archived.id }),
-      'NOT_FOUND',
-    );
+      expectFail(
+        await updateProject({ projectId: seed.project.id, accountId: unusable.id }),
+        'NOT_FOUND',
+      );
 
-    // The guard ran before the UPDATE — the project still points at its original account.
-    expect((await target()).accountId).toBe(seed.account.id);
-    expect(await auditFor(seed.project.id)).toHaveLength(0);
-  });
+      // The guard ran before the UPDATE — the project still points at its original account.
+      expect((await target()).accountId).toBe(seed.account.id);
+      expect(await auditFor(seed.project.id)).toHaveLength(0);
+    },
+  );
 
   it('denies a plain employee with FORBIDDEN', async () => {
     actAs(seed.employees[0].id);

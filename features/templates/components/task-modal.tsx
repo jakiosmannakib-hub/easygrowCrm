@@ -233,8 +233,9 @@ function TaskModalBody({
             autoFocus
           />
           <p className="text-muted-foreground text-xs">
-            {'{{ClientName}}'}, {'{{MonthName}}'} and {'{{ProjectName}}'} are replaced when a
-            project is launched from this template.
+            {'{{AccountName}}'} (the end business), {'{{ClientName}}'} (the partner),{' '}
+            {'{{MonthName}}'} and {'{{ProjectName}}'} are replaced when a project is launched from
+            this template.
           </p>
         </Field>
 

@@ -1,7 +1,8 @@
 // features/clients/components/clients-section.tsx — PUL-207 Stage 2, §14.14 / §13.2
 //
 // Settings → Clients: the list (name, contact, notes, Active/Archived), status + name filters,
-// "+ Add Client", edit, and archive with a confirm step (§14.15 r.6).
+// "+ Add Client", edit, and archive with a confirm step (§14.15 r.6). Since PUL-415 each client
+// row is followed by its accounts (Amendment M, `client-accounts.tsx`).
 //
 // The whole list arrives from the server component and every filter runs in memory — the
 // agency has tens of clients, the same reasoning as the PUL-206 employee grid. After any
@@ -11,7 +12,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,7 +37,8 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { archiveClient } from '../actions';
-import type { ClientRow } from '../queries';
+import type { AccountRow, ClientRow } from '../queries';
+import { ClientAccounts } from './client-accounts';
 import { ClientFormBody } from './client-form';
 
 /**
@@ -51,7 +53,14 @@ const STATUS_OPTIONS = [
 
 type Status = (typeof STATUS_OPTIONS)[number]['value'];
 
-export function ClientsSection({ clients }: { clients: ClientRow[] }) {
+export function ClientsSection({
+  clients,
+  accounts,
+}: {
+  clients: ClientRow[];
+  /** Every account, archived included; grouped under their client below. */
+  accounts: AccountRow[];
+}) {
   const [status, setStatus] = useState<Status>('active');
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -68,6 +77,16 @@ export function ClientsSection({ clients }: { clients: ClientRow[] }) {
       return true;
     });
   }, [clients, status, search]);
+
+  const accountsByClient = useMemo(() => {
+    const byClient = new Map<string, AccountRow[]>();
+    for (const account of accounts) {
+      const list = byClient.get(account.clientId) ?? [];
+      list.push(account);
+      byClient.set(account.clientId, list);
+    }
+    return byClient;
+  }, [accounts]);
 
   // Resolved against the current (possibly refreshed) array; a vanished row closes its dialog.
   const editing = useMemo(
@@ -148,45 +167,56 @@ export function ClientsSection({ clients }: { clients: ClientRow[] }) {
               {visible.map((client) => {
                 const archived = client.deletedAt !== null;
                 return (
-                  <tr
-                    key={client.id}
-                    onClick={() => setEditingId(client.id)}
-                    className="hover:bg-muted/40 cursor-pointer border-b last:border-b-0"
-                  >
-                    <td className="max-w-48 truncate px-3 py-2 font-medium">{client.name}</td>
-                    <td className="text-muted-foreground max-w-48 truncate px-3 py-2">
-                      {client.contact?.trim() || '—'}
-                    </td>
-                    <td
-                      className="text-muted-foreground max-w-64 truncate px-3 py-2"
-                      title={client.notes ?? undefined}
+                  <Fragment key={client.id}>
+                    <tr
+                      onClick={() => setEditingId(client.id)}
+                      className="hover:bg-muted/40 cursor-pointer"
                     >
-                      {client.notes?.trim() || '—'}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge variant={archived ? 'outline' : 'secondary'}>
-                        {archived ? 'Archived' : 'Active'}
-                      </Badge>
-                    </td>
-                    {/* The buttons are the keyboard path to edit / archive; the row click is a
+                      <td className="max-w-48 truncate px-3 py-2 font-medium">{client.name}</td>
+                      <td className="text-muted-foreground max-w-48 truncate px-3 py-2">
+                        {client.contact?.trim() || '—'}
+                      </td>
+                      <td
+                        className="text-muted-foreground max-w-64 truncate px-3 py-2"
+                        title={client.notes ?? undefined}
+                      >
+                        {client.notes?.trim() || '—'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant={archived ? 'outline' : 'secondary'}>
+                          {archived ? 'Archived' : 'Active'}
+                        </Badge>
+                      </td>
+                      {/* The buttons are the keyboard path to edit / archive; the row click is a
                         mouse shortcut. stopPropagation keeps Archive from also opening Edit. */}
-                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-1.5">
-                        <Button size="sm" variant="ghost" onClick={() => setEditingId(client.id)}>
-                          Edit
-                        </Button>
-                        {archived ? null : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setArchivingId(client.id)}
-                          >
-                            Archive…
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end gap-1.5">
+                          <Button size="sm" variant="ghost" onClick={() => setEditingId(client.id)}>
+                            Edit
                           </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                          {archived ? null : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setArchivingId(client.id)}
+                            >
+                              Archive…
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {/* The client's accounts (Amendment M). Its own row, so clicks here never
+                      open the client's Edit dialog. */}
+                    <tr className="border-b last:border-b-0">
+                      <td colSpan={5} className="bg-muted/20 px-3 pt-1 pb-2 pl-6">
+                        <ClientAccounts
+                          client={client}
+                          accounts={accountsByClient.get(client.id) ?? []}
+                        />
+                      </td>
+                    </tr>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -203,11 +233,7 @@ export function ClientsSection({ clients }: { clients: ClientRow[] }) {
       >
         <DialogContent className="sm:max-w-md">
           {editing ? (
-            <ClientFormBody
-              key={editing.id}
-              client={editing}
-              onDone={() => setEditingId(null)}
-            />
+            <ClientFormBody key={editing.id} client={editing} onDone={() => setEditingId(null)} />
           ) : null}
         </DialogContent>
       </Dialog>
@@ -255,8 +281,8 @@ function ArchiveConfirmBody({ client, onDone }: { client: ClientRow; onDone: () 
     try {
       const result = await archiveClient({ clientId: client.id });
       if (!result.ok) {
-        // GATE:client_in_use lands here as data and is named by the PUL-106 mapper. It cannot
-        // fire until PUL-401 gives projects a table; the call site is final either way.
+        // GATE:client_in_use (live accounts, Amendment M) lands here as data and is named by the
+        // PUL-106 mapper.
         showErrorToast(result);
         return;
       }
@@ -275,7 +301,8 @@ function ArchiveConfirmBody({ client, onDone }: { client: ClientRow; onDone: () 
         <DialogTitle>Archive {client.name}?</DialogTitle>
         <DialogDescription>
           It stops appearing in client pickers. The record and its history are kept, and it stays
-          listed here under Archived. A client with live projects can&apos;t be archived.
+          listed here under Archived. A client with active accounts can&apos;t be archived: archive
+          its accounts first.
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>

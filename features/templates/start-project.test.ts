@@ -56,7 +56,7 @@ const TOKEN_TASK = 'seed_tt_tt14'; // Month 2 · "Schema markup implementation"
 function input(overrides: Partial<Parameters<typeof createProjectFromTemplate>[0]> = {}) {
   return {
     templateId: seed.templates.localSeo,
-    clientId: seed.client.id,
+    accountId: seed.account.id,
     name: PROJECT_NAME,
     startDate: START,
     deadline: DEADLINE,
@@ -81,6 +81,7 @@ function expectedTitle(t: FlatTemplateTask): string {
   const month = t._monthNum === 1 ? 'September' : 'October';
   return t.title
     .replaceAll('{{ClientName}}', seed.client.name)
+    .replaceAll('{{AccountName}}', seed.account.name)
     .replaceAll('{{ProjectName}}', PROJECT_NAME)
     .replaceAll('{{MonthName}}', month);
 }
@@ -118,7 +119,7 @@ beforeEach(async () => {
   __resetNotifications();
   await db
     .update(templateTasks)
-    .set({ title: '{{ClientName}} / {{ProjectName}} / {{MonthName}}' })
+    .set({ title: '{{ClientName}} / {{AccountName}} / {{ProjectName}} / {{MonthName}}' })
     .where(eq(templateTasks.id, TOKEN_TASK));
 });
 
@@ -145,7 +146,7 @@ describe('createProjectFromTemplate (§13.3.2) — the clone', () => {
     const [project] = await db.select().from(projects).where(eq(projects.id, out.projectId));
     expect(project).toMatchObject({
       name: PROJECT_NAME,
-      accountId: seed.account.id, // the client's account (Stage 1 bridge, TODO(PUL-415.3))
+      accountId: seed.account.id,
       startDate: START,
       deadline: DEADLINE,
       templateId: seed.templates.localSeo,
@@ -153,16 +154,21 @@ describe('createProjectFromTemplate (§13.3.2) — the clone', () => {
     });
   });
 
-  it('replaces {{ClientName}}, {{ProjectName}} and {{MonthName}} (Month 2 → October)', async () => {
+  it('replaces {{ClientName}}, {{AccountName}}, {{ProjectName}} and {{MonthName}} (Month 2 → October)', async () => {
     actAs(seed.projectManager.id);
     const flat = await flatTemplate();
     const out = expectOk(await createProjectFromTemplate(input()));
     const { rows, byTemplateTask } = await liveByTemplateTask(out.projectId, flat);
 
+    // Amendment M: the partner and the end business are different names, and each token gets
+    // its own. The seed uses 'Seed Client' / 'Seed Account', so swapping them would fail here.
     expect(byTemplateTask.get(TOKEN_TASK)?.title).toBe(
-      `${seed.client.name} / ${PROJECT_NAME} / October`,
+      `${seed.client.name} / ${seed.account.name} / ${PROJECT_NAME} / October`,
     );
-    expect(byTemplateTask.get('seed_tt_tt4')?.title).toBe(`Service page copy — ${seed.client.name}`);
+    // The seed template's end-business titles use {{AccountName}} (PUL-415.5).
+    expect(byTemplateTask.get('seed_tt_tt4')?.title).toBe(
+      `Service page copy - ${seed.account.name}`,
+    );
     for (const r of rows) expect(r.title).not.toContain('{{');
   });
 

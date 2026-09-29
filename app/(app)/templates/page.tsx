@@ -1,6 +1,6 @@
 // app/(app)/templates/page.tsx — PUL-110.4, built out by PUL-503 Stage 2 (§14.4.1)
 
-import { activeClientsQuery } from '@/features/clients/queries';
+import { activeAccountsQuery, activeClientsQuery } from '@/features/clients/queries';
 import { assignableUsersQuery } from '@/features/employees/queries';
 import { NewTemplateDialog } from '@/features/templates/components/new-template-dialog';
 import type { TemplateCardData } from '@/features/templates/components/template-summary';
@@ -46,9 +46,14 @@ export default async function TemplatesPage() {
   // data behind it. `createProjectFromTemplate` re-authorizes regardless.
   let startProject: StartProjectData | null = null;
   if (can(viewer, 'project.create')) {
-    const [clients, users] = await Promise.all([activeClientsQuery(), assignableUsersQuery()]);
+    const [clients, accounts, users] = await Promise.all([
+      activeClientsQuery(),
+      activeAccountsQuery(),
+      assignableUsersQuery(),
+    ]);
     startProject = {
       clients,
+      accounts,
       // Only what the dropdown draws: not role / active.
       assignees: users.map((u) => ({ id: u.id, name: u.name })),
       templates: Object.fromEntries(trees.map((tree) => [tree.id, toStartProjectTemplate(tree)])),

@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { db } from '@/db';
-import { activeClientsQuery } from '@/features/clients/queries';
+import { activeAccountsQuery, activeClientsQuery } from '@/features/clients/queries';
 import { assignableUsersQuery } from '@/features/employees/queries';
 import { StartProjectWizard } from '@/features/templates/components/start-project-wizard';
 import { CategoryBadge, MetaRow, RolePills } from '@/features/templates/components/template-summary';
@@ -39,9 +39,10 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
 
   // Start Project (PUL-506): hidden from HR (§14.4.2), and its data is only read when shown.
   const startProject = can(viewer, 'project.create')
-    ? await Promise.all([activeClientsQuery(), assignableUsersQuery()]).then(
-        ([clients, users]) => ({
+    ? await Promise.all([activeClientsQuery(), activeAccountsQuery(), assignableUsersQuery()]).then(
+        ([clients, accounts, users]) => ({
           clients,
+          accounts,
           assignees: users.map((u) => ({ id: u.id, name: u.name })),
         }),
       )
@@ -61,6 +62,7 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
               <StartProjectWizard
                 template={toStartProjectTemplate(tree)}
                 clients={startProject.clients}
+                accounts={startProject.accounts}
                 assignees={startProject.assignees}
               />
             ) : null}

@@ -30,6 +30,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/templates/cascade.test.ts', // PUL-504 — 12-month cascade dates, Feb at 29
   'features/templates/due-rule-compute.test.ts', // PUL-505.3 — day / before_deadline / after + working-day shifts
   'features/templates/start-project.test.ts', // PUL-506.4 — clone: tokens, subtasks, checklist, due dates, depends_on
+  'features/clients/accounts.test.ts', // PUL-415.6 — account CRUD, account_in_use + amended client_in_use gates, audit, authz
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

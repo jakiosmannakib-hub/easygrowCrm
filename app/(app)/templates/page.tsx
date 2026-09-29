@@ -1,9 +1,15 @@
 // app/(app)/templates/page.tsx — PUL-110.4, built out by PUL-503 Stage 2 (§14.4.1)
 
+import { activeClientsQuery } from '@/features/clients/queries';
+import { assignableUsersQuery } from '@/features/employees/queries';
 import { NewTemplateDialog } from '@/features/templates/components/new-template-dialog';
 import type { TemplateCardData } from '@/features/templates/components/template-summary';
-import { TemplatesGrid } from '@/features/templates/components/templates-grid';
+import {
+  TemplatesGrid,
+  type StartProjectData,
+} from '@/features/templates/components/templates-grid';
 import { templatesListQuery } from '@/features/templates/queries';
+import { toStartProjectTemplate } from '@/features/templates/start-project';
 import { templateMeta, templateRoles } from '@/features/templates/template-meta';
 import { can } from '@/lib/authz';
 import { PAGE_META } from '@/lib/nav';
@@ -34,10 +40,20 @@ export default async function TemplatesPage() {
   // §14.4.1 role visibility (§9.6 ⁹): HR sees the grid read-only, with no + New Template, no
   // card delete and no Start Project. Presentation only; each action re-authorizes.
   const canCreate = can(viewer, 'template.create');
-  const permissions = {
-    canDelete: can(viewer, 'template.delete'),
-    canStartProject: can(viewer, 'project.create'),
-  };
+  const permissions = { canDelete: can(viewer, 'template.delete') };
+
+  // Start Project (PUL-506): only for `project.create`, so HR gets neither the button nor the
+  // data behind it. `createProjectFromTemplate` re-authorizes regardless.
+  let startProject: StartProjectData | null = null;
+  if (can(viewer, 'project.create')) {
+    const [clients, users] = await Promise.all([activeClientsQuery(), assignableUsersQuery()]);
+    startProject = {
+      clients,
+      // Only what the dropdown draws: not role / active.
+      assignees: users.map((u) => ({ id: u.id, name: u.name })),
+      templates: Object.fromEntries(trees.map((tree) => [tree.id, toStartProjectTemplate(tree)])),
+    };
+  }
 
   return (
     <div className="space-y-4">
@@ -49,7 +65,7 @@ export default async function TemplatesPage() {
         {canCreate ? <NewTemplateDialog /> : null}
       </div>
 
-      <TemplatesGrid templates={templates} permissions={permissions} />
+      <TemplatesGrid templates={templates} permissions={permissions} startProject={startProject} />
     </div>
   );
 }

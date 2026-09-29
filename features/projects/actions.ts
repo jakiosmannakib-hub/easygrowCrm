@@ -11,8 +11,8 @@
 // §13.4.10 toggleChecklistItem / addChecklistItem / deleteChecklistItem (PUL-405).
 // §13.4.11 addComment (PUL-406).
 // §13.8 loadTaskDetail (PUL-407) — a READ, here because client components can't import queries.
-// Still to come: §13.3.5 `deleteProject` (SA only) and §13.3.2 `createProjectFromTemplate`
-// (PUL-506, the Start Project wizard).
+// §13.3.2 createProjectFromTemplate (PUL-506 Stage 1, the Start Project wizard's final step).
+// Still to come: §13.3.5 `deleteProject` (SA only).
 
 'use server';
 
@@ -37,6 +37,10 @@ import { withTx, type Executor } from '../../lib/mutation';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
 import { MANAGER_ROLES, assignableUsersQuery } from '../employees/queries';
+import { computeDueDates } from '../templates/due-rule-compute';
+import { tplAllTasks } from '../templates/hierarchy';
+import { loadTemplateTree } from '../templates/queries';
+import { projectTaskTitle } from '../templates/start-project';
 import { taskCapabilities } from './capabilities';
 import {
   getFilteredTasks,
@@ -52,6 +56,7 @@ import {
   ArchiveProjectInput,
   AssignTaskInput,
   ChangeTaskStatusOpenInput,
+  CreateProjectFromTemplateInput,
   CreateProjectInput,
   CreateTaskInput,
   DeleteChecklistItemInput,
@@ -81,10 +86,15 @@ import {
  * view there is no such selectable client. `activeClientsQuery` never offers an archived one,
  * so a payload naming one is a stale form or a hand-made request, not a user who needs telling
  * which rule they hit.
+ *
+ * Returns the client's name, which Start Project (§13.3.2) substitutes for `{{ClientName}}`.
  */
-async function requireLiveClient(executor: Executor, clientId: string): Promise<void> {
+async function requireLiveClient(
+  executor: Executor,
+  clientId: string,
+): Promise<{ id: string; name: string }> {
   const [row] = await executor
-    .select({ id: clients.id })
+    .select({ id: clients.id, name: clients.name })
     .from(clients)
     .where(and(eq(clients.id, clientId), isNull(clients.deletedAt)))
     .limit(1);
@@ -92,6 +102,7 @@ async function requireLiveClient(executor: Executor, clientId: string): Promise<
   if (!row) {
     throw new AppError('NOT_FOUND', 'Client not found');
   }
+  return row;
 }
 
 /**
@@ -238,6 +249,247 @@ export async function createProject(input: CreateProjectInput) {
     }
 
     return row;
+  });
+}
+
+/**
+ * §13.3.2 `createProjectFromTemplate` — MGR (`project.create`). The Start Project wizard's final
+ * step (§14.3.8, PUL-506).
+ *
+ * Guards, all read on the `tx` so they and the clone share one snapshot (the `loadTemplateTree`
+ * docblock's reason for taking an executor):
+ *   1. **Client live** — `requireLiveClient`, as `createProject`.
+ *   2. **Template exists and is not soft-deleted** → `NOT_FOUND`, the same refusal the template
+ *      actions give.
+ *   3. **Every named assignee is active and not SA** — `requireAssignableUser` for each distinct
+ *      id in `assignments` and `taskOverrides`, including a role no task uses: a payload naming
+ *      a super admin is refused whether or not it would have landed on a task.
+ *   4. **Every override names a task in this template** → `VALIDATION`. Overrides are keyed by
+ *      `templateTaskId` (§13.3.2), and one that matches nothing is a stale wizard.
+ *   5. **Due rules resolve** — `computeDueDates` (PUL-505): `before_deadline` without a deadline
+ *      → `GATE:no_deadline`; an `after` ref that is missing or cyclic → `GATE:bad_ref`. The
+ *      failure names the task (`templateTaskId` + `title` in `meta`).
+ *
+ * The clone walks `tplAllTasks` (§16.7, the only flattener): one `project_tasks` row per
+ * template task, `category` = category name, `month` = month `num`, `assignee` =
+ * `assignments[roleHint]` (null when the role is unmapped, mapped to null, or the task has no
+ * role). The title's `{{ClientName}}` / `{{ProjectName}}` / `{{MonthName}}` are substituted;
+ * `MonthName` is the calendar month of that task's month start (`startDate` + (month−1) months,
+ * day-clamped, the same anchor `computeDueDates` uses). `checklist[]` becomes unchecked
+ * `task_checklist_items`, subtasks become `task_subtasks` with `done = false`, and an `after`
+ * rule's ref becomes `depends_on` = the NEW live id of the referenced task. `taskOverrides` apply
+ * last, so an overridden due date does not move the tasks scheduled after it: those were
+ * computed from the rule, and an override is a one-task edit.
+ *
+ * All tasks go in ONE multi-row INSERT. `depends_on` may point at a row later in the same
+ * statement: Postgres checks a non-deferrable FK at the end of the statement, not per row.
+ *
+ * Holidays: none yet. The `holidays` table is PUL-301 (Phase 3, not built), so the set is empty
+ * and only Fri/Sat are skipped until it lands.
+ *
+ * Audit: `project.created_from_template` (the project row plus `templateId`, `taskCount`,
+ * `monthCount`) and ONE batched `project_task.created` row, `after: { taskIds }` — §13.3.2
+ * allows the batch; every task created here is in that one row.
+ *
+ * Notify, after commit: `N:task_assigned` once per distinct assignee, carrying all of their task
+ * ids (batched per person, §13.3.2), and `N:project_started` → all MGR, as `createProject`.
+ */
+export async function createProjectFromTemplate(input: CreateProjectFromTemplateInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = CreateProjectFromTemplateInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('project.create');
+
+    // 3. TRANSACT
+    const result = await withTx(async (tx) => {
+      const client = await requireLiveClient(tx, parsed.clientId);
+
+      const tree = await loadTemplateTree(tx, parsed.templateId);
+      if (!tree) throw new AppError('NOT_FOUND', 'Template not found');
+
+      const namedAssignees = new Set<string>();
+      for (const id of Object.values(parsed.assignments)) if (id !== null) namedAssignees.add(id);
+      for (const o of parsed.taskOverrides) if (o.assigneeId) namedAssignees.add(o.assigneeId);
+      for (const id of namedAssignees) await requireAssignableUser(tx, id);
+
+      const flat = tplAllTasks(tree);
+      const byTemplateId = new Map(flat.map((t) => [t.id, t]));
+
+      const overrides = new Map(parsed.taskOverrides.map((o) => [o.templateTaskId, o]));
+      for (const templateTaskId of overrides.keys()) {
+        if (!byTemplateId.has(templateTaskId)) {
+          throw new AppError('VALIDATION', 'An override names a task that is not in this template', {
+            templateTaskId,
+          });
+        }
+      }
+
+      // TODO(PUL-301): read the holidays table once it exists (see the docblock).
+      const holidays: ReadonlySet<string> = new Set();
+      const due = computeDueDates(flat, {
+        startDate: parsed.startDate,
+        deadline: parsed.deadline ?? null,
+        holidays,
+      });
+      if (!due.ok) {
+        const task = byTemplateId.get(due.taskId);
+        const message =
+          due.reason === 'no_deadline'
+            ? `"${task?.title}" is due before the deadline, so this project needs a deadline`
+            : `"${task?.title}" is scheduled after a task that is missing or in a loop`;
+        throw new AppError('GATE', message, {
+          reason: due.reason,
+          templateTaskId: due.taskId,
+          title: task?.title,
+        });
+      }
+
+      const now = clock.now();
+      const projectId = `prj_${crypto.randomUUID()}`;
+      const [project] = await tx
+        .insert(projects)
+        .values({
+          id: projectId,
+          clientId: client.id,
+          name: parsed.name,
+          // §11.2: 'Retainer' | 'One-off' | template category. A template with no category is a
+          // recurring monthly cycle, so it falls back to 'Retainer'.
+          type: tree.category ?? 'Retainer',
+          startDate: parsed.startDate,
+          deadline: parsed.deadline ?? null,
+          templateId: tree.id,
+          createdBy: actor.id,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+
+      // New live id per template task, fixed before any insert so `depends_on` can point ahead.
+      const liveId = new Map(flat.map((t) => [t.id, `pt_${crypto.randomUUID()}`]));
+      const idOf = (templateTaskId: string): string => liveId.get(templateTaskId) as string;
+
+      const taskRows = flat.map((t) => {
+        const override = overrides.get(t.id);
+        // Trimmed, as `templateRoles` trims the wizard's step-3 rows, so the keys always match.
+        const role = t.roleHint?.trim();
+        const roleAssignee = role ? (parsed.assignments[role] ?? null) : null;
+        return {
+          id: idOf(t.id),
+          projectId,
+          month: t._monthNum,
+          category: t._catName,
+          // Shared with the wizard's preview, so the preview shows exactly what is written.
+          title: projectTaskTitle(t.title, {
+            clientName: client.name,
+            projectName: parsed.name,
+            startDate: parsed.startDate,
+            monthNum: t._monthNum,
+          }),
+          assigneeId: override?.assigneeId !== undefined ? override.assigneeId : roleAssignee,
+          roleHint: t.roleHint,
+          dueDate: override?.dueDate ?? (due.dates.get(t.id) as string),
+          priority: t.priority,
+          // Both `numeric(6, 2)`: drizzle's string passes straight through, no float round trip.
+          estimatedHours: t.estHours,
+          expectedOutput: t.expectedOutput,
+          sopUrl: t.sopUrl,
+          qcRequired: t.qcRequired,
+          proofRequired: t.proofRequired,
+          clientVisible: t.clientVisible,
+          dependsOn: t.dueRule.kind === 'after' ? idOf(t.dueRule.ref) : null,
+          createdBy: actor.id,
+          createdAt: now,
+          updatedAt: now,
+        };
+      });
+
+      if (taskRows.length > 0) await tx.insert(projectTasks).values(taskRows);
+
+      const checklistRows = flat.flatMap((t) =>
+        t.checklist.map((text, index) => ({
+          id: `tci_${crypto.randomUUID()}`,
+          taskId: idOf(t.id),
+          text,
+          done: false,
+          position: index,
+          createdAt: now,
+        })),
+      );
+      if (checklistRows.length > 0) await tx.insert(taskChecklistItems).values(checklistRows);
+
+      // `tplAllTasks` keeps each task's subtasks in the tree's `position` order; the live
+      // position is the index in that order.
+      const subtaskRows = flat.flatMap((t) =>
+        t.subtasks.map((s, index) => ({
+          id: `ts_${crypto.randomUUID()}`,
+          taskId: idOf(t.id),
+          text: s.title,
+          done: false,
+          position: index,
+          createdBy: actor.id,
+          createdAt: now,
+        })),
+      );
+      if (subtaskRows.length > 0) await tx.insert(taskSubtasks).values(subtaskRows);
+
+      const taskIds = taskRows.map((r) => r.id);
+      const monthCount = new Set(flat.map((t) => t._monthNum)).size;
+
+      // 4. AUDIT — same tx (§9.8 `project.created_from_template`; §13.3.2's batched task row).
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project.created_from_template',
+        resourceType: 'project',
+        resourceId: projectId,
+        before: null,
+        after: { ...project, taskCount: taskIds.length, monthCount },
+      });
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'project_task.created',
+        resourceType: 'project',
+        resourceId: projectId,
+        before: null,
+        after: { taskIds },
+      });
+
+      const tasksByAssignee = new Map<string, string[]>();
+      for (const r of taskRows) {
+        if (r.assigneeId === null) continue;
+        const list = tasksByAssignee.get(r.assigneeId);
+        if (list) list.push(r.id);
+        else tasksByAssignee.set(r.assigneeId, [r.id]);
+      }
+
+      return { project, taskCount: taskIds.length, monthCount, tasksByAssignee };
+    });
+
+    // 5. NOTIFY — after commit, never inside the tx.
+    const { project, taskCount, monthCount, tasksByAssignee } = result;
+    for (const [to, taskIds] of tasksByAssignee) {
+      await notify({
+        to,
+        type: 'task_assigned',
+        data: {
+          projectId: project.id,
+          projectName: project.name,
+          taskIds,
+          taskCount: taskIds.length,
+          assignedBy: actor.id,
+        },
+      });
+    }
+    for (const to of await managerRecipients()) {
+      await notify({
+        to,
+        type: 'project_started',
+        data: { projectId: project.id, projectName: project.name, startedBy: actor.id },
+      });
+    }
+
+    return { projectId: project.id, taskCount, monthCount };
   });
 }
 

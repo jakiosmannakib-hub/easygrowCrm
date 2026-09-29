@@ -62,6 +62,8 @@ export const GATE_REASONS: Record<string, string> = {
   // outside the template, at the task itself, or into a cycle. Start Project (§13.3.2) re-checks
   // the same reason at clone time.
   bad_ref: 'A task can only be scheduled after another task in this template, without a loop.',
+  // PUL-506 (§13.3.2). Start Project: a `before_deadline` task needs the project to have one.
+  no_deadline: 'This template has tasks due before the deadline. Set a project deadline.',
   // Thrown by the task, category and month deletes alike, so it names no level.
   task_has_dependents:
     'Another task is scheduled after something you’re deleting. Change that task’s due rule first.',

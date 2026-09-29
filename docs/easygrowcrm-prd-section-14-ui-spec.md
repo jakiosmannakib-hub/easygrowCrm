@@ -140,6 +140,30 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
   - due = **month-anchored** computation (13.3.2 / PUL-505): Month k start = project start + (k−1) months day-clamped; `day` rule = month start + (n−1); weekend/holiday-shifted
 - On success: navigates to the new project, sets `S.projTab = "list"`, clears the month filter so every generated task is visible, and toasts: *"'{project name}' created — N tasks generated across M months. Opening now."*
 
+> **As built (PUL-506 Stage 2), `features/templates/components/start-project-wizard.tsx`.**
+> - **Where:** a Start Project button on each template card (§14.4.1) and in the detail header
+>   card (§14.4.2), rendered only for `project.create`. HR gets neither the button nor the data
+>   behind it (clients, users and template tasks are read only when it is shown).
+> - **State:** the Add Month wizard's pattern (§16.10): one state object declared upfront, the
+>   body mounted only while open (mounting is the reset), a `DialogTrigger`, no fetch on open.
+>   The step strip is the shared `StepIndicator` (`components/step-indicator.tsx`).
+> - **Step 2** shows each picked date below its input as `Sep 10, 2026`. Next is refused when the
+>   deadline is before the start, or when the template has `before_deadline` tasks and there is
+>   no deadline (the label then drops "(optional)"), so `GATE:no_deadline` is caught here.
+> - **Step 3** lists the distinct roles the tasks use (`templateRoles`), each with a task count;
+>   tasks with no role are counted in a note and always start unassigned.
+> - **Step 4** rows: `#N · title · category · role · rule pill · QC`. The pill is `Day N`,
+>   `Nd before deadline` / `On deadline`, or `After #M`, followed by the computed date. Dates come
+>   from `computeDueDates` with an empty holidays set, the same call the action makes, and
+>   titles from the action's own `projectTaskTitle`, so the preview matches what is generated.
+>   If the rules do not resolve, a notice replaces the dates and the server's GATE toast decides.
+> - **Toast** (no em dash in UI text): *"'{name}' created. N tasks generated across M months.
+>   Opening now."* Errors go through `showErrorToast`.
+> - **Landing:** `/projects?project=<id>&tab=list`. The Projects page reads `?project=` (an active
+>   project; anything else is ignored) and `?tab=` (`board` / `list` / `calendar` only), and the
+>   filter bar opens with that client and project selected, Month and Assignee at All. This
+>   replaces the prototype's `S.projTab`.
+
 ---
 
 ## 14.4 Templates `/templates`

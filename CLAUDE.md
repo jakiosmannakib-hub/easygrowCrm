@@ -53,7 +53,7 @@ These are the rules that, if broken, cost the most to unwind. Most are mechanica
 
 ### Time
 - **Never `new Date()` or `Date.now()` in `features/**`.** The clock port (`lib/clock.ts`, `clock.now()`) is the only source of "now" — enforced by `easygrowcrm/no-direct-date`. This exists so late-detection, auto-close, and the timer are testable with frozen time.
-- **Working-day dates are Asia/Dhaka calendar days** (work week Sun–Thu). Use `lib/time/dhaka.ts`, never the browser locale/timezone.
+- **Working-day dates are Asia/Dhaka calendar days** (work week Sun–Thu). Use `lib/dates.ts` (day and working-day math on `YYYY-MM-DD` strings) and `dhakaToday()` in `lib/format.ts`, never the browser locale/timezone or a `Date` built from a bare day.
 
 ### Errors
 - **Every error is an `AppError` carrying a §13 code** (`GATE` / `CONFLICT` / `FORBIDDEN` / `NOT_FOUND` / `VALIDATION` / `UNAUTHENTICATED` / `DEACTIVATED`). Never a bare `Error`. Gate errors name the specific field or task. Thrown inside the body, returned at the `actionResult` boundary (PUL-111).
@@ -113,13 +113,15 @@ is superseded (its *rules* — ports in `lib/`, feature slices own their code �
 | `lib/errors.ts` | `AppError` + the seven §13 codes (landed in PUL-103, not PUL-106) |
 | `lib/action-result.ts` | `ActionResult<T>`, `actionResult()`, `unwrap()`: the PUL-111 server-action boundary |
 | `lib/mutation.ts` | `withTx` |
+| `lib/dates.ts` | `Date`-free `YYYY-MM-DD` math: `addDays`, `addMonthsClamped`, `weekday`, Sun–Thu working days + holiday shifts (PUL-505) |
+| `lib/format.ts` | `fmtDate`, `fmtHM`, `dhakaToday()` |
 | `lib/route-guard.ts` | `requireRouteAccess()`: the per-page server guard (§9.5) |
 | `lib/nav.ts` | The §14.1 nav table + `PAGE_META`; visibility is explicit `visibleTo` lists, not live `can()` |
 | `db/index.ts` | The Drizzle client |
 | `db/schema/*.ts` | Table definitions, re-exported from `db/schema/index.ts` |
 | `db/migrations/` | Generated SQL + `meta/` snapshots |
 
-Nothing lives at `lib/auth/can.ts`, `lib/auth/authorize.ts`, or `lib/db/`. Don't create those
+Nothing lives at `lib/auth/can.ts`, `lib/auth/authorize.ts`, `lib/time/`, or `lib/db/`. Don't create those
 folders — imports across the codebase assume the flat paths above.
 
 ---

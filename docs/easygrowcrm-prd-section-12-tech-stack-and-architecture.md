@@ -346,7 +346,9 @@ The atomic sign-out from §10.5 is the load-bearing use of this: attendance clos
 
 ## 12.8 Timezones — non-negotiable
 
-Every timestamp is `timestamptz`. Every `date` column represents an **Asia/Dhaka calendar day**, not a UTC-derived day. The `lib/time/dhaka.ts` helpers do the conversion **once**, at the edges (input from the browser, output to the browser). Server logic never touches `Date.now()` for date decisions — it uses the helpers.
+Every timestamp is `timestamptz`. Every `date` column represents an **Asia/Dhaka calendar day**, not a UTC-derived day. The `lib/dates.ts` helpers do the day and working-day arithmetic, and `dhakaToday()` in `lib/format.ts` gives today's Asia/Dhaka day from the clock port. Server logic never touches `Date.now()` for date decisions — it uses the helpers.
+
+> **As built (flat `lib/`, see CLAUDE.md §4):** there is no `lib/time/` folder. `lib/dates.ts` (PUL-505) holds `addDays`, `addMonthsClamped`, `weekday`, `isWorkingDay`, `shiftToWorkingDay`, `shiftBackToWorkingDay` and `nextWorkingDay`. They work on `YYYY-MM-DD` strings through integer day numbers and never build a `Date` from a bare day. `lib/dates.ts` also stands in for the sketch's `work-days.ts`; the working-day helpers were written for PUL-702 to reuse.
 
 Rule of thumb: if a piece of code has to know whether "today is Thursday," it uses `todayInDhaka()`. If it needs the current instant, it uses **`clock.now()`**. `new Date()` / `Date.now()` are banned in `features/**`; the clock port is the only source of "now", and `todayInDhaka()` itself reads from it. These are different questions and this codebase separates them — but both answers flow from the same injectable clock, which is what makes frozen-time tests like "auto-close fires at exactly hour 10" possible (§15.5).
 
@@ -403,7 +405,7 @@ Bullet form, so this becomes the top of the CLAUDE.md:
 - **`super_admin` is never an assignee.** Enforced by trigger, ESLint won't catch this — code review will.
 - **The word "Completed" never appears as an employee-facing UI label.** Use "Done — send to review."
 - **Notifications and webhooks are enqueued after `withTx` commits.** Never inside it.
-- **Dates that represent working days are Asia/Dhaka calendar days.** Use `lib/time/dhaka.ts`.
+- **Dates that represent working days are Asia/Dhaka calendar days.** Use `lib/dates.ts` and `dhakaToday()` from `lib/format.ts` (§12.8).
 - **Never `new Date()` / `Date.now()` in `features/**`.** The clock port (`lib/clock.ts`) is the only source of "now" — enforced by `easygrowcrm/no-direct-date`.
 - **Every error carries a §13 code** via `AppError` (`GATE` / `CONFLICT` / `FORBIDDEN` / …), never a bare `Error`. `AppError` is thrown **inside** the action body; the `actionResult` boundary converts it to a returned `{ ok: false, code, reason?, message }` so the code survives production redaction. Anything that is not an `AppError` is re-thrown and stays redacted. *(DECIDED Phase 1, PUL-111: was "All thrown errors carry a §13 code": they are returned now; see §12.4.)*
 - **Tests are colocated in `features/**`** per the §15.4 mandatory list; `tests/` holds only fixtures and Playwright flows.

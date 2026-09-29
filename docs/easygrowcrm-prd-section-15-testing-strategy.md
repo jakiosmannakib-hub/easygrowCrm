@@ -128,8 +128,9 @@ That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees 
 The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
 names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
 `scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
-(§15.9 gate 5), and it grows as each phase lands. It currently holds **20 files** *(updated at
-PUL-503; at PUL-413 this listing had fallen behind the script at 11)*:
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **22 files** *(updated at
+PUL-505, which also caught up PUL-504's entry; at PUL-413 this listing had fallen behind the
+script at 11)*:
 
 ```
 features/auth/session-from-google.test.ts          // PUL-103.5
@@ -152,7 +153,13 @@ features/templates/hierarchy-walker.test.ts        // PUL-502.2
 features/templates/template-actions.test.ts        // PUL-503 Stage 1          ¹
 features/templates/template-meta.test.ts           // PUL-503 Stage 2          ¹
 features/templates/task-form.test.ts               // PUL-503 Stage 3b         ¹
+features/templates/cascade.test.ts                 // PUL-504                   ¹ ²
+features/templates/due-rule-compute.test.ts        // PUL-505.3
 ```
+
+² §15.4 and PUL-504.6 name `add-month-wizard.test.ts`, which does not exist. PUL-504 shipped
+`cascade.test.ts` (the 12-month date cascade) and added `createTemplateMonths` cases to
+`template-actions.test.ts` instead. **Needs a ruling:** rename the §15.4 entry, or add the file.
 
 ¹ **CI-enforced but NOT on the locked §15.4 list.** These were added to the script by their
 tickets without amending §15.4, which contradicts the "adds it to both" rule below. Either §15.4

@@ -8,6 +8,7 @@
 // without labelling it here is a COMPILE error rather than a blank pill in production.
 
 import { taskPriority, taskStatus, userRole } from '../../db/schema/enums';
+import { addDays, dayNumber, daysInMonth, isoDay, weekday } from '../../lib/dates';
 
 export type TaskStatus = (typeof taskStatus.enumValues)[number];
 export type TaskPriority = (typeof taskPriority.enumValues)[number];
@@ -428,15 +429,6 @@ export function progressPct(done: number, total: number): number {
   return Math.round((done / total) * 100);
 }
 
-/** Days in a Gregorian month. Pure arithmetic — no `Date`, per the `no-direct-date` rule. */
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) {
-    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-    return leap ? 29 : 28;
-  }
-  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 30;
-}
-
 /**
  * §11.2's `currentMonth`, derived rather than stored: *"months elapsed since `start_date` in
  * Asia/Dhaka (resolves review issue 'who increments it' — nobody; it's computed)"*.
@@ -565,51 +557,15 @@ export function groupBoardTasks<T extends BoardPlaceable>(rows: readonly T[]): B
 }
 
 /**
- * A `YYYY-MM-DD` calendar day → a day number, by pure integer arithmetic (Howard Hinnant's
- * `days_from_civil`). No `Date`: the string is an Asia/Dhaka calendar day (§11.0), and routing
- * it through `Date` is how a UTC offset slips a day in.
- */
-function dayNumber(iso: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return null;
-  const [y0, mo, d] = m.slice(1).map(Number) as [number, number, number];
-  const y = mo <= 2 ? y0 - 1 : y0;
-  const era = Math.floor(y / 400);
-  const yoe = y - era * 400;
-  const doy = Math.floor((153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5) + d - 1;
-  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
-  return era * 146097 + doe;
-}
-
-/**
- * The inverse of `dayNumber`: a day number → `YYYY-MM-DD` (Hinnant's `civil_from_days`).
- * Integer arithmetic only, for the same reason `dayNumber` avoids `Date`.
- */
-function isoFromDayNumber(z: number): string {
-  const era = Math.floor(z / 146097);
-  const doe = z - era * 146097;
-  const yoe = Math.floor(
-    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
-  );
-  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
-  const mp = Math.floor((5 * doy + 2) / 153);
-  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
-  const m = mp < 10 ? mp + 3 : mp - 9;
-  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
-  return isoDay(y, m, d);
-}
-
-/**
- * Move a `YYYY-MM-DD` Asia/Dhaka calendar day by `days`, which may be negative. Month, year and
- * leap-day rollover are all handled by the day-number round trip. No `Date` is involved, so
- * nothing can slip across a UTC offset.
+ * Move a `YYYY-MM-DD` Asia/Dhaka calendar day by `days`, which may be negative: `lib/dates`'s
+ * `addDays` (no `Date`, so nothing can slip across a UTC offset), made lenient.
  *
  * Used for the client export windows (PUL-413): `shiftIsoDay(dhakaToday(), -6)` is the first
- * day of a 7-day inclusive window. Returns the input unchanged if it is not `YYYY-MM-DD`.
+ * day of a 7-day inclusive window. Returns the input unchanged if it is not `YYYY-MM-DD`, where
+ * `addDays` throws.
  */
 export function shiftIsoDay(iso: string, days: number): string {
-  const n = dayNumber(iso);
-  return n === null ? iso : isoFromDayNumber(n + days);
+  return dayNumber(iso) === null ? iso : addDays(iso, days);
 }
 
 /**
@@ -813,13 +769,6 @@ export interface CalendarDay {
   inMonth: boolean;
 }
 
-/** The day number of 1970-01-01, a Thursday — the calendar grid's weekday reference. */
-const THURSDAY_1970 = dayNumber('1970-01-01') ?? 0;
-
-/** Zero-padded `YYYY-MM-DD` from parts. */
-function isoDay(year: number, month: number, day: number): string {
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
 
 /**
  * The calendar month a `YYYY-MM-DD` day falls in — how the Calendar derives its starting month
@@ -851,16 +800,13 @@ export const CALENDAR_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat
  * The month grid: whole weeks (Sunday first), padded with the previous month's trailing days
  * and the next month's leading days. Between 4 and 6 weeks depending on the month.
  *
- * Pure integer arithmetic, no `Date`: the weekday comes from `dayNumber`, counted from
- * 1970-01-01 (a Thursday). A `Date` built in the browser's zone could drift near
- * midnight, and this file keeps every calendar day a plain Asia/Dhaka string (§11.0).
+ * Pure integer arithmetic, no `Date`: the weekday comes from `lib/dates`'s `weekday`. A `Date`
+ * built in the browser's zone could drift near midnight, and this file keeps every calendar day
+ * a plain Asia/Dhaka string (§11.0).
  */
 export function calendarGrid(cm: CalendarMonth): CalendarDay[][] {
   const { year, month } = cm;
-  // `dayNumber` has an arbitrary epoch (it is only ever used for differences), so the weekday is
-  // measured from a KNOWN day rather than assumed from the epoch: 1970-01-01 was a Thursday (4).
-  const first = dayNumber(isoDay(year, month, 1)) ?? 0;
-  const leading = (((first - THURSDAY_1970 + 4) % 7) + 7) % 7; // 0 = Sunday
+  const leading = weekday(isoDay(year, month, 1)); // 0 = Sunday
   const inMonthDays = daysInMonth(year, month);
 
   const prev = shiftCalendarMonth(cm, -1);

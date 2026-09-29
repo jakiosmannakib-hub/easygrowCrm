@@ -9,12 +9,19 @@ import { describe, expect, it } from 'vitest';
 import {
   categoryDotClass,
   groupTaskTree,
+  taskKey,
   treeOpenState,
   type TaskStatus,
 } from './display';
 
-function row(id: string, month: number | null, category: string, status: TaskStatus = 'planned') {
-  return { id, month, category, status };
+function row(
+  id: string,
+  month: number | null,
+  category: string,
+  status: TaskStatus = 'planned',
+  subtaskTotal = 0,
+) {
+  return { id, month, category, status, subtaskTotal };
 }
 
 describe('groupTaskTree', () => {
@@ -99,54 +106,56 @@ describe('groupTaskTree', () => {
 describe('treeOpenState', () => {
   const tree = groupTaskTree([
     row('a', 1, 'SEO'),
-    row('b', 2, 'SEO'),
+    row('b', 2, 'SEO', 'planned', 3),
     row('c', 2, 'Content'),
-    row('d', 3, 'SEO'),
+    row('d', 3, 'SEO', 'approved', 1),
     row('e', null, 'Ad hoc'),
   ]);
-  const allKeys = tree.flatMap((m) => [m.key, ...m.categories.map((c) => c.key)]);
+  const allKeys = [
+    ...tree.flatMap((m) => [m.key, ...m.categories.map((c) => c.key)]),
+    taskKey('b'),
+    taskKey('d'),
+  ];
 
-  it('is COMPLETE — every month and category key has an entry (§16.10: no lazy keys)', () => {
-    const state = treeOpenState(tree, {}, 2);
+  it('is COMPLETE — every month, category and expandable-task key has an entry (§16.10)', () => {
+    const state = treeOpenState(tree, {});
     expect(Object.keys(state).sort()).toEqual([...allKeys].sort());
     expect(Object.values(state).every((v) => typeof v === 'boolean')).toBe(true);
   });
 
-  it('expands only the current cycle and Unscheduled when the current month is known', () => {
-    const state = treeOpenState(tree, {}, 2);
+  it('expands every month by default, Unscheduled included', () => {
+    const state = treeOpenState(tree, {});
     expect(tree.map((m) => [m.month, state[m.key]])).toEqual([
-      [1, false],
+      [1, true],
       [2, true],
-      [3, false],
+      [3, true],
       [null, true],
     ]);
   });
 
-  it('expands every month when no current month is known (All projects)', () => {
-    const state = treeOpenState(tree, {}, null);
-    expect(tree.every((m) => state[m.key])).toBe(true);
-  });
-
-  it('expands a lone month even when it is not the current cycle', () => {
-    const lone = groupTaskTree([row('a', 5, 'SEO')]);
-    expect(treeOpenState(lone, {}, 2)['month:5']).toBe(true);
-  });
-
-  it('expands every category by default, inside collapsed months too', () => {
-    const state = treeOpenState(tree, {}, 2);
+  it('expands every category by default', () => {
+    const state = treeOpenState(tree, {});
     const categoryKeys = tree.flatMap((m) => m.categories.map((c) => c.key));
     expect(categoryKeys.every((k) => state[k])).toBe(true);
   });
 
+  it('collapses tasks with subtasks by default, and gives subtask-less tasks no key', () => {
+    const state = treeOpenState(tree, {});
+    expect(state[taskKey('b')]).toBe(false);
+    expect(state[taskKey('d')]).toBe(false);
+    expect(state).not.toHaveProperty(taskKey('a'));
+  });
+
   it('lets a user override beat the default, in both directions', () => {
-    const state = treeOpenState(tree, { 'month:1': true, 'month:2': false }, 2);
-    expect(state['month:1']).toBe(true);
-    expect(state['month:2']).toBe(false);
+    const state = treeOpenState(tree, { 'month:1': false, [taskKey('b')]: true });
+    expect(state['month:1']).toBe(false);
+    expect(state[taskKey('b')]).toBe(true);
   });
 
   it('ignores overrides for keys no longer in the tree rather than adding them', () => {
-    const state = treeOpenState(tree, { 'month:99': true }, 2);
+    const state = treeOpenState(tree, { 'month:99': true, [taskKey('a')]: true });
     expect(state).not.toHaveProperty('month:99');
+    expect(state).not.toHaveProperty(taskKey('a'));
   });
 });
 

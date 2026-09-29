@@ -131,3 +131,21 @@
     @apply font-sans;
   }
 }
+/* Sign-in page backdrop: a faint 28px grid drawn from the foreground token, faded out toward
+   the edges by a radial mask. The mask sits on a pseudo-element so the card on top stays solid. */
+@utility bg-grid-fade {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+}

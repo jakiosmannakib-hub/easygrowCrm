@@ -10,13 +10,14 @@
 
 'use client';
 
-import { LogOut } from 'lucide-react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import type { Role } from '@/lib/authz';
 import { authClient } from '@/lib/auth-client';
+import type { Role } from '@/lib/authz';
 import { visibleNavItems } from '@/lib/nav';
 import { cn } from '@/lib/utils';
+import { LogOut } from 'lucide-react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { NavIcon } from './nav-icon';
 
 export function Sidebar({ role }: { role: Role }) {
@@ -31,8 +32,16 @@ export function Sidebar({ role }: { role: Role }) {
 
   return (
     <aside className="bg-sidebar text-sidebar-foreground flex h-dvh w-60 shrink-0 flex-col border-r">
-      <div className="flex h-14 items-center px-4">
-        <span className="font-heading text-base font-semibold">EasyGrowCrm</span>
+      <div className="flex h-14 items-center gap-2 px-4">
+        {/* The wordmark is white on transparent: invert it on the light theme. */}
+        <Image
+          src="/easygrow.webp"
+          alt="EasyGrow"
+          width={98}
+          height={16}
+          priority
+          className="h-4 w-auto invert dark:invert-0"
+        />
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">

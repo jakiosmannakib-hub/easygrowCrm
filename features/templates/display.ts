@@ -10,6 +10,7 @@
 // fallback badge.
 
 import type { DueRule } from '../../db/schema/templates';
+import { MONTH_NAMES } from './cascade';
 
 /** The template-level categories the New Template modal offers (§14.4.1 "category ▾"). */
 export const TEMPLATE_CATEGORIES = [
@@ -58,21 +59,7 @@ export const UNCATEGORISED = 'Uncategorised';
 
 // ── Detail tree (§14.4.2, PUL-503 Stage 3a) ─────────────────────────────────────
 
-/** `template_months.start_month` is 0-based (0 = January, §11.4). No `Date` involved. */
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-] as const;
+// Month names come from cascade.ts (PUL-504), the one place they are declared.
 
 /**
  * A month's cycle anchor, e.g. `Cycle starts January 10`.

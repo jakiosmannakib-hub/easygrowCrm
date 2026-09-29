@@ -24,8 +24,8 @@
 //   convention). A no-op edit bumps nothing and writes no audit row.
 // - Positions are 1-based (as seeded, tests/seed-templates.ts); a new row goes at `max + 1`.
 //
-// Not in this file yet: §13.3.6b `updateTemplate`, §13.3.7a `createTemplateMonths` (PUL-504) and
-// the §13.3.7e inline subtask ops. The §14.4.4 modal edits subtasks through
+// Not in this file yet: §13.3.6b `updateTemplate` and the §13.3.7e inline subtask ops.
+// (§13.3.7a `createTemplateMonths` landed with PUL-504.) The §14.4.4 modal edits subtasks through
 // `updateTemplateTask`'s replacement list.
 
 'use server';
@@ -46,11 +46,13 @@ import { clock } from '../../lib/clock';
 import { AppError } from '../../lib/errors';
 import { withTx, type Tx } from '../../lib/mutation';
 import { writeAudit } from '../audit/write-audit';
+import { cascadeMonthDates, MONTH_NAMES } from './cascade';
 import {
   AddTemplateCategoryInput,
   AddTemplateMonthInput,
   AddTemplateTaskInput,
   CreateTemplateInput,
+  CreateTemplateMonthsInput,
   DeleteTemplateCategoryInput,
   DeleteTemplateInput,
   DeleteTemplateMonthInput,
@@ -424,6 +426,130 @@ export async function addTemplateMonth(input: AddTemplateMonthInput) {
       });
 
       return month;
+    });
+
+    // 5. NOTIFY — none.
+  });
+}
+
+/**
+ * §13.3.7a `createTemplateMonths` — MGR (`template.update`). The Add Month wizard's save
+ * (§14.4.3, PUL-504): a whole 12-month cycle in ONE transaction.
+ *
+ * - Month 1 is inserted fully populated: its categories, their tasks, the tasks' subtasks.
+ * - Months 2–12 are empty scaffolds (no categories), dated by `cascadeMonthDates`: each keeps
+ *   Month 1's day, clamped to what that month can hold (Jan 31 → Feb 29 → Mar 31).
+ * - Numbering continues after any months the template already has: `num` and `position` start at
+ *   `max + 1`, as `addTemplateMonth` does. The template row lock makes that safe.
+ * - Each month is named `Month {num} - {Month name} {day}`, with a plain hyphen so the saved
+ *   name matches the wizard's preview (§13.3.7a / §14.4.2 show an em dash; the no-em-dash UI
+ *   rule wins, since this name is rendered as the month's heading).
+ * - Positions of categories, tasks and subtasks are 1-based, in input order.
+ *
+ * The wizard's due rules are `day` / `before_deadline` only (the schema refuses `after`), so no
+ * `bad_ref` check is needed here.
+ *
+ * Audit: ONE `template.months_created` row, `after: { monthIds, taskCount, subtaskCount }`.
+ * Returns `{ monthIds, firstNum, month1Tasks, month1Subtasks }`; `firstNum` is Month 1's `num`,
+ * which the wizard's success toast names.
+ *
+ * Notify: none.
+ */
+export async function createTemplateMonths(input: CreateTemplateMonthsInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = CreateTemplateMonthsInput.parse(input);
+
+    // 2. AUTHORIZE — first awaited line (§9.5 rule 1).
+    const actor = await authorize('template.update');
+
+    // 3. TRANSACT
+    return await withTx(async (tx) => {
+      await lockLiveTemplate(tx, parsed.templateId);
+
+      const inTemplate = eq(templateMonths.templateId, parsed.templateId);
+      const firstNum = await nextSlot(tx, templateMonths, templateMonths.num, inTemplate);
+      const firstPosition = await nextSlot(tx, templateMonths, templateMonths.position, inTemplate);
+
+      const months = cascadeMonthDates(parsed.startMonth, parsed.startDay).map((start, i) => {
+        const num = firstNum + i;
+        return {
+          id: `tm_${crypto.randomUUID()}`,
+          templateId: parsed.templateId,
+          num,
+          name: `Month ${num} - ${MONTH_NAMES[start.month]} ${start.day}`,
+          startMonth: start.month,
+          startDay: start.day,
+          position: firstPosition + i,
+        };
+      });
+      const month1Id = months[0]!.id;
+
+      // Month 1's contents, built in input order with 1-based positions at every level.
+      const categoryRows: (typeof templateCategories.$inferInsert)[] = [];
+      const taskRows: (typeof templateTasks.$inferInsert)[] = [];
+      const subtaskRows: (typeof templateTaskSubtasks.$inferInsert)[] = [];
+
+      parsed.month1.cats.forEach((cat, ci) => {
+        const categoryId = `tcat_${crypto.randomUUID()}`;
+        categoryRows.push({ id: categoryId, monthId: month1Id, name: cat.name, position: ci + 1 });
+
+        cat.tasks.forEach((task, ti) => {
+          const taskId = `tt_${crypto.randomUUID()}`;
+          taskRows.push({
+            id: taskId,
+            categoryId,
+            position: ti + 1,
+            title: task.title,
+            roleHint: task.roleHint || null,
+            priority: task.priority,
+            estHours: hoursToColumn(task.estHours ?? null),
+            dueRule: canonicalRule(task.dueRule),
+            qcRequired: task.qcRequired,
+            proofRequired: task.proofRequired,
+            clientVisible: task.clientVisible,
+            sopUrl: task.sopUrl ?? null,
+            expectedOutput: task.expectedOutput ?? null,
+            checklist: task.checklist,
+          });
+
+          task.subtasks.forEach((title, si) => {
+            subtaskRows.push({
+              id: `tts_${crypto.randomUUID()}`,
+              taskId,
+              title,
+              position: si + 1,
+            });
+          });
+        });
+      });
+
+      // Parents before children: the FK chain is the hierarchy (§11.4).
+      await tx.insert(templateMonths).values(months);
+      await tx.insert(templateCategories).values(categoryRows);
+      if (taskRows.length > 0) await tx.insert(templateTasks).values(taskRows);
+      if (subtaskRows.length > 0) await tx.insert(templateTaskSubtasks).values(subtaskRows);
+
+      await touchTemplate(tx, parsed.templateId);
+
+      const monthIds = months.map((m) => m.id);
+
+      // 4. AUDIT — same tx. One row for the whole cycle: it was one act.
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'template.months_created',
+        resourceType: 'template',
+        resourceId: parsed.templateId,
+        before: null,
+        after: { monthIds, taskCount: taskRows.length, subtaskCount: subtaskRows.length },
+      });
+
+      return {
+        monthIds,
+        firstNum,
+        month1Tasks: taskRows.length,
+        month1Subtasks: subtaskRows.length,
+      };
     });
 
     // 5. NOTIFY — none.

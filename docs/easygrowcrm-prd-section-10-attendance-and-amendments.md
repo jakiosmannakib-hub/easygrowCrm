@@ -172,6 +172,16 @@ Every rendered date includes the year (`fmtDate` → `Aug 8, 2026`). Bare month-
 
 The product formerly called **Pulse** is named **EasyGrowCrm**. All documents, file names (`easygrowcrm-*`), UI text, and the logo mark are updated. Ticket IDs in §17 keep the `PUL-` prefix as stable identifiers (renaming in-flight ticket keys creates tracker churn for zero value); any tracker import may alias the prefix if desired.
 
+## M. White-label hierarchy, review-only close, scoped exports *(edits §9.6, §11.2, §13.2–13.4.5, §13.8, §14.3; tickets PUL-414 … PUL-418)*
+
+EasyGrow is a **white-label** agency: its clients are agencies that resell SEO and web design to their own end businesses, and EasyGrow delivers for those businesses. Three decisions follow.
+
+1. **Client › Account › Project.** A new `accounts` level sits between `clients` and `projects`. A **client** is the white-label partner. An **account** is one of that partner's end businesses (e.g. "Joe's Plumbing, Austin"). A **project** is one engagement for that account ("Onboarding", "Local SEO — monthly", "Website redesign"). `projects.client_id` is **replaced** by `projects.account_id`; the client is always one join away, so no denormalized copy (§16.7). The full hierarchy is now **Agency → Client → Account → Project → Month → Category → Task → Subtask** (extends J). `/projects` becomes a two-pane workspace: a Client › Account › Project tree on the left, the selected node's view on the right (§14.3).
+2. **Every task is closed by review.** The manager's direct `completed` status (the QC bypass of §13.4.5 / PRD §4.2) is **removed**: nothing new may be set to `completed`. A task is done only when a manager approves its submission through `reviewTask` (§13.4.7). The `completed` enum value stays so old rows still read; "Completed" survives only as the client export's relabel of `approved` (§3.1.7).
+3. **Weekly / monthly exports are scoped** to one client (one sheet per account) or one account. They stay `.xlsx`, which opens in Google Sheets as-is; a direct Google Sheets export is out of scope for v1.
+
+This amendment also knowingly takes PUL-414 … PUL-418 ahead of Phase 3 (see the §17 phase-order note).
+
 ---
 
 ## Amendment status
@@ -190,5 +200,6 @@ The product formerly called **Pulse** is named **EasyGrowCrm**. All documents, f
 | J. Template hierarchy & subtasks | Owner directed the rework across prototype sessions | ✅ Final |
 | K. Dates carry the year | Owner requested | ✅ Final |
 | L. Renamed to EasyGrowCrm | Owner directed | ✅ Final |
+| M. White-label hierarchy, review-only close, scoped exports | Toki decided 2026-09-29 | ⏳ Awaiting product-owner confirmation in PUL-414's PR |
 
-**No open decisions remain.**
+**Open decision:** Amendment M, until Jaki confirms it at review.

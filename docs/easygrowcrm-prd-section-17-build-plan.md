@@ -11,7 +11,7 @@
 
 The unit of work is the **ticket**. Tickets are numbered `PUL-<phase><serial>` — the leading digit(s) name the phase (`PUL-104` = Phase 1, ticket 04; `PUL-1003` = Phase 10, ticket 03), and subtasks are `<ticket>.<n>` (e.g. `104.2`). Work top to bottom: tickets are dependency-ordered, so start at the lowest open number and don't begin a phase until the previous one is green.
 
-The plan is **83 tickets across 11 phases**, with 340+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed)*:
+The plan is **88 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, and PUL-414 … PUL-418 to Phase 4 by Amendment M)*:
 
 | Phase | Focus                                                       | Tickets             |
 | ----- | ----------------------------------------------------------- | ------------------- |
@@ -19,7 +19,7 @@ The plan is **83 tickets across 11 phases**, with 340+ checkable subtasks *(orig
 | 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-113   |
 | 2     | Employees & clients                                         | PUL-201 … PUL-207   |
 | 3     | Attendance                                                  | PUL-301 … PUL-308   |
-| 4     | Projects & tasks                                            | PUL-401 … PUL-413   |
+| 4     | Projects & tasks                                            | PUL-401 … PUL-418   |
 | 5     | Templates & Start Project                                   | PUL-501 … PUL-506   |
 | 6     | QC, review & EOD                                            | PUL-601 … PUL-607   |
 | 7     | Leave                                                       | PUL-701 … PUL-707   |
@@ -701,7 +701,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-# Phase 4 — Projects & Tasks (13 tickets)
+# Phase 4 — Projects & Tasks (18 tickets)
 
 ---
 
@@ -1321,6 +1321,82 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > refusals; the window math; the round-tripped workbook (sheet per client, every cell, "Completed"
 > relabel, latest-submission hours fallback, hyperlink vs text); and sheet-name sanitizing.
 > Mutation-checked: dropping the `client_visible` predicate fails 4 of them.
+
+---
+
+> **Phase-order note (Amendment M).** PUL-414 … PUL-418 were added to Phase 4 on 2026-09-29 and
+> taken ahead of Phase 3 (still unstarted) at Toki's direction, pending Jaki's confirmation of
+> Amendment M in PUL-414's PR. Their own `Depends` are all merged. The "lowest open ticket" rule is
+> knowingly set aside again, as it was for PUL-401. After PUL-418, the QC chain **PUL-601 → 602 →
+> 603** is what makes "the manager closes it" real, and should come next.
+
+### PUL-414 — Amendment M + `accounts` table (migration 010a)
+
+**Budget:** M · **Reads:** Amendment M (§10 log), §11.2, §9.6 ¹² · **Depends:** PUL-401, PUL-207
+
+- [ ] 414.1 Amendment M written into §9.6, §11.2 / §11.9, §13.2 / 13.3.1 / 13.4.5 / 13.8, §14.3, this plan, and CLAUDE.md
+- [ ] 414.2 `db/schema/accounts.ts` per §11.2; `projects.client_id` → `projects.account_id`; `accounts_client_idx`, `projects_account_idx`
+- [ ] 414.3 Migration `0009_accounts.sql` backfills one account per existing client and re-points projects, re-runnable
+- [ ] 414.4 `seedMinimal` / `seedFull` gain accounts; `reset()` truncates them FK-safe
+
+**Done when:** schema diff vs §11 is empty and every existing suite passes with projects reached through accounts. *(414.2–414.4 change the column every project query reads, so the query and input rework in 415.3–415.4 lands in this same branch if the build would otherwise go red; say so in the PR.)*
+
+---
+
+### PUL-415 — Account actions + account-scoped project inputs
+
+**Budget:** L · **Reads:** §13.2.4–13.2.6, §13.3.1–13.3.3, §9.6 ¹² · **Depends:** PUL-414
+
+- [ ] 415.1 `account.read` / `account.create` / `account.update` / `account.archive` in `lib/authz.ts` per §9.6 ¹²
+- [ ] 415.2 `createAccount`, `updateAccount`, `archiveAccount` (`GATE:account_in_use`), `unarchiveAccount` in `features/clients/actions.ts`; `archiveClient` gated on live accounts
+- [ ] 415.3 `createProject` / `updateProject` / `createProjectFromTemplate` take `accountId`; `requireLiveAccount` also checks the client
+- [ ] 415.4 Every project query joins through accounts; `PickableProject` gains `accountId` / `accountName`
+- [ ] 415.5 `{{AccountName}}` title token; seed templates use it where they mean the end business
+- [ ] 415.6 Tests: `features/clients/accounts.test.ts` (CRUD, both gates, audit, denial) → CI manifest; `authorize.test.ts` counts; project and start-project tests on `accountId`
+
+**Done when:** an account can be created, used for a project and archived only when empty, all audited.
+
+---
+
+### PUL-416 — Remove the "Completed" review bypass
+
+**Budget:** S · **Reads:** Amendment M, §13.4.5, §14.3.2 · **Depends:** PUL-404
+
+- [ ] 416.1 `completed` out of `PROTECTED_SETTABLE_STATUSES`; `setTaskStatusProtected` refuses it with `GATE:use_review`
+- [ ] 416.2 Manager pill menu offers Needs revision · Cancelled only
+- [ ] 416.3 Tests: `status-transitions.test.ts` (`completed` illegal for every role), `status-pill.test.ts`
+
+**Done when:** no code path can write `completed`; old `completed` rows still render and still satisfy dependencies.
+
+---
+
+### PUL-417 — Projects workspace (Client › Account › Project)
+
+**Budget:** L · **Reads:** §14.3 (Amendment M block), §13.8 `getWorkspaceTree` · **Depends:** PUL-415, PUL-410
+
+- [ ] 417.1 `getWorkspaceTree` query (nested, fixed number of queries) + pure grouping / search / selection helpers
+- [ ] 417.2 Left tree with counts, review dot, search, per-node ⋯ menu (role-gated on the server), drawer at phone width
+- [ ] 417.3 Client and account overviews
+- [ ] 417.4 Project pane reuses header + Board / List / Calendar / Review / Workload; filter bar shrinks to Month ▾ · Assignee ▾; breadcrumb gains the account
+- [ ] 417.5 URL is the selection; `?project=&tab=` deep link still lands
+- [ ] 417.6 Start Project wizard step 1: Client ▾ → Account ▾ (+ New account) → name
+- [ ] 417.7 Tests: `workspace-tree.test.ts` (helpers) + query test; manual QA all roles
+
+**Done when:** a manager goes client → new account → project from template → lands on it in the tree, without the old dropdowns.
+
+---
+
+### PUL-418 — Per-client and per-account exports
+
+**Budget:** M · **Reads:** §13.8 export row (Amendment M), §3.1.7 · **Depends:** PUL-413, PUL-417
+
+- [ ] 418.1 Route takes exactly one of `clientId` / `accountId`; 400 / 404 / 403 as §13.8
+- [ ] 418.2 `getClientExportRows(range, scope)` joins through accounts; rows gain `accountName`, still client-safe
+- [ ] 418.3 Workbook: client scope = summary + a sheet per account; account scope = one sheet; filename names the scope
+- [ ] 418.4 Export buttons in the client and account overviews
+- [ ] 418.5 Tests: extend `client-export.test.ts` (scoping, sheet split, refusals)
+
+**Done when:** a client file and an account file each open in Excel and Google Sheets with no internal field present.
 
 ---
 
@@ -2067,14 +2143,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 1 — Foundation                         | PUL-101 … PUL-113   | 13     |
 | 2 — Employees & Clients                | PUL-201 … PUL-207   | 7      |
 | 3 — Attendance                         | PUL-301 … PUL-308   | 8      |
-| 4 — Projects & Tasks                   | PUL-401 … PUL-413   | 13     |
+| 4 — Projects & Tasks                   | PUL-401 … PUL-418   | 18     |
 | 5 — Templates & Start Project          | PUL-501 … PUL-506   | 6      |
 | 6 — QC, Review & EOD                   | PUL-601 … PUL-607   | 7      |
 | 7 — Leave                              | PUL-701 … PUL-707   | 7      |
 | 8 — Dashboards, Notifications & Polish | PUL-801 … PUL-809   | 9      |
 | 9 — Reports, Audit & Settings          | PUL-901 … PUL-903   | 3      |
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
-| **Total**                              |                     | **83** |
+| **Total**                              |                     | **88** |
 
 Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 

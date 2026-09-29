@@ -64,6 +64,26 @@ Role-branched (one route, two components):
 
 ## 14.3 Projects `/projects`
 
+> **Amendment M — the page is a two-pane workspace (PUL-417).** This supersedes the Client ▾ and
+> Project ▾ dropdowns below; the rest of §14.3 (header, tabs, views) still applies to the
+> project pane.
+>
+> - **Left: workspace tree.** Collapsible `📁 Client › 🏢 Account › 📋 Project`, from
+>   `getWorkspaceTree` (§13.8). Each project shows its open-task count and a dot when it has tasks
+>   awaiting review. A search box filters the tree in memory. Each node has a ⋯ menu (New account /
+>   New project / Start from template / Rename / Archive), each item shown only when the viewer's
+>   role allows it (§9.6). Collapse state is a per-viewer convenience (browser storage), never
+>   authoritative. At phone width the tree becomes a drawer.
+> - **Right: the selected node.**
+>   - **Client** → one card per account: projects, progress, open, awaiting review, overdue; the
+>     client's **Weekly (Excel)** / **Monthly (Excel)** export (MGR-only).
+>   - **Account** → its projects, each with progress and health chip; the account's exports.
+>   - **Project** → the project header (breadcrumb `📁 Client › 🏢 Account › Project · type ·
+>     Month N`) and the tabs below. The filter bar keeps only **Month ▾ · Assignee ▾**.
+>   - **Nothing selected** → the agency-wide Review and Workload tabs.
+> - **The URL is the selection:** `/projects?client=…&account=…&project=…&tab=…`. `?project=` alone
+>   still works (the Start Project landing); its account and client are derived.
+
 **Filter bar:** Client ▾ (from `getClients`, 13.8) · Project ▾ (scoped to client) · Month ▾ · Assignee ▾ · **Weekly (Excel)** · **Monthly (Excel)** (both MGR-only, server-side exports — 13.8 / PUL-413).
 **Project header:** breadcrumb `📁 Client › Project · type · Month N`; progress `9/21 · 43%` + bar; health chip (On Track / At Risk / Delayed / Critical — computed over the whole project, not the filtered month); **+ New Task** (MGR only); **Archive** in an overflow menu (MGR; blocked with a toast if pending reviews — `GATE:pending_reviews`).
 
@@ -81,7 +101,7 @@ Visibility: Board/List/Calendar all roles; Review + Workload MGR/HR; **Manager Q
 - Colors/labels per status map. Display labels: Planned "Not Started" · In Progress "Working on it" · Blocked "Blocked" · Submitted "Awaiting review" · Revision Required "Needs revision" *(renamed from prototype's "Stuck — revision" — "Stuck" collided with Blocked)* · Approved "Done ✓" **with a small check-shield icon** · Completed "Done" *(no icon — the icon is what visually distinguishes QC-approved from manager-closed, review fix)* · Cancelled "Cancelled".
 - Dropdown option sets:
   - **EMP (assignee, unlocked):** Not Started · Working on it · Blocked · ➤ *Submit for review…*
-  - **MGR:** the open set + Needs revision · Done (Completed) · Cancelled. **"Done (Approved)" is NOT in the dropdown** — approving goes through the Review modal only (13.4.5 `GATE:use_review`). Completed here *is* the explicit QC-bypass and is audited as such.
+  - **MGR:** the open set + Needs revision · Cancelled. *(Amendment M removed "Done (Completed)": no one closes a task without review. The rest of this bullet is kept for history.)* ~~the open set + Needs revision · Done (Completed) · Cancelled.~~ **"Done (Approved)" is NOT in the dropdown** — approving goes through the Review modal only (13.4.5 `GATE:use_review`). Completed here *is* the explicit QC-bypass and is audited as such.
   - Locked states (submitted/approved/completed/cancelled): pill read-only for EMP; current status always shown even if outside the option set.
   - Dependency-blocked: pill shows Blocked color regardless of stored status, lock icon, tooltip names the dependency (§13.4.6 guard).
 - ➤ *Submit for review…* opens the Submit modal, never changes status directly.

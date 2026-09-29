@@ -7,11 +7,12 @@
 // SCOPE: §15.5's seedMinimal is "1 SA, 2 managers, 3 employees, 1 client, 1 project". It was
 // filled in across three tickets: the user cast + guard + reset in PUL-109, the client in
 // PUL-207 (migration 0004), and the project — plus its tasks — in PUL-401 (migration 0006).
-// The §15.5 shape is now complete; later phases extend it as their tables land.
+// The §15.5 shape is now complete; later phases extend it as their tables land. PUL-414
+// (Amendment M, migration 0009) put an account between the client and its projects.
 
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
-import { clients, projects, projectTasks, user } from '../db/schema';
+import { accounts, clients, projects, projectTasks, user } from '../db/schema';
 import { seedTemplates, type SeededTemplates } from './seed-templates';
 
 /**
@@ -62,7 +63,7 @@ export async function reset(): Promise<void> {
   // one statement and CASCADE would reach the children anyway. Being explicit means a new table
   // that nothing references yet still gets wiped instead of quietly surviving a reset.
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "accounts", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -76,6 +77,12 @@ export interface SeededUser {
 export interface SeededClient {
   id: string;
   name: string;
+}
+
+export interface SeededAccount {
+  id: string;
+  name: string;
+  clientId: string;
 }
 
 export interface SeededProject {
@@ -94,11 +101,15 @@ export interface MinimalSeed {
   projectManager: SeededUser;
   employees: [SeededUser, SeededUser, SeededUser];
   client: SeededClient;
+  /** The seed client's one account (Amendment M); `project` belongs to it. */
+  account: SeededAccount;
   project: SeededProject;
   tasks: [SeededTask, SeededTask, SeededTask];
 }
 
 export interface FullSeed extends MinimalSeed {
+  /** A second account under the same client; `secondProject` belongs to it. */
+  secondAccount: SeededAccount;
   /** The extra engagement seedFull adds on top of the minimal cast. */
   secondProject: SeededProject;
   /** seedFull's extra tasks — the minimal three are still in `tasks`. */
@@ -120,8 +131,9 @@ export interface FullSeed extends MinimalSeed {
  * random uuid. All users are active with email_verified true — the deactivated and unverified
  * cases are what individual tests set up, never the shared fixture.
  *
- * One non-archived client (PUL-207), one active project under it, and three tasks on that
- * project (PUL-401) — which completes §15.5's "1 client, 1 project" cast.
+ * One non-archived client (PUL-207), one account under it (PUL-414, Amendment M), one active
+ * project under that account, and three tasks on that project (PUL-401) — which completes
+ * §15.5's "1 client, 1 project" cast.
  *
  * The three tasks vary deliberately: one unassigned and `planned`, one assigned to an employee
  * and `in_progress`, one assigned to the TL and `submitted` — so the review queue and the
@@ -149,12 +161,15 @@ export async function seedMinimal(): Promise<MinimalSeed> {
   const client: SeededClient = { id: 'seed_client', name: 'Seed Client' };
   await db.insert(clients).values(client);
 
+  const account: SeededAccount = { id: 'seed_account', name: 'Seed Account', clientId: client.id };
+  await db.insert(accounts).values(account);
+
   const [superAdmin, teamLeader, projectManager, e1, e2, e3] = cast;
 
   const project: SeededProject = { id: 'proj_seed', name: 'Seed Retainer' };
   await db.insert(projects).values({
     ...project,
-    clientId: client.id,
+    accountId: account.id,
     type: 'Retainer',
     startDate: '2026-01-01',
     deadline: '2026-12-31',
@@ -206,6 +221,7 @@ export async function seedMinimal(): Promise<MinimalSeed> {
     projectManager,
     employees: [e1, e2, e3],
     client,
+    account,
     project,
     tasks,
   };
@@ -216,7 +232,9 @@ export async function seedMinimal(): Promise<MinimalSeed> {
  *
  * Still built on `seedMinimal` — same cast, same client, same three tasks — so callers written
  * against the minimal handles keep working. PUL-401 adds the second engagement on top: another
- * project under the same client and three more tasks, this time spread across a second month
+ * project under the same client — since PUL-414, under a second account of that client, so
+ * client-level reads see both projects while account-level reads can tell them apart — and
+ * three more tasks, this time spread across a second month
  * and the PM/employee assignees, so multi-project reads (the board's project filter, workload
  * by assignee) have more than one row to distinguish.
  *
@@ -229,10 +247,17 @@ export async function seedFull(): Promise<FullSeed> {
   assertTestDb();
   const minimal = await seedMinimal();
 
+  const secondAccount: SeededAccount = {
+    id: 'seed_account_2',
+    name: 'Seed Account Two',
+    clientId: minimal.client.id,
+  };
+  await db.insert(accounts).values(secondAccount);
+
   const secondProject: SeededProject = { id: 'proj_seed_2', name: 'Seed One-off' };
   await db.insert(projects).values({
     ...secondProject,
-    clientId: minimal.client.id,
+    accountId: secondAccount.id,
     type: 'One-off',
     startDate: '2026-03-01',
     deadline: null, // the nullable-deadline path, exercised by the fixture itself
@@ -281,5 +306,5 @@ export async function seedFull(): Promise<FullSeed> {
   // PUL-501.3: the three prototype templates, owned by the seed PM.
   const seededTemplates = await seedTemplates(minimal.projectManager.id);
 
-  return { ...minimal, secondProject, extraTasks, templates: seededTemplates };
+  return { ...minimal, secondAccount, secondProject, extraTasks, templates: seededTemplates };
 }

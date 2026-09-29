@@ -16,9 +16,10 @@
 
 'use server';
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import {
+  accounts,
   clients,
   projectTasks,
   projects,
@@ -101,6 +102,37 @@ async function requireLiveClient(
 
   if (!row) {
     throw new AppError('NOT_FOUND', 'Client not found');
+  }
+  return row;
+}
+
+/**
+ * **TEMPORARY Stage 1 bridge (PUL-414), removed by PUL-415.3.** Amendment M put an account
+ * between a client and its projects, but `createProject`, `createProjectFromTemplate` and
+ * `updateProject` still take a `clientId` until PUL-415.3 switches them to `accountId`. This
+ * resolves the account a client-addressed project lands in: the client's **oldest live
+ * account** (`created_at`, then `id`, so the pick is deterministic).
+ *
+ * Every client that existed at migration 0009 has exactly one account (the backfilled
+ * `acc_<client id>`), so for them behaviour is unchanged. A client created after the migration
+ * has no account until PUL-415 ships `createAccount`, and gets NOT_FOUND here.
+ *
+ * Call after `requireLiveClient`, on the same executor, so both reads share the tx snapshot.
+ */
+async function requireClientAccount(
+  executor: Executor,
+  clientId: string,
+): Promise<{ id: string; name: string }> {
+  // TODO(PUL-415.3): delete this helper when the project actions take `accountId`.
+  const [row] = await executor
+    .select({ id: accounts.id, name: accounts.name })
+    .from(accounts)
+    .where(and(eq(accounts.clientId, clientId), isNull(accounts.deletedAt)))
+    .orderBy(asc(accounts.createdAt), asc(accounts.id))
+    .limit(1);
+
+  if (!row) {
+    throw new AppError('NOT_FOUND', 'This client has no account yet');
   }
   return row;
 }
@@ -206,6 +238,7 @@ export async function createProject(input: CreateProjectInput) {
     const row = await withTx(async (tx) => {
       // Guard and write share the transaction's snapshot.
       await requireLiveClient(tx, parsed.clientId);
+      const account = await requireClientAccount(tx, parsed.clientId);
 
       const id = `prj_${crypto.randomUUID()}`;
       const now = clock.now();
@@ -214,7 +247,7 @@ export async function createProject(input: CreateProjectInput) {
         .insert(projects)
         .values({
           id,
-          clientId: parsed.clientId,
+          accountId: account.id,
           name: parsed.name,
           type: parsed.type,
           startDate: parsed.startDate,
@@ -305,6 +338,7 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
     // 3. TRANSACT
     const result = await withTx(async (tx) => {
       const client = await requireLiveClient(tx, parsed.clientId);
+      const account = await requireClientAccount(tx, client.id);
 
       const tree = await loadTemplateTree(tx, parsed.templateId);
       if (!tree) throw new AppError('NOT_FOUND', 'Template not found');
@@ -352,7 +386,7 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
         .insert(projects)
         .values({
           id: projectId,
-          clientId: client.id,
+          accountId: account.id,
           name: parsed.name,
           // §11.2: 'Retainer' | 'One-off' | template category. A template with no category is a
           // recurring monthly cycle, so it falls back to 'Retainer'.
@@ -493,10 +527,14 @@ export async function createProjectFromTemplate(input: CreateProjectFromTemplate
   });
 }
 
-/** The only columns §13.3.3 may touch. Only `deadline` is nullable; the other three are NOT NULL. */
+/**
+ * The only columns §13.3.3 may touch. Only `deadline` is nullable; the other three are NOT NULL.
+ * `accountId` is what a `clientId` in the input resolves to (Stage 1 bridge, see
+ * `requireClientAccount`), so the diff and the audit row name the column actually written.
+ */
 type ProjectEdit = {
   name?: string;
-  clientId?: string;
+  accountId?: string;
   startDate?: string;
   deadline?: string | null;
 };
@@ -559,9 +597,25 @@ export async function updateProject(input: UpdateProjectInput) {
         });
       }
 
+      // Stage 1 bridge (TODO(PUL-415.3)): the input still names a client. The same client as now
+      // is no change — so a project whose client was archived after it started stays editable,
+      // exactly as before. A different client is validated live and resolved to its account.
+      let movedTo: string | undefined;
+      if (parsed.clientId !== undefined) {
+        const [owner] = await tx
+          .select({ clientId: accounts.clientId })
+          .from(accounts)
+          .where(eq(accounts.id, current.accountId))
+          .limit(1);
+        if (owner?.clientId !== parsed.clientId) {
+          await requireLiveClient(tx, parsed.clientId);
+          movedTo = (await requireClientAccount(tx, parsed.clientId)).id;
+        }
+      }
+
       const submitted: ProjectEdit = {
         ...(parsed.name !== undefined && { name: parsed.name }),
-        ...(parsed.clientId !== undefined && { clientId: parsed.clientId }),
+        ...(movedTo !== undefined && { accountId: movedTo }),
         ...(parsed.startDate !== undefined && { startDate: parsed.startDate }),
         ...(parsed.deadline !== undefined && { deadline: parsed.deadline }),
       };
@@ -582,13 +636,6 @@ export async function updateProject(input: UpdateProjectInput) {
       // Nothing actually moved: no UPDATE, no audit row.
       if (Object.keys(changes).length === 0) {
         return current;
-      }
-
-      // Only when the client is genuinely changing — re-validating an unchanged one would
-      // block edits to a project whose client was archived after the project started, which
-      // is legitimate historical work.
-      if (changes.clientId !== undefined) {
-        await requireLiveClient(tx, changes.clientId);
       }
 
       const [row] = await tx

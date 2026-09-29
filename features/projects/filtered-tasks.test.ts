@@ -12,7 +12,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { clients, projects, projectTasks, taskSubtasks } from '../../db/schema';
+import { accounts, clients, projects, projectTasks, taskSubtasks } from '../../db/schema';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { seedFull, type FullSeed } from '../../tests/seed';
 
@@ -118,9 +118,10 @@ describe('getFilteredTasks — the four filters', () => {
     // Both seeded projects belong to the same client, so a second client is needed to prove the
     // predicate bites rather than being vacuously true.
     await db.insert(clients).values({ id: 'cl_other', name: 'Other Client' });
+    await db.insert(accounts).values({ id: 'acc_other', clientId: 'cl_other', name: 'Other Account' });
     await db.insert(projects).values({
       id: 'proj_other',
-      clientId: 'cl_other',
+      accountId: 'acc_other',
       name: 'Other Retainer',
       type: 'Retainer',
       startDate: '2026-02-01',

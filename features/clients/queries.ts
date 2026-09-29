@@ -9,7 +9,7 @@
 
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { db } from '../../db';
-import { clients, projects } from '../../db/schema';
+import { accounts, clients, projects } from '../../db/schema';
 import type { Executor } from '../../lib/mutation';
 
 /**
@@ -25,6 +25,11 @@ import type { Executor } from '../../lib/mutation';
  * fix §17.7 #2 prescribes for `getDeactivationBlockers`: the usage check and the `deleted_at`
  * UPDATE must share one snapshot, or a project created against this client in between would be
  * left pointing at an archived client.
+ *
+ * Since PUL-414 (Amendment M) a project reaches its client through its account, so this joins
+ * `accounts` — every account of the client, archived or not, so a live project can never hide
+ * behind an archived account. Amendment M moves the gate itself to live *accounts* (PUL-415.2);
+ * until then it keeps its §13.2.3 meaning.
  */
 export interface ClientProjectUsage {
   liveProjects: Array<{ projectId: string; name: string }>;
@@ -37,9 +42,10 @@ export async function getClientProjectUsage(
   const rows = await executor
     .select({ projectId: projects.id, name: projects.name })
     .from(projects)
+    .innerJoin(accounts, eq(accounts.id, projects.accountId))
     .where(
       and(
-        eq(projects.clientId, clientId),
+        eq(accounts.clientId, clientId),
         eq(projects.status, 'active'),
         isNull(projects.deletedAt),
       ),

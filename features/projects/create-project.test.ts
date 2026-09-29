@@ -70,7 +70,7 @@ describe('createProject (§13.3.1)', () => {
     const created = expectOk(await createProject(newProject()));
 
     expect(created).toMatchObject({
-      clientId: seed.client.id,
+      accountId: seed.account.id, // the client's account (Stage 1 bridge, TODO(PUL-415.3))
       name: 'Acme Q1 Retainer',
       type: 'Retainer',
       startDate: today(),

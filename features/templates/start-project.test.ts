@@ -145,7 +145,7 @@ describe('createProjectFromTemplate (§13.3.2) — the clone', () => {
     const [project] = await db.select().from(projects).where(eq(projects.id, out.projectId));
     expect(project).toMatchObject({
       name: PROJECT_NAME,
-      clientId: seed.client.id,
+      accountId: seed.account.id, // the client's account (Stage 1 bridge, TODO(PUL-415.3))
       startDate: START,
       deadline: DEADLINE,
       templateId: seed.templates.localSeo,

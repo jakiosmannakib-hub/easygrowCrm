@@ -7,10 +7,10 @@
 // envelope; `getSessionUser()` still re-reads `role` and `active` from Postgres (§16.5), so
 // every authz case is decided by an actual database row. Time is frozen through the clock port.
 
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { auditLog, clients, projects, user as userTable } from '../../db/schema';
+import { accounts, auditLog, clients, projects, user as userTable } from '../../db/schema';
 import { authorize } from '../../lib/authz';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { expectFail, expectOk } from '../../tests/expect-result';
@@ -153,11 +153,16 @@ describe('updateClient (§13.2.2)', () => {
  * which is what an operator would genuinely have to do. Archiving the project rather than
  * deleting it keeps the case closest to real use.
  */
+/** The seed client's account ids (Amendment M: projects reach their client via an account). */
+function seedClientAccounts() {
+  return db.select({ id: accounts.id }).from(accounts).where(eq(accounts.clientId, seed.client.id));
+}
+
 async function releaseSeedClient() {
   await db
     .update(projects)
     .set({ status: 'archived' })
-    .where(eq(projects.clientId, seed.client.id));
+    .where(inArray(projects.accountId, seedClientAccounts()));
 }
 
 describe('archiveClient (§13.2.3)', () => {
@@ -246,7 +251,7 @@ describe('archiveClient (§13.2.3)', () => {
     await db
       .update(projects)
       .set({ deletedAt: NOW })
-      .where(eq(projects.clientId, seed.client.id));
+      .where(inArray(projects.accountId, seedClientAccounts()));
 
     expectOk(await archiveClient({ clientId: seed.client.id }));
   });

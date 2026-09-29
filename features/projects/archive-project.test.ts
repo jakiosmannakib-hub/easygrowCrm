@@ -113,7 +113,7 @@ describe('archiveProject (§13.3.4)', () => {
       .insert(projects)
       .values({
         id: 'prj_other',
-        clientId: seed.client.id,
+        accountId: seed.account.id,
         name: 'Other Project',
         type: 'One-off',
         startDate: '2026-01-01',

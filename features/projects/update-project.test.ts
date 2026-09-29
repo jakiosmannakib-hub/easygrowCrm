@@ -9,7 +9,7 @@
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
-import { auditLog, clients, projects } from '../../db/schema';
+import { accounts, auditLog, clients, projects } from '../../db/schema';
 import { clock } from '../../lib/clock';
 import { expectFail, expectOk } from '../../tests/expect-result';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
@@ -43,7 +43,10 @@ async function auditFor(projectId: string) {
     .where(and(eq(auditLog.resourceId, projectId), eq(auditLog.action, 'project.updated')));
 }
 
-/** A second, live client to move the project onto. */
+/**
+ * A second client to move the project onto, with one account (Amendment M): the Stage 1 bridge
+ * lands a client-addressed project in that client's account (TODO(PUL-415.3)).
+ */
 async function secondClient(deleted = false) {
   const [row] = await db
     .insert(clients)
@@ -53,7 +56,11 @@ async function secondClient(deleted = false) {
       ...(deleted ? { deletedAt: clock.now() } : {}),
     })
     .returning();
-  return row;
+  const [account] = await db
+    .insert(accounts)
+    .values({ id: `acc_${row.id}`, clientId: row.id, name: row.name })
+    .returning();
+  return { ...row, accountId: account.id };
 }
 
 beforeEach(async () => {
@@ -75,7 +82,7 @@ describe('updateProject (§13.3.3)', () => {
       await updateProject({
         projectId: seed.project.id,
         name: 'Renamed Retainer',
-        clientId: before.clientId,
+        clientId: seed.client.id,
         startDate: before.startDate,
         deadline: '2027-01-31',
       }),
@@ -84,7 +91,7 @@ describe('updateProject (§13.3.3)', () => {
     expect(await target()).toMatchObject({
       name: 'Renamed Retainer',
       deadline: '2027-01-31',
-      clientId: before.clientId,
+      accountId: before.accountId,
       startDate: before.startDate,
     });
 
@@ -105,7 +112,7 @@ describe('updateProject (§13.3.3)', () => {
       await updateProject({
         projectId: seed.project.id,
         name: before.name,
-        clientId: before.clientId,
+        clientId: seed.client.id,
         startDate: before.startDate,
         deadline: before.deadline,
       }),
@@ -134,7 +141,7 @@ describe('updateProject (§13.3.3)', () => {
 
     expectOk(await updateProject({ projectId: seed.project.id, clientId: other.id }));
 
-    expect((await target()).clientId).toBe(other.id);
+    expect((await target()).accountId).toBe(other.accountId);
   });
 
   it('rejects a payload with no editable field (the refine)', async () => {
@@ -186,8 +193,8 @@ describe('updateProject (§13.3.3)', () => {
       'NOT_FOUND',
     );
 
-    // The guard ran before the UPDATE — the project still points at its original client.
-    expect((await target()).clientId).toBe(seed.client.id);
+    // The guard ran before the UPDATE — the project still points at its original account.
+    expect((await target()).accountId).toBe(seed.account.id);
     expect(await auditFor(seed.project.id)).toHaveLength(0);
   });
 

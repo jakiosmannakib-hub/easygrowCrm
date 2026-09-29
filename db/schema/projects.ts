@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { check, date, index, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { user } from './auth';
-import { clients } from './clients';
+import { accounts } from './accounts';
 import { projectStatus } from './enums';
 
 /**
@@ -11,6 +11,10 @@ import { projectStatus } from './enums';
  * 0004; `projects` and `personal_tasks` are the remainder, landing here as PUL-401 Stage 1.
  * Logical numbers and drizzle file numbers have not matched since that split — logical 007 is
  * drizzle 0005.
+ *
+ * **A project belongs to an account, not a client (Amendment M, PUL-414).** Drizzle file 0009
+ * replaced `client_id` with `account_id`; the client is `accounts.client_id`, one join away.
+ * Do not add a `client_id` back here: it would be a second copy of that fact (§16.7).
  *
  * `current_month` is deliberately absent: it is derived from `start_date` in Asia/Dhaka, not
  * stored, so nobody has to increment it (§11.2). `template_id` is provenance only — a project
@@ -30,9 +34,9 @@ export const projects = pgTable(
   'projects',
   {
     id: text('id').primaryKey(),
-    clientId: text('client_id')
+    accountId: text('account_id')
       .notNull()
-      .references(() => clients.id),
+      .references(() => accounts.id),
     name: text('name').notNull(),
     /** 'Retainer' | 'One-off' | template category (§11.2) — free text, not an enum. */
     type: text('type').notNull(),
@@ -49,8 +53,8 @@ export const projects = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
-    index('projects_client_idx')
-      .on(table.clientId)
+    index('projects_account_idx')
+      .on(table.accountId)
       .where(sql`${table.deletedAt} is null`),
     index('projects_status_idx')
       .on(table.status)

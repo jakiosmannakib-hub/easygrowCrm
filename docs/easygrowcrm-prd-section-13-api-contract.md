@@ -111,6 +111,40 @@ Client management lives with Settings (SA + HR). TL/PM pick clients when startin
 - **Audit:** `project.created_from_template` + one `project_task.created` per task (batched: a single audit row with `after: {taskIds: […]}` is acceptable — decide in implementation, be consistent).
 - **Notify:** `N:task_assigned` → each distinct assignee (batched per person, not per task); `N:project_started` → all MGR.
 
+> **As built (PUL-506 Stage 1), `features/projects/actions.ts`,** beside `createProject`, whose
+> `requireLiveClient` / `requireAssignableUser` / `managerRecipients` it shares. Contract test:
+> `features/templates/start-project.test.ts`. Where the build settles points this entry leaves
+> open:
+> - **Guard order**, all on the tx: client live (`NOT_FOUND`) → template live (`NOT_FOUND`) →
+>   every named assignee in `assignments` *and* `taskOverrides` active & not SA
+>   (`GATE:inactive_assignee` / `GATE:sa_assignee`, including a role no task uses) → every
+>   override's `templateTaskId` is in the template (`VALIDATION` otherwise) → due rules
+>   (`GATE:no_deadline` / `GATE:bad_ref`, with `templateTaskId` + `title` in the details).
+> - **Holidays:** an empty set until the `holidays` table exists (PUL-301, Phase 3 not built),
+>   so only Fri/Sat are skipped. `TODO(PUL-301)` in the action.
+> - **Title tokens:** `{{ClientName}}`, `{{ProjectName}}` and `{{MonthName}}`, where MonthName is
+>   the calendar month of the task's month start (`startDate` + (k−1) months, day-clamped): a
+>   Sep 10 project's Month 2 is "October". Any other `{{…}}` is left as typed. One helper,
+>   `projectTaskTitle` in `features/templates/start-project.ts`, is shared with the wizard's
+>   preview.
+> - **Assignment:** `assignments[roleHint.trim()]`; a role that is unmapped, mapped to `null`,
+>   or absent from the task leaves it unassigned. `roleHint` is copied onto the live task.
+> - **`projects.type`:** the template's `category` (§11.2's third arm), else `'Retainer'`.
+>   `projects.template_id` records the template.
+> - **Copied per task:** due date, priority, estimate, `qc_required`, `proof_required`,
+>   `client_visible`, `sop_url`, `expected_output`. Subtasks keep the tree's `position` order.
+> - **`taskOverrides` apply last:** an overridden due date does not move the tasks scheduled
+>   `after` it; `assigneeId: null` unassigns that one task.
+> - **Audit:** the batched form. `project.created_from_template` (the project row +
+>   `taskCount`, `monthCount`) and ONE `project_task.created` row, `resource_type = 'project'`,
+>   `after: { taskIds }`.
+> - **`task_assigned` payload (batched):** `{ projectId, projectName, taskIds, taskCount,
+>   assignedBy }`, not `createTask`'s single-task shape.
+> - **Returns** `{ projectId, taskCount, monthCount }`. `monthCount` counts the months that
+>   produced tasks, so a wizard template with 11 empty scaffold months reports 1.
+> - All tasks go in one multi-row INSERT; `depends_on` may point later in the same statement
+>   (a non-deferrable FK is checked at statement end).
+
 ### 13.3.3 `updateProject` — **Who:** MGR. **Input:** `{ projectId, name?, clientId?, startDate?, deadline? }`. **Guards:** changing `deadline` does **not** recompute existing task due dates (they were materialized at instantiation; changing them is a per-task edit). **Audit:** `project.updated`.
 
 ### 13.3.4 `archiveProject` — **Who:** MGR. **Guards:** no `submitted` tasks (`GATE:pending_reviews`). **Tx:** `status='archived'`. Archived projects: read-only everywhere, hidden from default dropdowns. **Audit:** `project.archived`. Reverse: `unarchiveProject` (same actors).

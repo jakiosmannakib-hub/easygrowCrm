@@ -353,6 +353,11 @@ create index tts_task_idx on template_task_subtasks(task_id, position);
 
 **Instantiation (Start Project, §14.3.8 / PUL-506):** the wizard walks the hierarchy via `tplAllTasks` and clones each template task into `project_tasks` with `category` = the category's `name`, `month` = the month's `num`, `{{ClientName}}` substituted in `title`, `checklist[]` expanded into `task_checklist_items`, and each `template_task_subtasks` row cloned into `task_subtasks` (`done = false`). The live project holds **copies** — later template edits never touch running projects.
 
+> **As built (PUL-506):** titles also substitute `{{ProjectName}}` and `{{MonthName}}` (the
+> calendar month of the task's month start). The project row gets `template_id` = the template
+> (provenance, still no FK) and `type` = the template's `category`, or `'Retainer'` when it has
+> none. Each live task keeps the template's `role_hint`. Full detail: the §13.3.2 as-built note.
+
 ---
 
 ## 11.5 Attendance (§10 model)

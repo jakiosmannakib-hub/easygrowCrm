@@ -28,6 +28,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/templates/template-meta.test.ts', // PUL-503 Stage 2 — card/header counts via tplAllTasks
   'features/templates/task-form.test.ts', // PUL-503 Stage 3b — checklist parse + task form conversion
   'features/templates/cascade.test.ts', // PUL-504 — 12-month cascade dates, Feb at 29
+  'features/templates/due-rule-compute.test.ts', // PUL-505.3 — day / before_deadline / after + working-day shifts
 ];
 
 const missing = MANDATORY_TEST_FILES.filter((file) => !existsSync(file));

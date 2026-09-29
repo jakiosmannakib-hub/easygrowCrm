@@ -390,3 +390,43 @@ export const LoadWorkloadInput = z.object({
 });
 
 export type LoadWorkloadInput = z.infer<typeof LoadWorkloadInput>;
+
+/**
+ * §13.3.2 `createProjectFromTemplate` input — the Start Project wizard's final step (PUL-506).
+ *
+ * Dates follow `CreateProjectInput`: `YYYY-MM-DD` strings end to end, `deadline >= startDate`
+ * refined here so it reaches the form as a parse error rather than a CHECK violation.
+ *
+ * There is no `type`: the project's `type` is the template's category (§11.2's third arm),
+ * decided in the action.
+ *
+ * `assignments` maps a task's `roleHint` to a user id, or `null` to leave that role's tasks
+ * unassigned (§14.3.8 step 3). A role missing from the map is unassigned too.
+ *
+ * `taskOverrides` are keyed by `templateTaskId`, never by position (§13.3.2). `assigneeId: null`
+ * clears the role's assignee for that one task; an absent key leaves it alone.
+ */
+export const CreateProjectFromTemplateInput = z
+  .object({
+    templateId: z.string().min(1),
+    clientId: z.string().min(1),
+    name: z.string().trim().min(1),
+    startDate: z.iso.date(),
+    deadline: z.iso.date().optional(),
+    assignments: z.record(z.string(), z.string().min(1).nullable()).default({}),
+    taskOverrides: z
+      .array(
+        z.object({
+          templateTaskId: z.string().min(1),
+          dueDate: z.iso.date().optional(),
+          assigneeId: z.string().min(1).nullable().optional(),
+        }),
+      )
+      .default([]),
+  })
+  .refine((v) => v.deadline === undefined || v.deadline >= v.startDate, {
+    message: 'Deadline must be on or after the start date',
+    path: ['deadline'],
+  });
+
+export type CreateProjectFromTemplateInput = z.input<typeof CreateProjectFromTemplateInput>;

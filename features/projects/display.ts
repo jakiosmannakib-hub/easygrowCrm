@@ -721,32 +721,36 @@ export type TreeOpenState = Record<string, boolean>;
  *
  * The component holds ONE declared state object, `overrides` (starts `{}`), recording only what
  * the user has toggled. This function turns it into the COMPLETE map for the current tree: every
- * month and category key present, each either the user's choice or its default. Nothing ever
- * reads a key that may not exist, and nothing lazily creates one on first touch — the
+ * month, category and expandable-task key present, each either the user's choice or its default.
+ * Nothing ever reads a key that may not exist, and nothing lazily creates one on first touch — the
  * prototype's `if (!S.collapsed[k])` pattern that made months vanish (§14.16) has no place to live.
  *
- * Defaults:
+ * Defaults (UI polish, Stage 2 — replaced the PUL-410 "only the current cycle open" default):
+ * - **Months: expanded.**
  * - **Categories: expanded.**
- * - **Months: only the current cycle expanded** when the current retainer month is known (one
- *   project selected) — that's the work in flight, and the rest of a 12-month retainer would
- *   otherwise bury it. Also expanded: **Unscheduled** (one-off work has no cycle to wait for),
- *   **everything** when no current month is known (All projects — nothing to prefer), and **a
- *   tree with a single month** (e.g. Month ▾ narrowed to one — collapsing the only group would
- *   show an empty list).
+ * - **Tasks with subtasks: collapsed** under `task:<id>`, their `done/total` badge standing in for
+ *   the rows. A task with no subtasks has nothing to expand and gets no key.
  */
-export function treeOpenState<T>(
+export function treeOpenState<T extends { id: string; subtaskTotal: number }>(
   tree: readonly TaskTreeMonth<T>[],
   overrides: Readonly<Record<string, boolean>>,
-  currentMonth: number | null,
 ): TreeOpenState {
   const state: TreeOpenState = {};
   for (const m of tree) {
-    const monthDefault =
-      tree.length === 1 || currentMonth === null || m.month === null || m.month === currentMonth;
-    state[m.key] = overrides[m.key] ?? monthDefault;
-    for (const c of m.categories) state[c.key] = overrides[c.key] ?? true;
+    state[m.key] = overrides[m.key] ?? true;
+    for (const c of m.categories) {
+      state[c.key] = overrides[c.key] ?? true;
+      for (const t of c.tasks) {
+        if (t.subtaskTotal > 0) state[taskKey(t.id)] = overrides[taskKey(t.id)] ?? false;
+      }
+    }
   }
   return state;
+}
+
+/** A task's collapse-state key. Task ids are unique, so it needs no month/category prefix. */
+export function taskKey(taskId: string): string {
+  return `task:${taskId}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -768,7 +772,6 @@ export interface CalendarDay {
   /** `false` for the leading / trailing days of the adjacent months, which render muted. */
   inMonth: boolean;
 }
-
 
 /**
  * The calendar month a `YYYY-MM-DD` day falls in — how the Calendar derives its starting month

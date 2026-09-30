@@ -1056,7 +1056,8 @@ export async function getWorkload(filters: WorkloadFilters = {}): Promise<Worklo
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// getClientExportRows — the client-safe Weekly / Monthly Excel export (PUL-413, §13.8)
+// getClientExportRows: the client-safe Weekly / Monthly Excel export (PUL-413, §13.8), scoped to
+// ONE client or ONE account since Amendment M (PUL-418)
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** An inclusive `YYYY-MM-DD` due-date window. The caller computes it from the clock port. */
@@ -1064,6 +1065,15 @@ export interface ClientExportRange {
   from: string;
   to: string;
 }
+
+/**
+ * What one export covers (§13.8, Amendment M): exactly one client or exactly one account. There
+ * is no agency-wide mode any more; a white-label partner's file must never hold another
+ * partner's work.
+ */
+export type ClientExportScope =
+  | { kind: 'client'; clientId: string }
+  | { kind: 'account'; accountId: string };
 
 /**
  * The statuses a client may see (§3.1.7 / §6.3): Completed, Approved and In Progress, and
@@ -1075,15 +1085,18 @@ export const CLIENT_EXPORT_STATUSES = ['completed', 'approved', 'in_progress'] a
  * One export row. **This interface is the client-safe contract, so only widen it if the field
  * belongs in something a client can read.** §3.1.7 / §6.3 rule out the assignee, priority,
  * comments and every submission note (summary, issues, reviewer), and none of them is selected
- * below.
+ * below. `accountId` / `accountName` (PUL-418) are the partner's own end business: the client
+ * already knows them, and the workbook names its sheets after them.
  */
 export interface ClientExportRow {
   clientId: string;
   clientName: string;
+  accountId: string;
+  accountName: string;
   projectName: string;
   /**
    * The project's `start_date`. It is not a printed column: `monthLabel` needs it to name the
-   * retainer month (`Month 3 — March`).
+   * retainer month.
    */
   projectStartDate: string;
   /** Retainer month number; NULL for one-off work. */
@@ -1102,11 +1115,49 @@ export interface ClientExportRow {
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * §13.8 `exportClientTasks`: the rows behind the client Excel export (PUL-413.1).
+ * The scope's display name, or `null` when it does not exist or is archived (soft-deleted), in
+ * which case the route answers 404 (§13.8). An account also needs a live client: an account
+ * under an archived client is not something to report on.
  *
- * **Filter:** `due_date BETWEEN from AND to` (inclusive), status in `CLIENT_EXPORT_STATUSES`,
- * and `client_visible = true`. Soft-deleted tasks, projects and clients are excluded, as in
- * every read in this file.
+ * Like `getClientExportRows`, no session check inside: the MGR gate is the route's, and the
+ * route checks it BEFORE calling this, so a non-manager cannot probe which ids exist.
+ */
+export async function getClientExportScopeName(scope: ClientExportScope): Promise<string | null> {
+  if (scope.kind === 'client') {
+    const [row] = await db
+      .select({ name: clients.name })
+      .from(clients)
+      .where(and(eq(clients.id, scope.clientId), isNull(clients.deletedAt)))
+      .limit(1);
+    return row?.name ?? null;
+  }
+
+  const [row] = await db
+    .select({ name: accounts.name })
+    .from(accounts)
+    .innerJoin(clients, eq(clients.id, accounts.clientId))
+    .where(
+      and(
+        eq(accounts.id, scope.accountId),
+        isNull(accounts.deletedAt),
+        isNull(clients.deletedAt),
+      ),
+    )
+    .limit(1);
+  return row?.name ?? null;
+}
+
+/**
+ * §13.8 `exportClientTasks`: the rows behind the client Excel export (PUL-413.1, scoped by
+ * PUL-418.2).
+ *
+ * **Scope:** `projects → accounts → clients`, then `accounts.client_id = clientId` for a client
+ * export or `accounts.id = accountId` for an account export.
+ *
+ * **Filter (unchanged from PUL-413):** `due_date BETWEEN from AND to` (inclusive), status in
+ * `CLIENT_EXPORT_STATUSES`, and `client_visible = true`. Soft-deleted tasks, projects, accounts
+ * and clients are excluded. Archiving an account or a client soft-deletes it (§13.2), so its
+ * work drops out, just as an archived scope is a 404 at the route.
  *
  * **Archived projects are INCLUDED, and that is a decision.** `getFilteredTasks` hides them
  * because the board shows live work. This is a report of what was done in a date window, and
@@ -1122,9 +1173,14 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
  * malformed string reaching `BETWEEN` would be compared as text and silently return the wrong
  * rows.
  *
- * Ordered by client name, project name and due date, then `id` for a stable tie-break.
+ * Ordered by account name (then id, so two same-named accounts never interleave), project name
+ * and due date, then task `id` for a stable tie-break. The account leads because a client
+ * workbook has one sheet per account (PUL-418.3).
  */
-export async function getClientExportRows(range: ClientExportRange): Promise<ClientExportRow[]> {
+export async function getClientExportRows(
+  range: ClientExportRange,
+  scope: ClientExportScope,
+): Promise<ClientExportRow[]> {
   if (!YMD.test(range.from) || !YMD.test(range.to) || range.from > range.to) {
     throw new AppError('VALIDATION', 'Export range must be YYYY-MM-DD, from ≤ to.');
   }
@@ -1143,6 +1199,8 @@ export async function getClientExportRows(range: ClientExportRange): Promise<Cli
     .select({
       clientId: clients.id,
       clientName: clients.name,
+      accountId: accounts.id,
+      accountName: accounts.name,
       projectName: projects.name,
       projectStartDate: projects.startDate,
       month: projectTasks.month,
@@ -1161,16 +1219,21 @@ export async function getClientExportRows(range: ClientExportRange): Promise<Cli
     .leftJoin(latest, eq(latest.taskId, projectTasks.id))
     .where(
       and(
+        scope.kind === 'client'
+          ? eq(accounts.clientId, scope.clientId)
+          : eq(accounts.id, scope.accountId),
         between(projectTasks.dueDate, range.from, range.to),
         inArray(projectTasks.status, [...CLIENT_EXPORT_STATUSES]),
         eq(projectTasks.clientVisible, true),
         isNull(projectTasks.deletedAt),
         isNull(projects.deletedAt),
+        isNull(accounts.deletedAt),
         isNull(clients.deletedAt),
       ),
     )
     .orderBy(
-      asc(clients.name),
+      asc(accounts.name),
+      asc(accounts.id),
       asc(projects.name),
       asc(projectTasks.dueDate),
       asc(projectTasks.id),
@@ -1179,6 +1242,8 @@ export async function getClientExportRows(range: ClientExportRange): Promise<Cli
   return rows.map((row) => ({
     clientId: row.clientId,
     clientName: row.clientName,
+    accountId: row.accountId,
+    accountName: row.accountName,
     projectName: row.projectName,
     projectStartDate: row.projectStartDate,
     month: row.month,

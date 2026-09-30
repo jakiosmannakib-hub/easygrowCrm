@@ -181,7 +181,9 @@ function writeTaskRows(sheet: ExcelJS.Worksheet, rows: readonly ClientExportRow[
       row.category,
       fmtDate(row.dueDate, { relative: false }),
       CLIENT_STATUS_LABEL[row.status],
-      fmtHM(row.timeSpentHours),
+      // No time logged → an EMPTY cell, not `fmtHM`'s on-screen `-` placeholder: in a sheet a
+      // client may sum or filter, a blank is "nothing", and a hyphen is text in a number column.
+      row.timeSpentHours === null ? '' : fmtHM(row.timeSpentHours),
       row.proofUrl ?? '',
     ]);
 

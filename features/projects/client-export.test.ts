@@ -488,7 +488,7 @@ describe('buildClientWorkbook', () => {
     expect(wb.worksheets.map((s) => s.name)).toEqual(['Seed Account Two']);
     expect(tableRows(wb.worksheets[0]!, HEADER.length)).toEqual([
       HEADER,
-      ['Seed One-off', '', 'To-edge task', 'Reporting', 'Sep 15, 2026', 'In Progress', '—', ''],
+      ['Seed One-off', '', 'To-edge task', 'Reporting', 'Sep 15, 2026', 'In Progress', '', ''],
     ]);
   });
 
@@ -537,17 +537,17 @@ describe('buildClientWorkbook', () => {
       HEADER,
       [
         'Seed Retainer',
-        'Month 9 — September',
+        'Month 9 - September',
         'From-edge task',
         'Content',
         'Sep 9, 2026',
         'In Progress',
-        '—',
+        '',
         '',
       ],
       [
         'Seed Retainer',
-        'Month 9 — September',
+        'Month 9 - September',
         'Approved blog post',
         'Content',
         'Sep 10, 2026',
@@ -557,7 +557,7 @@ describe('buildClientWorkbook', () => {
       ],
       [
         'Seed Retainer',
-        'Month 9 — September',
+        'Month 9 - September',
         'Manager-closed audit',
         'Audit',
         'Sep 12, 2026',
@@ -572,7 +572,7 @@ describe('buildClientWorkbook', () => {
       HEADER,
       [
         'Beta Site',
-        'Month 4 — September',
+        'Month 4 - September',
         'Beta outreach',
         'Link Building',
         'Sep 11, 2026',
@@ -809,9 +809,11 @@ function unzipText(buffer: Buffer): Map<string, string> {
 }
 
 const AGENCY = /easygrow/i;
+/** U+2014. The shared formatters use a spaced hyphen or an empty cell instead. */
+const EM_DASH = /—/;
 
 describe('white-label (PUL-418.6)', () => {
-  it('names the agency nowhere: cells, sheet names, filename, properties, or any file part', async () => {
+  it('names the agency nowhere (cells, sheet names, filename, properties, file parts) and has no em dash in any cell', async () => {
     actAs(seed.projectManager.id);
 
     for (const query of [
@@ -829,7 +831,11 @@ describe('white-label (PUL-418.6)', () => {
       for (const sheet of wb.worksheets) {
         expect(sheet.name).not.toMatch(AGENCY);
         sheet.eachRow({ includeEmpty: true }, (row) => {
-          row.eachCell({ includeEmpty: true }, (cell) => expect(cell.text).not.toMatch(AGENCY));
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            expect(cell.text).not.toMatch(AGENCY);
+            // No em dash in any cell either: not in a Month label, not as a "no time" placeholder.
+            expect(cell.text, `${query}: ${sheet.name}!${cell.address}`).not.toMatch(EM_DASH);
+          });
         });
       }
 

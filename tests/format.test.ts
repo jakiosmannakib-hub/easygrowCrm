@@ -105,6 +105,6 @@ describe('fmtHM', () => {
   });
 
   it('returns an em dash for null', () => {
-    expect(fmtHM(null)).toBe('—');
+    expect(fmtHM(null)).toBe('-');
   });
 });

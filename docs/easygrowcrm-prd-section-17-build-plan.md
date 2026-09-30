@@ -1267,10 +1267,12 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > removed, 31-character cap, and case-insensitive collisions become ` (2)`, ` (3)`. Header:
 > Project · Month · Task · Category · Due date · Status · Time spent · Deliverable. Every cell goes
 > through the UI's own formatters:
-> - Month: `monthLabel` (`Month 9 — September`), or blank for one-off work.
+> - Month: `monthLabel` (`Month 9 - September`), or blank for one-off work. *(a spaced hyphen since the
+>   2026-09-30 dash cleanup; it read `Month 9 — September` before)*
 > - Due date: `fmtDate(…, { relative: false })` (`Sep 10, 2026`).
 > - Status: `CLIENT_STATUS_LABEL`.
-> - Time spent: `fmtHM`.
+> - Time spent: `fmtHM`. *(Since PUL-418 a task with no time logged gets an empty cell, not
+>   the on-screen `-` placeholder.)*
 >
 > **Row filter:** `due_date BETWEEN from AND to` (inclusive), status ∈ {completed, approved,
 > in_progress}, `client_visible = true`. Soft-deleted tasks, projects and clients are out.
@@ -1311,7 +1313,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 >    which is a different question.
 > 3. **The export ignores the filter bar.** It is always agency-wide for the window, one sheet
 >    per client, as §3.1.7 describes. Scoping it to the selected client would be a small change
->    in the button if wanted.
+>    in the button if wanted. *(Superseded by Amendment M, PUL-418: every export is now scoped
+>    to exactly one client or one account, and there is no agency-wide mode.)*
 >
 > **"Completed" in `features/**`.** `CLIENT_STATUS_LABEL` (`display.ts`) prints "Completed" for
 > `approved` and `completed`, as §3.1.7 requires. It is client-facing and used only by the
@@ -1453,8 +1456,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** a manager goes client → new account → project from template → lands on it in the tree, without the old dropdowns. *(Built; not yet walked through by hand, see 417.7.)*
 
-> **Status: built, not yet merged** (branch `feat/pul-417-workspace`; 417.1 and 417.2 / 417.5
-> are committed, 417.3 / 417.4 / 417.6 are on the working tree).
+> **Status: merged** in PRs #52 and #53 (`feat/pul-417-workspace`). 417.7's manual QA pass is
+> still open.
 >
 > - **Query.** `getWorkspaceTree({ includeArchived? })` in `features/projects/queries.ts`: the
 >   session read plus ONE select, however large the agency (clients LEFT JOIN accounts LEFT JOIN
@@ -1494,8 +1497,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 >   adding a load action §13 does not define. The dialog closes itself after Generate.
 > - **Header.** `getProjectHeader` returns `account.name`; the crumb is
 >   `📁 Client › 🏢 Account › Project · type · Month N`.
-> - **Exports.** The agency-wide PUL-413 buttons are parked on the nothing-selected pane (MGR
->   only) with a `TODO(PUL-418)`.
+> - **Exports.** The agency-wide PUL-413 buttons were parked on the nothing-selected pane (MGR
+>   only) with a `TODO(PUL-418)`. *(Removed by PUL-418.4: the exports are now scoped and sit in
+>   the client and account overview headers.)*
 > - **Tests.** `features/projects/workspace-tree.test.ts` (helpers, per-role menus against the
 >   real §9.6 table, collapse parsing, tab parsing, overview maths),
 >   `features/projects/get-workspace-tree.test.ts` (real DB: shape, counts, overdue against the
@@ -1508,14 +1512,57 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §13.8 export row (Amendment M), §3.1.7 · **Depends:** PUL-413, PUL-417
 
-- [ ] 418.1 Route takes exactly one of `clientId` / `accountId`; 400 / 404 / 403 as §13.8
-- [ ] 418.2 `getClientExportRows(range, scope)` joins through accounts; rows gain `accountName`, still client-safe
-- [ ] 418.3 Workbook: client scope = summary + a sheet per account; account scope = one sheet; filename names the scope
-- [ ] 418.4 Export buttons in the client and account overviews *(and remove the agency-wide pair PUL-417 parked on the nothing-selected pane: `AgencyPane` in `features/projects/components/workspace-overviews.tsx`, marked `TODO(PUL-418)`)*
-- [ ] 418.5 Tests: extend `client-export.test.ts` (scoping, sheet split, refusals)
-- [ ] 418.6 Test: the workbook contains no "EasyGrow" string in cells, sheet names, filename or file properties
+- [x] 418.1 Route takes exactly one of `clientId` / `accountId`; 400 / 404 / 403 as §13.8
+- [x] 418.2 `getClientExportRows(range, scope)` joins through accounts; rows gain `accountName`, still client-safe
+- [x] 418.3 Workbook: client scope = summary + a sheet per account; account scope = one sheet; filename names the scope
+- [x] 418.4 Export buttons in the client and account overviews *(and remove the agency-wide pair PUL-417 parked on the nothing-selected pane: `AgencyPane` in `features/projects/components/workspace-overviews.tsx`, marked `TODO(PUL-418)`)*
+- [x] 418.5 Tests: extend `client-export.test.ts` (scoping, sheet split, refusals)
+- [x] 418.6 Test: the workbook contains no "EasyGrow" string in cells, sheet names, filename or file properties
 
-**Done when:** a client file and an account file each open in Excel and Google Sheets with no internal field present.
+**Done when:** a client file and an account file each open in Excel and Google Sheets with no internal field present. *(Not yet: the tests round-trip both files through exceljs, but neither has been opened in Excel or Google Sheets by hand.)*
+
+> **Status: built and committed, not yet merged**, on `feat/pul-418-scoped-exports` (Stage 1:
+> 418.1 / 418.2 / 418.3 / 418.5 / 418.6; Stage 2: 418.4).
+>
+> - **Route.** `GET /api/export/client-tasks?period=weekly|monthly&clientId=…` or
+>   `&accountId=…`. The handler moved to `features/projects/client-export-response.ts` (relative
+>   imports, so vitest can call it; the test rig has no `@/` alias) and `route.ts` only
+>   delegates. Refusals in order: **400** for a bad period, or neither / both ids (an empty value
+>   counts as absent); **403** for no session, a deactivated user or a non-manager; **404** for
+>   an unknown or archived client or account, or an account under an archived client. The role
+>   check runs before the existence check, so a non-manager cannot probe which ids exist. The
+>   agency-wide mode is gone. Zero rows still answers `{ empty: true }`.
+> - **Query.** `getClientExportRows(range, scope)`, scope `{ kind: 'client', clientId }` or
+>   `{ kind: 'account', accountId }`; rows gain `accountId` and `accountName`; ordered by account
+>   name then id, project, due date, task id. Row filter and columns unchanged, archived projects
+>   still included. **New:** tasks under a soft-deleted (archived) account are excluded, matching
+>   the existing rule for clients. `getClientExportScopeName(scope)` is the 404 lookup.
+> - **Workbook** (`client-export.ts`). Every sheet opens with three header rows, "Weekly report"
+>   / "Monthly report", a name, and the period (`Sep 9, 2026 - Sep 15, 2026`, `fmtDate` with a
+>   spaced hyphen), then a blank row; the column table starts on row 5, frozen. The name row is
+>   the client on the Summary sheet and the account on an account sheet. **Client scope:** a
+>   "Summary" sheet (Account · Completed · In progress · Total time; Completed counts `approved`
+>   and `completed`, which the client sees alike) then one sheet per account; the Summary name
+>   is reserved first, so an account called "Summary" becomes "Summary (2)". **Account scope:**
+>   one sheet. A task with no time logged gets an empty cell.
+> - **White-label.** Document properties: `creator`, `lastModifiedBy` and `company` blank,
+>   `title` the client or account name (PUL-413 had set `creator` to the agency name).
+>   Created / modified come from the clock port. Filename:
+>   `<slug>-<weekly|monthly>-report-<today>.xlsx` (lowercased, accents folded, `report` if the
+>   name has no letters or digits).
+> - **Buttons (418.4).** `ClientExportButtons` takes `scope={{ clientId }}` or
+>   `{{ accountId }}` and sits in the client and account overview headers (`OverviewHeader` in
+>   `workspace-overviews.tsx`), MGR only through the page's existing `isManagerRole` gate. A 404
+>   toasts that the client or account no longer exists. The nothing-selected pane has no export.
+> - **Tests.** `client-export.test.ts` (25, CI manifest): scoping for both modes, the archived
+>   account exclusion, sheet order, header rows for both periods, the Summary figures and name
+>   collision, the filename, and every refusal through the real handler. **418.6** fetches a
+>   client file and an account file and asserts no `/easygrow/i` in the filename, any sheet name,
+>   any cell (empty ones included), nine document properties, or any part of the unzipped .xlsx
+>   (a small zip reader over `node:zlib`, since jszip is not a direct dependency). It also
+>   asserts no U+2014 in any cell. Both checks were mutation-proved (`creator = 'EasyGrow'`; an em
+>   dash put back into `monthLabel`).
+> - **Still open:** the §9.6 export-permission gap from PUL-413 (the gate is `isManagerRole`).
 
 ---
 
@@ -1570,7 +1617,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** a manager can add a task to any month straight from its List header and see it land, expanded, without touching the filters. *(Not yet walked through in a browser.)*
 
-> **Status: built, not yet committed**, on `feat/pul-421-list-month-add-task`.
+> **Status: merged** in PR #54 (`feat/pul-421-list-month-add-task`).
 >
 > - **No new action or schema.** §13.4.1 already takes `month?`. The ticket asked for a 1 to 12
 >   bound only if the input was missing; it was not, and a bound would break a Month 13+ header,
@@ -1600,7 +1647,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** the sidebar collapses and expands on desktop, remembers the choice across reloads with no flash, and works as a drawer on a phone. *(Not yet walked through in a browser.)*
 
-> **Status: built, not yet committed**, on `pul-422/add-sidebar-drawer`.
+> **Status: merged** in PR #55 (`pul-422/add-sidebar-drawer`).
 >
 > - **CSS owns the width, not React.** A `rail:` custom variant in `app/globals.css` matches
 >   inside `[data-app-sidebar]` only: always when `<html data-sidebar="collapsed">`, and below

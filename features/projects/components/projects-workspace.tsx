@@ -70,7 +70,7 @@ export function ProjectsWorkspace({
   projectMonths: ProjectMonths[];
   assignees: { id: string; name: string }[];
   canCreateTask: boolean;
-  /** MGR only (§14.3): the agency-wide exports on the nothing-selected pane. */
+  /** MGR only (§14.3): the scoped Excel exports in the client and account overviews (PUL-418.4). */
   canExport: boolean;
   viewer: StatusMenuViewer;
   /** The server's first task list, when the page opened on a project. */
@@ -162,15 +162,19 @@ export function ProjectsWorkspace({
     );
   } else if (nodes.client && nodes.account) {
     pane = (
-      <AccountOverview client={nodes.client} account={nodes.account} onSelect={selectFromTree} />
+      <AccountOverview
+        client={nodes.client}
+        account={nodes.account}
+        canExport={canExport}
+        onSelect={selectFromTree}
+      />
     );
   } else if (nodes.client) {
-    pane = <ClientOverview client={nodes.client} onSelect={selectFromTree} />;
+    pane = <ClientOverview client={nodes.client} canExport={canExport} onSelect={selectFromTree} />;
   } else {
     pane = (
       <AgencyPane
         tab={parseAgencyTab(rawTab, viewer.role)}
-        canExport={canExport}
         onTab={(tab) => navigate(NOTHING, tab)}
         onTreeStale={refreshTree}
       />

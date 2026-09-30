@@ -276,7 +276,8 @@ const MONTH_NAMES = [
 ] as const;
 
 /**
- * A retainer month number → `Month 3 — March`, calendar-anchored to the project's start date
+ * A retainer month number → `Month 3 - March` (a spaced hyphen, matching the template month
+ * names), calendar-anchored to the project's start date
  * (§1–§8 "Month dropdown … calendar-anchored via the project's start date"; the same anchor
  * §13.8's due-date computation uses — "Month k start = `startDate` + (k−1) calendar months").
  *
@@ -299,7 +300,7 @@ export function monthLabel(startDate: string, month: number): string {
 
   // `month` is 1-based (Month 1 IS the start month), so the offset from the start is month - 1.
   const index = (Number(parsed[2]) - 1 + (month - 1)) % 12;
-  return `Month ${month} — ${MONTH_NAMES[index]}`;
+  return `Month ${month} - ${MONTH_NAMES[index]}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────

@@ -7,13 +7,13 @@
 //
 // The overviews draw straight from the workspace tree the page already read, so opening one
 // costs no request; `router.refresh()` after a mutation refreshes them along with the tree.
-// Clicking a card or a row selects that node, exactly like clicking it in the tree. Until
-// PUL-418 scopes the Excel exports to a client or an account, the agency-wide PUL-413 buttons
-// sit on the nothing-selected pane.
+// Clicking a card or a row selects that node, exactly like clicking it in the tree. The client
+// and account headers carry the scoped Weekly / Monthly Excel exports (PUL-418.4, MGR only);
+// the nothing-selected pane has none, since there is no agency-wide export any more.
 
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { HEALTH_DISPLAY, type AgencyTabKey } from '../display';
 import {
   projectNodeHealth,
@@ -22,7 +22,7 @@ import {
   type WorkspaceClientNode,
   type WorkspaceSelection,
 } from '../workspace-tree';
-import { ClientExportButtons } from './client-export-buttons';
+import { ClientExportButtons, type ClientExportButtonScope } from './client-export-buttons';
 import { ReviewTab } from './review-tab';
 import { WorkloadTab } from './workload-tab';
 
@@ -66,25 +66,48 @@ function CountsLine({
   );
 }
 
+/**
+ * An overview's title row: the heading on the left and, for a manager, the Excel exports
+ * scoped to what the overview shows on the right. Wraps under the heading on a narrow pane.
+ */
+function OverviewHeader({
+  exportScope,
+  children,
+}: {
+  /** `null` hides the buttons (not a manager). */
+  exportScope: ClientExportButtonScope | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="text-sm font-medium">{children}</h2>
+      {exportScope !== null ? <ClientExportButtons scope={exportScope} /> : null}
+    </div>
+  );
+}
+
 // ── Client ──────────────────────────────────────────────────────────────────────────────
 
 export function ClientOverview({
   client,
+  canExport,
   onSelect,
 }: {
   client: WorkspaceClientNode;
+  /** MGR only (§14.3, PUL-418.4): the page's `isManagerRole`. The route re-checks the role. */
+  canExport: boolean;
   onSelect: (selection: WorkspaceSelection) => void;
 }) {
   return (
     <section className="space-y-4" aria-label={`${client.name} overview`}>
-      <h2 className="text-sm font-medium">
+      <OverviewHeader exportScope={canExport ? { clientId: client.id } : null}>
         <span aria-hidden="true">📁 </span>
         {client.name}
         <span className="text-muted-foreground font-normal">
           {' · '}
           {client.accounts.length} {client.accounts.length === 1 ? 'account' : 'accounts'}
         </span>
-      </h2>
+      </OverviewHeader>
 
       {client.accounts.length === 0 ? (
         <p className="text-muted-foreground text-xs">
@@ -131,15 +154,18 @@ export function ClientOverview({
 export function AccountOverview({
   client,
   account,
+  canExport,
   onSelect,
 }: {
   client: WorkspaceClientNode;
   account: WorkspaceAccountNode;
+  /** MGR only (§14.3, PUL-418.4): the page's `isManagerRole`. The route re-checks the role. */
+  canExport: boolean;
   onSelect: (selection: WorkspaceSelection) => void;
 }) {
   return (
     <section className="space-y-4" aria-label={`${account.name} overview`}>
-      <h2 className="text-sm font-medium">
+      <OverviewHeader exportScope={canExport ? { accountId: account.id } : null}>
         <span aria-hidden="true">📁 </span>
         <span className="text-muted-foreground">{client.name}</span>
         <span className="text-muted-foreground" aria-hidden="true">
@@ -150,7 +176,7 @@ export function AccountOverview({
         {account.location ? (
           <span className="text-muted-foreground font-normal"> · {account.location}</span>
         ) : null}
-      </h2>
+      </OverviewHeader>
 
       {account.projects.length === 0 ? (
         <p className="text-muted-foreground text-xs">
@@ -209,13 +235,10 @@ const AGENCY_TAB_LABEL: Record<AgencyTabKey, string> = {
  */
 export function AgencyPane({
   tab,
-  canExport,
   onTab,
   onTreeStale,
 }: {
   tab: AgencyTabKey | null;
-  /** MGR only (§14.3, PUL-413): the page's `isManagerRole`. The route re-checks the role. */
-  canExport: boolean;
   onTab: (tab: AgencyTabKey) => void;
   onTreeStale: () => void;
 }) {
@@ -234,21 +257,9 @@ export function AgencyPane({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-muted-foreground text-xs">
-          Every active project. Pick a client, account or project in the tree to narrow it.
-        </p>
-        {/*
-          TODO(PUL-418): the agency-wide PUL-413 exports, parked here after the filter bar that
-          held them went away. PUL-418 scopes them to a client or an account and moves them to
-          the overviews.
-        */}
-        {canExport ? (
-          <div className="ml-auto">
-            <ClientExportButtons />
-          </div>
-        ) : null}
-      </div>
+      <p className="text-muted-foreground text-xs">
+        Every active project. Pick a client, account or project in the tree to narrow it.
+      </p>
       <div className="border-border flex gap-1 overflow-x-auto border-b">
         {tabs.map((key) => (
           <button

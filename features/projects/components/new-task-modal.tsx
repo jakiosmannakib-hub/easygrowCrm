@@ -119,9 +119,12 @@ function NewTaskBody({
    * in `CreateTaskInput`. Inputs and Base UI selects speak strings, so the single conversion
    * happens once in `buildPayload` rather than in every handler.
    *
-   * `qcRequired` defaults to true and `proofRequired` / `clientVisible` to false, matching the
+   * `proofRequired` / `clientVisible` default to false, matching the
    * column defaults in §11.3 — the form's defaults and the schema's must not disagree, or a
    * task created through the UI differs from one created any other way.
+   *
+   * There is no QC toggle: Amendment M makes review mandatory (PUL-416), so `qcRequired` is
+   * never sent and the column default (true) applies.
    */
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(defaultCategory ?? '');
@@ -133,7 +136,6 @@ function NewTaskBody({
   const [estimatedHours, setEstimatedHours] = useState('');
   const [expectedOutput, setExpectedOutput] = useState('');
   const [sopUrl, setSopUrl] = useState('');
-  const [qcRequired, setQcRequired] = useState(true);
   const [proofRequired, setProofRequired] = useState(false);
   const [clientVisible, setClientVisible] = useState(false);
   const [dependsOn, setDependsOn] = useState(NONE);
@@ -192,7 +194,6 @@ function NewTaskBody({
       estimatedHours: estimatedHours.trim() === '' ? undefined : Number(estimatedHours),
       expectedOutput: expectedOutput.trim() === '' ? undefined : expectedOutput.trim(),
       sopUrl: sopUrl.trim() === '' ? undefined : sopUrl.trim(),
-      qcRequired,
       proofRequired,
       clientVisible,
       dependsOn: dependsOn === NONE ? undefined : dependsOn,
@@ -397,7 +398,6 @@ function NewTaskBody({
         </Field>
 
         <div className="flex flex-wrap gap-4 pt-1">
-          <Toggle label="QC required" checked={qcRequired} onChange={setQcRequired} />
           <Toggle label="Proof required" checked={proofRequired} onChange={setProofRequired} />
           <Toggle label="Client visible" checked={clientVisible} onChange={setClientVisible} />
         </div>

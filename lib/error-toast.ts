@@ -46,7 +46,9 @@ export const GATE_REASONS: Record<string, string> = {
   unresolved_reviews: 'This user still has reviews routed to them. Reroute them first.',
   self_deactivate: 'You cannot deactivate your own account. Ask another admin to do it.',
   sa_has_assignments: 'A super admin cannot hold task assignments.',
-  use_review: 'Use the review screen to approve or return this task.',
+  // §13.4.5, widened by Amendment M (PUL-416): refuses a direct `approved` AND a direct
+  // `completed`, so the sentence says how a task closes rather than naming either status.
+  use_review: 'Tasks close only through review. Submit it, then approve it from the review screen.',
   // PUL-403 (§13.4.1). `project_archived` is thrown by `updateProject` (PUL-402) as well as by
   // `createTask` — one reason string, one entry, shared by both gates.
   project_archived: 'This project is archived. Un-archive it before adding or changing tasks.',

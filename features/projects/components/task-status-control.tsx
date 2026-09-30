@@ -35,7 +35,7 @@ import { showErrorToast } from '@/lib/show-error-toast';
 import { changeTaskStatusOpen, setTaskStatusProtected } from '../actions';
 import {
   isProtectedStatus,
-  statusMenuLabel,
+  STATUS_DISPLAY,
   statusMenuOptions,
   type StatusMenuViewer,
   type TaskStatus,
@@ -121,7 +121,7 @@ export function TaskStatusControl({
    *
    * `revision_required` does NOT write here — §13.4.5 requires a note, so it opens the note
    * modal and the write happens on that modal's submit. Everything else splits on
-   * `isProtectedStatus`: the open set goes to §13.4.4, `completed` / `cancelled` to §13.4.5.
+   * `isProtectedStatus`: the open set goes to §13.4.4, `cancelled` to §13.4.5.
    */
   function onSelect(next: TaskStatus) {
     if (next === task.status) return;
@@ -136,7 +136,7 @@ export function TaskStatusControl({
         ? setTaskStatusProtected({
             taskId: task.id,
             version: task.version,
-            status: next as 'completed' | 'cancelled',
+            status: next as 'cancelled',
           })
         : changeTaskStatusOpen({
             taskId: task.id,
@@ -231,7 +231,7 @@ function StatusMenu({
       <SelectContent>
         {options.map((option) => (
           <SelectItem key={option} value={option}>
-            {statusMenuLabel(option)}
+            {STATUS_DISPLAY[option].label}
           </SelectItem>
         ))}
       </SelectContent>

@@ -23,7 +23,7 @@ function stored(overrides: Partial<TemplateTaskNode> = {}): TemplateTaskNode {
     priority: 'high',
     estHours: '1.50',
     dueRule: { kind: 'before_deadline', n: 3 },
-    qcRequired: false,
+    qcRequired: true,
     proofRequired: true,
     clientVisible: true,
     sopUrl: 'https://sop.example/gbp',
@@ -71,11 +71,15 @@ describe('initialTaskForm', () => {
       priority: 'medium',
       dueKind: 'day',
       dueN: '1',
-      qcRequired: true,
       proofRequired: false,
       clientVisible: false,
       subtasks: [],
     });
+  });
+
+  it('has no QC field: review is mandatory since Amendment M (PUL-416)', () => {
+    expect(initialTaskForm(null)).not.toHaveProperty('qcRequired');
+    expect(initialTaskForm(stored())).not.toHaveProperty('qcRequired');
   });
 
   it('seeds every field from a stored task, subtasks keyed by id', () => {
@@ -86,7 +90,6 @@ describe('initialTaskForm', () => {
       dueKind: 'before_deadline',
       dueN: '3',
       estHours: '1.5',
-      qcRequired: false,
       proofRequired: true,
       clientVisible: true,
       sopUrl: 'https://sop.example/gbp',
@@ -116,7 +119,6 @@ describe('formToTaskFields', () => {
         priority: 'high',
         estHours: 1.5,
         dueRule: { kind: 'before_deadline', n: 3 },
-        qcRequired: false,
         proofRequired: true,
         clientVisible: true,
         sopUrl: 'https://sop.example/gbp',

@@ -102,6 +102,9 @@ export const projectTasks = pgTable(
       .where(sql`${table.dependsOn} is not null`),
     check('no_self_dependency', sql`${table.dependsOn} is distinct from ${table.id}`),
     check('project_tasks_quality_rating_check', sql`${table.qualityRating} between 1 and 5`),
+    // Amendment M (PUL-416): every task closes through review, so QA is never optional. The
+    // column stays so the shape is stable; the CHECK makes `false` unrepresentable.
+    check('project_tasks_qc_required_check', sql`${table.qcRequired} = true`),
   ],
 );
 

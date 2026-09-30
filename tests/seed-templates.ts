@@ -121,7 +121,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: 'tt2',
                 checklist: ['Submit citations', 'Screenshot proof'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt12',
@@ -134,7 +134,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Prospect approved', 'Anchor text set'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
             ],
           },
@@ -178,7 +178,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Export from tool', 'Highlight movements'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt6',
@@ -191,7 +191,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Export from tool'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt7',
@@ -204,7 +204,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Export from tool'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt8',
@@ -217,7 +217,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Export from tool'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt9',
@@ -272,7 +272,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Draft posts', 'Schedule in GBP'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt14',
@@ -304,7 +304,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Export from tool'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt16',
@@ -351,7 +351,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Goals agreed', 'Pages listed', 'Brand assets received'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
                 subtasks: [
                   { id: 'st17a', title: 'Client discovery call' },
                   { id: 'st17b', title: 'Fill brief template' },
@@ -458,7 +458,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: 'tt22',
                 checklist: ['DNS updated', 'SSL verified', 'Redirects confirmed'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
             ],
           },
@@ -492,7 +492,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: null,
                 checklist: ['Screaming Frog run', 'GSC data pulled'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
               {
                 id: 'tt25',
@@ -505,7 +505,7 @@ const TPLS: ProtoTemplate[] = [
                 ruleRef: 'tt24',
                 checklist: ['PageSpeed Insights', 'LCP/CLS logged'],
                 proofReq: true,
-                qcGate: false,
+                qcGate: true,
               },
             ],
           },

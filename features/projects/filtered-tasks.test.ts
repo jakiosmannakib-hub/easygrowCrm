@@ -259,6 +259,16 @@ describe('getFilteredTasks — the computed columns', () => {
       false,
     );
 
+    // A legacy `completed` row satisfies it too. Amendment M (PUL-416) stops anything NEW being
+    // set to `completed`, but rows closed before it must not re-block their dependents.
+    await db
+      .update(projectTasks)
+      .set({ status: 'completed' })
+      .where(eq(projectTasks.id, 'pt_seed_3'));
+    expect((await getFilteredTasks()).find((r) => r.id === 'pt_seed_2')?.dependencyBlocked).toBe(
+      false,
+    );
+
     // `cancelled` deliberately does NOT: a cancelled upstream task is an open question about
     // the downstream one, not a green light (DEPENDENCY_SATISFIED_STATUSES).
     await db

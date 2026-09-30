@@ -19,7 +19,6 @@ import {
   STATUS_DISPLAY,
   isProtectedStatus,
   monthLabel,
-  statusMenuLabel,
   statusMenuOptions,
 } from './display';
 
@@ -120,7 +119,8 @@ describe('statusMenuOptions', () => {
     expect(statusMenuOptions('in_progress', HR, HR.id)).toEqual([]);
   });
 
-  it('offers every manager role the open set plus the protected set', () => {
+  it('offers every manager role the open set plus Needs revision and Cancelled only', () => {
+    // §14.3.2 after Amendment M (PUL-416.2): "Done (Completed)" is gone from the manager set.
     for (const manager of [MGR, TL, SA]) {
       const options = statusMenuOptions('in_progress', manager, null);
       expect(options, manager.role).toEqual([
@@ -128,9 +128,18 @@ describe('statusMenuOptions', () => {
         'in_progress',
         'blocked',
         'revision_required',
-        'completed',
         'cancelled',
       ]);
+    }
+  });
+
+  it('never offers `completed` to anyone, from any status (Amendment M)', () => {
+    for (const viewer of [MGR, TL, SA, HR, EMP]) {
+      for (const status of taskStatus.enumValues) {
+        expect(statusMenuOptions(status, viewer, viewer.id), `${viewer.role}/${status}`).not.toContain(
+          'completed',
+        );
+      }
     }
   });
 
@@ -166,24 +175,12 @@ describe('statusMenuOptions', () => {
 describe('isProtectedStatus', () => {
   it('routes the manager overrides to setTaskStatusProtected and the rest to the open action', () => {
     expect(isProtectedStatus('revision_required')).toBe(true);
-    expect(isProtectedStatus('completed')).toBe(true);
     expect(isProtectedStatus('cancelled')).toBe(true);
+    // Not a menu status any more (Amendment M), so it routes nowhere from the pill.
+    expect(isProtectedStatus('completed')).toBe(false);
     expect(isProtectedStatus('planned')).toBe(false);
     expect(isProtectedStatus('in_progress')).toBe(false);
     expect(isProtectedStatus('blocked')).toBe(false);
-  });
-});
-
-describe('statusMenuLabel', () => {
-  it('disambiguates Completed in the menu, where there is no icon to compare against', () => {
-    expect(statusMenuLabel('completed')).toBe('Done (Completed)');
-  });
-
-  it('matches the pill label for every other status', () => {
-    for (const status of taskStatus.enumValues) {
-      if (status === 'completed') continue;
-      expect(statusMenuLabel(status), status).toBe(STATUS_DISPLAY[status].label);
-    }
   });
 });
 

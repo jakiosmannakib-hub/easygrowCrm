@@ -35,7 +35,6 @@ export interface TaskFormState {
   dueRef: string;
   /** Decimal hours as typed; `''` = no estimate. */
   estHours: string;
-  qcRequired: boolean;
   proofRequired: boolean;
   clientVisible: boolean;
   sopUrl: string;
@@ -52,7 +51,6 @@ export interface TaskFields {
   priority: TaskPriority;
   estHours: number | null;
   dueRule: DueRule;
-  qcRequired: boolean;
   proofRequired: boolean;
   clientVisible: boolean;
   sopUrl: string | null;
@@ -83,7 +81,8 @@ export function checklistToText(items: readonly string[]): string {
 
 /**
  * The form's starting state. `null` = a new task: the column defaults of §11.4 (priority medium,
- * QC required on, proof and client-visible off) and a `Day 1` rule.
+ * proof and client-visible off; QC is not a form field since Amendment M, PUL-416) and a `Day 1`
+ * rule.
  */
 export function initialTaskForm(task: TemplateTaskNode | null): TaskFormState {
   if (!task) {
@@ -95,7 +94,6 @@ export function initialTaskForm(task: TemplateTaskNode | null): TaskFormState {
       dueN: '1',
       dueRef: '',
       estHours: '',
-      qcRequired: true,
       proofRequired: false,
       clientVisible: false,
       sopUrl: '',
@@ -115,7 +113,6 @@ export function initialTaskForm(task: TemplateTaskNode | null): TaskFormState {
     dueRef: rule.kind === 'after' ? rule.ref : '',
     // `numeric` reads back as "1.50"; Number() drops the trailing zeros for the input.
     estHours: task.estHours === null ? '' : String(Number(task.estHours)),
-    qcRequired: task.qcRequired,
     proofRequired: task.proofRequired,
     clientVisible: task.clientVisible,
     sopUrl: task.sopUrl ?? '',
@@ -179,7 +176,6 @@ export function formToTaskFields(state: TaskFormState): TaskFormResult {
       priority: state.priority,
       estHours,
       dueRule,
-      qcRequired: state.qcRequired,
       proofRequired: state.proofRequired,
       clientVisible: state.clientVisible,
       sopUrl: textOrNull(state.sopUrl),

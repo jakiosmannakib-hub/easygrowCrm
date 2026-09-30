@@ -92,9 +92,9 @@ const WizardTaskInput = z.object({
   priority: Priority.default('medium'),
   estHours: z.number().min(0).max(9999.99).optional(),
   dueRule: wizardDueRuleSchema,
-  // §11.4's column default, the same as `addTemplateTask`: a task goes through QC review unless
-  // the wizard says otherwise. (The PUL-504 ticket text said `false`; see the §17 note.)
-  qcRequired: z.boolean().default(true),
+  // Amendment M (PUL-416): QA is mandatory. Only `true` (or absent) is accepted; the DB CHECK
+  // `template_tasks_qc_required_check` backs it.
+  qcRequired: z.literal(true).default(true),
   proofRequired: z.boolean().default(false),
   clientVisible: z.boolean().default(false),
   sopUrl: z.string().optional(),
@@ -176,7 +176,7 @@ export const AddTemplateTaskInput = z.object({
   priority: Priority.default('medium'),
   estHours: EstHours.optional(),
   dueRule: dueRuleSchema,
-  qcRequired: z.boolean().default(true),
+  qcRequired: z.literal(true).default(true),
   proofRequired: z.boolean().default(false),
   // PUL-503 Stage 3b: the remaining §11.4 task columns the §14.4.4 modal edits.
   clientVisible: z.boolean().default(false),
@@ -207,7 +207,7 @@ export const UpdateTemplateTaskInput = z.object({
   priority: Priority.optional(),
   estHours: EstHours.optional(),
   dueRule: dueRuleSchema.optional(),
-  qcRequired: z.boolean().optional(),
+  qcRequired: z.literal(true).optional(),
   proofRequired: z.boolean().optional(),
   clientVisible: z.boolean().optional(),
   sopUrl: z.string().nullable().optional(),

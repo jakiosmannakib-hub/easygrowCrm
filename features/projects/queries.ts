@@ -49,6 +49,7 @@ import {
   retainerMonth,
   type ProjectHealth,
 } from './display';
+import { buildWorkspaceTree, type WorkspaceTree } from './workspace-tree';
 
 /**
  * The columns a project picker needs. Kept narrow — the client and account names are for
@@ -722,6 +723,8 @@ export interface ProjectHeader {
   type: string;
   status: (typeof projects.$inferSelect)['status'];
   client: { name: string };
+  /** The breadcrumb's middle crumb (Amendment M: Client › Account › Project). */
+  account: { name: string };
   /** §11.2's derived `currentMonth` — never stored, never incremented by anyone. */
   currentMonth: number;
   /** §3.1 / §14.3's `X/Y · N%`. */
@@ -763,6 +766,7 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
       status: projects.status,
       startDate: projects.startDate,
       clientName: clients.name,
+      accountName: accounts.name,
     })
     .from(projects)
     .innerJoin(accounts, eq(accounts.id, projects.accountId))
@@ -804,6 +808,7 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
     type: head.type,
     status: head.status,
     client: { name: head.clientName },
+    account: { name: head.accountName },
     currentMonth: retainerMonth(head.startDate, today),
     progress: { done, total, pct: progressPct(done, total) },
     health: projectHealth(Number(counts?.overdue ?? 0), Number(counts?.waitingReview ?? 0)),
@@ -1185,4 +1190,131 @@ export async function getClientExportRows(range: ClientExportRange): Promise<Cli
     timeSpentHours: hoursOrNull(row.actualHours ?? row.submissionHours),
     proofUrl: row.proofUrl,
   }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// getWorkspaceTree: the §14.3 Client › Account › Project tree (PUL-417.1, Amendment M)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+export interface WorkspaceTreeOptions {
+  /**
+   * Also return archived clients and accounts (`deleted_at` set) and archived projects
+   * (`status = 'archived'`). Soft-deleted projects are never returned. Off by default: §13.8's
+   * tree is live clients → live accounts → active projects.
+   */
+  includeArchived?: boolean;
+}
+
+/**
+ * §13.8 `getWorkspaceTree`: the nested tree behind the §14.3 workspace, the client overview
+ * and the account overview.
+ *
+ * **A fixed number of queries, whatever the size of the agency:** the session read, then ONE
+ * select. Clients LEFT JOIN accounts LEFT JOIN projects keeps a client with no accounts and an
+ * account with no projects (both are places a manager needs to click to add the next level),
+ * and the task counts come from a single grouped subquery joined on project id rather than a
+ * count per project. `buildWorkspaceTree` then nests the flat rows in memory.
+ *
+ * The live-only predicates sit in the JOIN conditions, not the WHERE, on purpose: in the WHERE
+ * they would turn the LEFT JOINs back into inner ones and silently drop childless parents.
+ *
+ * **Read scope (§9.6):** `account.read` and `project_task.read` are open to every role, so every
+ * viewer gets the same tree and there is no row filter. The query still requires an
+ * authenticated, active session, and checks both cells so a future tightening of §9.6 fails
+ * closed here instead of leaking the tree.
+ */
+export async function getWorkspaceTree(options: WorkspaceTreeOptions = {}): Promise<WorkspaceTree> {
+  const viewer = await getSessionUser();
+  if (!can(viewer, 'account.read') || !can(viewer, 'project_task.read')) {
+    throw new AppError('FORBIDDEN');
+  }
+
+  const includeArchived = options.includeArchived === true;
+  // From the clock port (via dhakaToday), so a frozen test clock moves "overdue" too.
+  const today = dhakaToday();
+
+  const counts = db
+    .select({
+      projectId: projectTasks.projectId,
+      // §3.1.3: open excludes the two done statuses and cancelled.
+      open: sql<number>`count(*) filter (where ${projectTasks.status} not in ('approved','completed','cancelled'))::int`.as(
+        'open_count',
+      ),
+      submitted: sql<number>`count(*) filter (where ${projectTasks.status} = 'submitted')::int`.as(
+        'submitted_count',
+      ),
+      // §4.1: approved and completed are both done.
+      done: sql<number>`count(*) filter (where ${projectTasks.status} in ('approved','completed'))::int`.as(
+        'done_count',
+      ),
+      // §4.1 / §4.2: cancelled leaves the denominator.
+      total: sql<number>`count(*) filter (where ${projectTasks.status} <> 'cancelled')::int`.as(
+        'total_count',
+      ),
+      // §3.1.3, as in getProjectHeader: OPEN tasks past their due date, against the Dhaka clock.
+      // Feeds the overviews' overdue counts and each project's health chip.
+      overdue: sql<number>`count(*) filter (
+        where ${projectTasks.status} not in ('approved','completed','cancelled')
+          and ${projectTasks.dueDate} is not null
+          and ${projectTasks.dueDate} < ${today}
+      )::int`.as('overdue_count'),
+    })
+    .from(projectTasks)
+    .where(isNull(projectTasks.deletedAt))
+    .groupBy(projectTasks.projectId)
+    .as('task_counts');
+
+  const rows = await db
+    .select({
+      clientId: clients.id,
+      clientName: clients.name,
+      clientArchived: sql<boolean>`${clients.deletedAt} is not null`,
+      accountId: accounts.id,
+      accountName: accounts.name,
+      accountLocation: accounts.location,
+      accountArchived: sql<
+        boolean | null
+      >`case when ${accounts.id} is null then null else ${accounts.deletedAt} is not null end`,
+      projectId: projects.id,
+      projectName: projects.name,
+      projectStartDate: projects.startDate,
+      projectArchived: sql<
+        boolean | null
+      >`case when ${projects.id} is null then null else ${projects.status} = 'archived' end`,
+      openTaskCount: counts.open,
+      awaitingReviewCount: counts.submitted,
+      doneTaskCount: counts.done,
+      totalTaskCount: counts.total,
+      overdueTaskCount: counts.overdue,
+    })
+    .from(clients)
+    .leftJoin(
+      accounts,
+      and(
+        eq(accounts.clientId, clients.id),
+        includeArchived ? undefined : isNull(accounts.deletedAt),
+      ),
+    )
+    .leftJoin(
+      projects,
+      and(
+        eq(projects.accountId, accounts.id),
+        isNull(projects.deletedAt),
+        includeArchived ? undefined : eq(projects.status, 'active'),
+      ),
+    )
+    .leftJoin(counts, eq(counts.projectId, projects.id))
+    .where(includeArchived ? undefined : isNull(clients.deletedAt))
+    // First-seen order is tree order in `buildWorkspaceTree`, so this sorts every level. The id
+    // tiebreaks keep two same-named siblings from swapping between renders.
+    .orderBy(
+      asc(clients.name),
+      asc(clients.id),
+      asc(accounts.name),
+      asc(accounts.id),
+      asc(projects.name),
+      asc(projects.id),
+    );
+
+  return buildWorkspaceTree(rows);
 }

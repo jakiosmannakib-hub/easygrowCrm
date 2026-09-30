@@ -44,6 +44,7 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
           clients,
           accounts,
           assignees: users.map((u) => ({ id: u.id, name: u.name })),
+          canCreateAccount: can(viewer, 'account.create'),
         }),
       )
     : null;
@@ -64,6 +65,7 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
                 clients={startProject.clients}
                 accounts={startProject.accounts}
                 assignees={startProject.assignees}
+                canCreateAccount={startProject.canCreateAccount}
               />
             ) : null}
           </div>

@@ -106,14 +106,14 @@ Client management lives on its own page, `/clients` (§14.12a; moved out of Sett
 - **Who:** MGR
 - **Input:** `{ templateId, clientId, name, startDate, deadline?, assignments: Record<roleHint, userId | null>, taskOverrides?: Array<{templateTaskId, dueDate?, assigneeId?}> }` (overrides are keyed by `templateTaskId`, not position — positions are per-category and don't identify a task globally)
 - **Guards:** template exists & not deleted; every named assignee is active & not SA; every `after.ref` resolves to a task in the same template, acyclic (`GATE:bad_ref`); `before_deadline` requires deadline (`GATE:no_deadline`).
-- **Due-date computation (month-aware, PUL-505):** each task's dates anchor to its **month's start**: Month 1 start = `startDate`; Month k start = `startDate` + (k−1) calendar months, day-clamped (the §14.4.3 cascade). Then `day` = month start + (n−1); `after` = referenced task's computed due + 1 working day; `before_deadline` = deadline − n. `day` and `after` results skip **forward** off Fri/Sat/holidays; `before_deadline` results skip **backward** to the previous working day, so a task never lands after the deadline *(owner's ruling at PUL-505: a Friday deadline with n = 0 → the Thursday before)*.
+- **Due-date computation (month-aware, PUL-505):** each task's dates anchor to its **month's start**: Month 1 start = `startDate`; Month k start = `startDate` + (k−1) calendar months, day-clamped (the §14.4.3 cascade). Then `day` = month start + (n−1); `after` = referenced task's computed due + 1 working day; `before_deadline` = deadline − n. `day` and `after` results skip **forward** off Fri/Sat/holidays; `before_deadline` results skip **backward** to the previous working day, never forward, so a task never lands after the deadline *(owner's ruling at PUL-505: a Friday deadline with n = 0 → the Thursday before)*.
   *As built (PUL-505, `computeDueDates` in `features/templates/due-rule-compute.ts`):* the month
   clamp uses the **real** calendar of the project's year (Jan 31, 2027 → Feb 28, 2027), unlike
   the yearless §14.4.3 cascade, which keeps February at 29. The month start is not itself
   shifted; only the final due date is. `day` 0 is treated as Day 1. The resolver returns a
   failure (`no_deadline` / `bad_ref` + the task id) and does not throw; the action maps it to the
   GATE above.
-- **Tx:** insert project; **walk the hierarchy via `tplAllTasks`** (§16.7 — the only flattener) and insert one `project_tasks` row per template task with `category` = the category's name, `month` = the month's `num`, `{{ClientName}}` interpolated in title; expand `checklist[]` into `task_checklist_items`; **clone each `template_task_subtasks` row into `task_subtasks` (`done=false`)**; `depends_on` resolved from `templateTaskId` refs to the new live task IDs; unmatched roles → `assignee_id NULL` (unassigned).
+- **Tx:** insert project; **walk the hierarchy via `tplAllTasks`** (§16.7 — the only flattener) and insert one `project_tasks` row per template task with `category` = the category's name, `month` = the month's `num`, the title tokens `{{ClientName}}`, `{{AccountName}}`, `{{ProjectName}}` and `{{MonthName}}` interpolated in title; expand `checklist[]` into `task_checklist_items`; **clone each `template_task_subtasks` row into `task_subtasks` (`done=false`)**; `depends_on` resolved from `templateTaskId` refs to the new live task IDs; unmatched roles → `assignee_id NULL` (unassigned).
 - **Audit:** `project.created_from_template` + one `project_task.created` per task (batched: a single audit row with `after: {taskIds: […]}` is acceptable — decide in implementation, be consistent).
 - **Notify:** `N:task_assigned` → each distinct assignee (batched per person, not per task); `N:project_started` → all MGR.
 
@@ -128,8 +128,9 @@ Client management lives on its own page, `/clients` (§14.12a; moved out of Sett
 >   (`GATE:no_deadline` / `GATE:bad_ref`, with `templateTaskId` + `title` in the details).
 > - **Holidays:** an empty set until the `holidays` table exists (PUL-301, Phase 3 not built),
 >   so only Fri/Sat are skipped. `TODO(PUL-301)` in the action.
-> - **Title tokens:** `{{ClientName}}`, `{{ProjectName}}` and `{{MonthName}}`, where MonthName is
->   the calendar month of the task's month start (`startDate` + (k−1) months, day-clamped): a
+> - **Title tokens:** exactly four: `{{ClientName}}` (the white-label partner), `{{AccountName}}`
+>   (the end business the work is for; Amendment M, PUL-415), `{{ProjectName}}` and
+>   `{{MonthName}}`, where MonthName is the calendar month of the task's month start (`startDate` + (k−1) months, day-clamped): a
 >   Sep 10 project's Month 2 is "October". Any other `{{…}}` is left as typed. One helper,
 >   `projectTaskTitle` in `features/templates/start-project.ts`, is shared with the wizard's
 >   preview.

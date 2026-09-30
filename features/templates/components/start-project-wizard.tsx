@@ -21,6 +21,14 @@
 //
 // Not optimistic (an accountability action): Generate awaits the server, then toasts and opens
 // the new project. Errors go through `showErrorToast`.
+//
+// ── Two entry points (PUL-417.6) ─────────────────────────────────────────────────────────
+// `StartProjectWizard` is the template page's button: the template is fixed and step 1 opens.
+// `StartProjectDialog` is the controlled dialog the Projects workspace tree opens from an
+// account's "Start from template": it is handed every template, adds a step 0 to pick one, and
+// prefills the client and account. Step 1 can also create the account inline ("+ New account",
+// §13.2.4 `createAccount`); the new account is selected at once and kept in local state until
+// the page's own list catches up after `router.refresh()`.
 
 'use client';
 
@@ -49,6 +57,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { createAccount } from '@/features/clients/actions';
 import { createProjectFromTemplate } from '@/features/projects/actions';
 import { dhakaToday, fmtDate } from '@/lib/format';
 import { showErrorToast } from '@/lib/show-error-toast';
@@ -73,7 +82,10 @@ export interface AccountOption {
 }
 
 interface WizardState {
-  step: 1 | 2 | 3 | 4;
+  /** 0 is "choose a template", shown only when the wizard was opened without one. */
+  step: 0 | 1 | 2 | 3 | 4;
+  /** `''` until a template is picked in step 0; set from the start when the template is fixed. */
+  templateId: string;
   /** `''` until a client is picked. Only narrows Account ▾; the project is written to the account. */
   clientId: string;
   /** `''` until an account is picked. Cleared whenever the client changes. */
@@ -88,6 +100,11 @@ interface WizardState {
   /** The current step's validation message, if Next was refused. */
   stepError: string | null;
   saving: boolean;
+  /** Accounts created inline in step 1, until the `accounts` prop includes them. */
+  createdAccounts: AccountOption[];
+  /** The inline "+ New account" name, or `null` while that form is closed. */
+  newAccountName: string | null;
+  creatingAccount: boolean;
 }
 
 /** Step 3's "Unassigned" option. Base UI Select values are strings; no user id collides. */
@@ -97,19 +114,38 @@ const UNASSIGNED = '__unassigned__';
 const NO_HOLIDAYS: ReadonlySet<string> = new Set();
 
 const STEP_LABELS = ['Client & account', 'Dates', 'Assign roles', 'Preview'] as const;
+/** With no fixed template the strip gains a step in front. */
+const PICK_STEP_LABELS = ['Template', ...STEP_LABELS] as const;
 
-function initialState(template: StartProjectTemplate): WizardState {
+/** The template-derived keys: reset whenever a (different) template is chosen. */
+function templateDefaults(template: StartProjectTemplate) {
   return {
-    step: 1,
-    clientId: '',
-    accountId: '',
+    templateId: template.id,
     // §14.3.8 step 1: defaults to the template name, editable.
     name: template.name,
+    assignments: Object.fromEntries(template.roles.map((role) => [role, UNASSIGNED])),
+  };
+}
+
+function initialState(
+  template: StartProjectTemplate | undefined,
+  prefill: { clientId: string; accountId: string },
+): WizardState {
+  return {
+    step: template ? 1 : 0,
+    templateId: '',
+    name: '',
+    assignments: {},
+    ...(template ? templateDefaults(template) : {}),
+    clientId: prefill.clientId,
+    accountId: prefill.accountId,
     startDate: dhakaToday(),
     deadline: '',
-    assignments: Object.fromEntries(template.roles.map((role) => [role, UNASSIGNED])),
     stepError: null,
     saving: false,
+    createdAccounts: [],
+    newAccountName: null,
+    creatingAccount: false,
   };
 }
 
@@ -128,20 +164,23 @@ function rulePill(task: StartProjectTask, indexById: Map<string, number>): strin
 
 // ── Component ───────────────────────────────────────────────────────────────────────────
 
-export function StartProjectWizard({
-  template,
-  clients,
-  accounts,
-  assignees,
-}: {
-  template: StartProjectTemplate;
+/** What both entry points pass through to the body. */
+interface WizardData {
   /** Active (non-archived) clients. */
   clients: PickOption[];
   /** Live accounts of live clients. */
   accounts: AccountOption[];
   /** Active, non-SA users: who may hold a task. */
   assignees: PickOption[];
-}) {
+  /** `can(viewer, 'account.create')`: offers "+ New account" in step 1. The action re-checks. */
+  canCreateAccount: boolean;
+}
+
+/** The template page's button: the template is fixed, the wizard opens on step 1. */
+export function StartProjectWizard({
+  template,
+  ...data
+}: WizardData & { template: StartProjectTemplate }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -150,10 +189,47 @@ export function StartProjectWizard({
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         {open ? (
           <WizardBody
-            template={template}
-            clients={clients}
-            accounts={accounts}
-            assignees={assignees}
+            templates={[template]}
+            fixedTemplate={template}
+            prefill={{ clientId: '', accountId: '' }}
+            onGenerated={() => setOpen(false)}
+            {...data}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * The controlled wizard the Projects workspace opens from an account's "Start from template":
+ * the template is picked in step 0 and the client and account arrive prefilled. No trigger;
+ * the body mounts only while open, so every opening starts fresh.
+ */
+export function StartProjectDialog({
+  open,
+  onOpenChange,
+  templates,
+  prefill,
+  ...data
+}: WizardData & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Every live template, as `toStartProjectTemplate` shapes them. */
+  templates: StartProjectTemplate[];
+  /** Ids from the tree node the wizard was opened on; unknown ids are dropped. */
+  prefill: { clientId: string; accountId: string };
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+        {open ? (
+          <WizardBody
+            templates={templates}
+            fixedTemplate={undefined}
+            prefill={prefill}
+            onGenerated={() => onOpenChange(false)}
+            {...data}
           />
         ) : null}
       </DialogContent>
@@ -162,26 +238,142 @@ export function StartProjectWizard({
 }
 
 function WizardBody({
-  template,
+  templates,
+  fixedTemplate,
+  prefill,
+  onGenerated,
   clients,
   accounts,
   assignees,
-}: {
-  template: StartProjectTemplate;
-  clients: PickOption[];
-  accounts: AccountOption[];
-  assignees: PickOption[];
+  canCreateAccount,
+}: WizardData & {
+  templates: StartProjectTemplate[];
+  /** Set by the template page: no step 0, and Back stops at step 1. */
+  fixedTemplate: StartProjectTemplate | undefined;
+  prefill: { clientId: string; accountId: string };
+  /** After Generate succeeds and navigation starts: closes the dialog. */
+  onGenerated: () => void;
 }) {
   const router = useRouter();
-  const [s, setS] = useState<WizardState>(() => initialState(template));
+  const [s, setS] = useState<WizardState>(() => {
+    // Prefill only ids that exist; an account must also belong to the prefilled client.
+    const clientId = clients.some((c) => c.id === prefill.clientId) ? prefill.clientId : '';
+    const accountId = accounts.some((a) => a.id === prefill.accountId && a.clientId === clientId)
+      ? prefill.accountId
+      : '';
+    return initialState(fixedTemplate, { clientId, accountId });
+  });
 
   function patch(next: Partial<WizardState>) {
     setS((prev) => ({ ...prev, ...next, stepError: null }));
   }
 
+  const firstStep = fixedTemplate ? 1 : 0;
+  const labels = fixedTemplate ? STEP_LABELS : PICK_STEP_LABELS;
+  const indicatorStep = fixedTemplate ? s.step : s.step + 1;
+
+  const template = templates.find((t) => t.id === s.templateId);
+
+  // ── Step 0: choose a template ──────────────────────────────────────────────
+  if (s.step === 0 || !template) {
+    return (
+      <div className="grid gap-4">
+        <DialogHeader>
+          <DialogTitle>Start a project</DialogTitle>
+          <DialogDescription>Choose the template to generate its tasks from.</DialogDescription>
+        </DialogHeader>
+        <StepIndicator labels={labels} step={indicatorStep} />
+        {templates.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            No templates yet. Create one on the{' '}
+            <Link href="/templates" className="text-foreground underline underline-offset-2">
+              Templates page
+            </Link>
+            .
+          </p>
+        ) : (
+          <ul className="grid max-h-[50dvh] gap-2 overflow-y-auto" role="radiogroup" aria-label="Template">
+            {templates.map((t) => {
+              const picked = t.id === s.templateId;
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={picked}
+                    onClick={() => patch(templateDefaults(t))}
+                    className={
+                      picked
+                        ? 'border-primary bg-primary/5 grid w-full gap-0.5 rounded-lg border p-3 text-left'
+                        : 'border-border hover:bg-muted/40 grid w-full gap-0.5 rounded-lg border p-3 text-left'
+                    }
+                  >
+                    <span className="text-sm font-medium">{t.name}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {formatTemplateMeta(t.meta)}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {s.stepError ? <p className="text-destructive text-xs">{s.stepError}</p> : null}
+        <DialogFooter>
+          <DialogClose
+            render={
+              <Button variant="outline" type="button">
+                Cancel
+              </Button>
+            }
+          />
+          <Button
+            type="button"
+            onClick={() =>
+              template
+                ? patch({ step: 1 })
+                : setS((p) => ({ ...p, stepError: 'Pick a template.' }))
+            }
+          >
+            Next
+          </Button>
+        </DialogFooter>
+      </div>
+    );
+  }
+
   const clientName = clients.find((c) => c.id === s.clientId)?.name ?? '';
-  const clientAccounts = accounts.filter((a) => a.clientId === s.clientId);
+  // The page's accounts plus any created inline, de-duplicated once a refresh brings them in.
+  const clientAccounts = [
+    ...accounts,
+    ...s.createdAccounts.filter((c) => !accounts.some((a) => a.id === c.id)),
+  ].filter((a) => a.clientId === s.clientId);
   const accountName = clientAccounts.find((a) => a.id === s.accountId)?.name ?? '';
+
+  // ── Step 1: "+ New account" inline (§13.2.4) ───────────────────────────────
+  async function addAccount() {
+    const name = (s.newAccountName ?? '').trim();
+    if (!name) return setS((p) => ({ ...p, stepError: 'Give the account a name.' }));
+
+    setS((p) => ({ ...p, creatingAccount: true, stepError: null }));
+    const result = await createAccount({ clientId: s.clientId, name });
+    if (!result.ok) {
+      showErrorToast(result);
+      setS((p) => ({ ...p, creatingAccount: false }));
+      return;
+    }
+    const created = { id: result.data.id, clientId: result.data.clientId, name: result.data.name };
+    setS((p) => ({
+      ...p,
+      createdAccounts: [...p.createdAccounts, created],
+      accountId: created.id,
+      newAccountName: null,
+      creatingAccount: false,
+    }));
+    toast.success(`${created.name} added to ${clientName}.`);
+    // The workspace tree (and any account list on the page) re-reads; this state is unaffected.
+    router.refresh();
+  }
   const needsDeadline = template.tasks.some((t) => t.dueRule.kind === 'before_deadline');
   const unroledCount = template.tasks.filter((t) => t.roleHint === null).length;
 
@@ -223,7 +415,7 @@ function WizardBody({
     setS((p) => ({ ...p, saving: true }));
     const name = s.name.trim();
     const result = await createProjectFromTemplate({
-      templateId: template.id,
+      templateId: s.templateId,
       accountId: s.accountId,
       name,
       startDate: s.startDate,
@@ -246,6 +438,8 @@ function WizardBody({
     );
     // §14.3.8: the new project, List tab, month filter cleared (the page starts at all months).
     router.push(`/projects?project=${encodeURIComponent(projectId)}&tab=list`);
+    // On /projects itself the page re-renders in place, so the dialog must close explicitly.
+    onGenerated();
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -256,7 +450,7 @@ function WizardBody({
         <DialogDescription>{formatTemplateMeta(template.meta)} will be generated.</DialogDescription>
       </DialogHeader>
 
-      <StepIndicator labels={STEP_LABELS} step={s.step} />
+      <StepIndicator labels={labels} step={indicatorStep} />
 
       {s.step === 1 ? (
         <div className="grid gap-3">
@@ -265,7 +459,9 @@ function WizardBody({
             <Select
               value={s.clientId || null}
               // A new client invalidates the picked account: it belonged to the old one.
-              onValueChange={(v: string | null) => patch({ clientId: v ?? '', accountId: '' })}
+              onValueChange={(v: string | null) =>
+                patch({ clientId: v ?? '', accountId: '', newAccountName: null })
+              }
             >
               <SelectTrigger id="spw-client" className="w-full">
                 {/* The children function maps the id to a name (see new-task-modal.tsx). */}
@@ -318,7 +514,7 @@ function WizardBody({
                 ))}
               </SelectContent>
             </Select>
-            {s.clientId && clientAccounts.length === 0 ? (
+            {s.clientId && clientAccounts.length === 0 && !canCreateAccount ? (
               <p className="text-muted-foreground text-xs">
                 {clientName} has no active accounts. Add one on the{' '}
                 <Link href="/clients" className="text-foreground underline underline-offset-2">
@@ -326,6 +522,57 @@ function WizardBody({
                 </Link>
                 .
               </p>
+            ) : null}
+
+            {/* PUL-417.6: create the account without leaving the wizard. */}
+            {canCreateAccount && s.clientId ? (
+              s.newAccountName === null ? (
+                <div>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => patch({ newAccountName: '' })}
+                  >
+                    + New account
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Input
+                    aria-label={`New account for ${clientName}`}
+                    value={s.newAccountName}
+                    onChange={(e) => patch({ newAccountName: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void addAccount();
+                      }
+                    }}
+                    placeholder="e.g. Joe's Plumbing"
+                    autoComplete="off"
+                    autoFocus
+                    disabled={s.creatingAccount}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void addAccount()}
+                    disabled={s.creatingAccount}
+                  >
+                    {s.creatingAccount ? 'Adding…' : 'Add'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => patch({ newAccountName: null })}
+                    disabled={s.creatingAccount}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )
             ) : null}
           </div>
 
@@ -487,7 +734,7 @@ function WizardBody({
       {s.stepError ? <p className="text-destructive text-xs">{s.stepError}</p> : null}
 
       <DialogFooter>
-        {s.step > 1 ? (
+        {s.step > firstStep ? (
           <Button
             type="button"
             variant="ghost"

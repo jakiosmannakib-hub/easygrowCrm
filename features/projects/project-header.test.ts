@@ -180,6 +180,8 @@ describe('getProjectHeader', () => {
       type: 'Retainer',
       status: 'active',
       client: { name: 'Seed Client' },
+      // Amendment M: the breadcrumb's middle crumb (PUL-417.4).
+      account: { name: 'Seed Account' },
       currentMonth: 9,
     });
   });

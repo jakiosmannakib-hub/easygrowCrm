@@ -210,7 +210,7 @@ function buildPatch(form: FormState, account: AccountRow) {
   return Object.keys(patch).length === 0 ? null : { accountId: account.id, ...patch };
 }
 
-function AccountFormBody({
+export function AccountFormBody({
   client,
   account,
   onDone,
@@ -349,7 +349,7 @@ function AccountFormBody({
 
 // ── Archive confirm ─────────────────────────────────────────────────────────────────────
 
-function ArchiveAccountBody({ account, onDone }: { account: AccountRow; onDone: () => void }) {
+export function ArchiveAccountBody({ account, onDone }: { account: AccountRow; onDone: () => void }) {
   const router = useRouter();
   const [archiving, setArchiving] = useState(false);
 

@@ -11,7 +11,7 @@
 
 The unit of work is the **ticket**. Tickets are numbered `PUL-<phase><serial>` — the leading digit(s) name the phase (`PUL-104` = Phase 1, ticket 04; `PUL-1003` = Phase 10, ticket 03), and subtasks are `<ticket>.<n>` (e.g. `104.2`). Work top to bottom: tickets are dependency-ordered, so start at the lowest open number and don't begin a phase until the previous one is green.
 
-The plan is **88 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, and PUL-414 … PUL-418 to Phase 4 by Amendment M)*:
+The plan is **90 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, PUL-414 … PUL-418 to Phase 4 by Amendment M, and PUL-419 (Onboarding month) and PUL-420 (`/clients` page) to Phase 4 on 2026-09-30)*:
 
 | Phase | Focus                                                       | Tickets             |
 | ----- | ----------------------------------------------------------- | ------------------- |
@@ -19,7 +19,7 @@ The plan is **88 tickets across 11 phases**, with 360+ checkable subtasks *(orig
 | 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-113   |
 | 2     | Employees & clients                                         | PUL-201 … PUL-207   |
 | 3     | Attendance                                                  | PUL-301 … PUL-308   |
-| 4     | Projects & tasks                                            | PUL-401 … PUL-418   |
+| 4     | Projects & tasks                                            | PUL-401 … PUL-420   |
 | 5     | Templates & Start Project                                   | PUL-501 … PUL-506   |
 | 6     | QC, review & EOD                                            | PUL-601 … PUL-607   |
 | 7     | Leave                                                       | PUL-701 … PUL-707   |
@@ -562,7 +562,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 - [x] 207.1 Clients table lands with migration 007 prep or its own mini-migration — name, contact, active flag (v1-minimal per §11)
 - [x] 207.2 Actions: create / edit / archive-client (archive blocked if live projects exist → `GATE`)
-- [x] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section) *(revisited 2026-09-30: moved to `/clients`; see the note below)*
+- [x] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section) *(revisited 2026-09-30: moved to `/clients`; see PUL-420)*
 - [x] 207.4 Tests: CRUD + archive gate + audit
 
 **Done when:** the Phase 4 filter bar and Phase 5 Start Project wizard have real clients to select.
@@ -572,16 +572,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > manifest. *(This note previously read "built, NOT yet merged"; it was left stale after the
 > merge and is corrected here.)*
 >
-> **Clients moved out of Settings (2026-09-30, built, not yet merged; no ticket number yet).**
-> Amendment M gave TL / PM account rights (§9.6 ¹²), but Settings is SA + HR only, so managers had
-> no screen for them. Clients now has its own page, `/clients` (§14.12a), in the nav directly above
-> Projects for SA, HR, PM and TL; employees are 404'd by the route guard. No new actions: it
-> reuses 13.2's client and account actions. Client controls are hidden unless the viewer holds
-> `client.*` (SA, HR); account controls unless `account.*` (SA, HR, PM, TL). The Settings Clients
-> section and `SETTINGS_SECTIONS` in `lib/nav.ts` were deleted; `/settings` is back to the
-> placeholder until PUL-903. The Start Project wizard's "no clients" / "no accounts" hints link to
-> `/clients`. Test: `tests/nav.test.ts` (14 items, Clients above Projects, `/clients` access per
-> role). PUL-417's workspace tree still adds account management inside Projects.
+> **The Settings section was later replaced by a `/clients` page (2026-09-30).** That work is
+> ticketed as **PUL-420**; its build notes live there.
 >
 > `clients` shipped **alone** rather than with `projects` + `personal_tasks` as §11.9's logical
 > migration 007 groups them, because `projects` belongs to PUL-401. That split is where the
@@ -712,7 +704,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-# Phase 4 — Projects & Tasks (18 tickets)
+# Phase 4 — Projects & Tasks (20 tickets)
 
 ---
 
@@ -1338,19 +1330,41 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > **Phase-order note (Amendment M).** PUL-414 … PUL-418 were added to Phase 4 on 2026-09-29 and
 > taken ahead of Phase 3 (still unstarted) at Toki's direction, pending Jaki's confirmation of
 > Amendment M in PUL-414's PR. Their own `Depends` are all merged. The "lowest open ticket" rule is
-> knowingly set aside again, as it was for PUL-401. After PUL-418, the QC chain **PUL-601 → 602 →
-> 603** is what makes "the manager closes it" real, and should come next.
+> knowingly set aside again, as it was for PUL-401.
+>
+> **Order from here (owner's call, 2026-09-30):** PUL-414, 415 and 416 are merged (PRs #50, #51),
+> and PUL-420 went in with #51. Next come **PUL-417 → PUL-418 → PUL-419**, then the QC chain
+> **PUL-601 → 602 → 603**, which is what makes "the manager closes it" real. Phase 3 still waits.
+>
+> **Until PUL-602 lands, no task can close through the app.** PUL-416 removed the `completed`
+> bypass; `approved` is reachable only through `reviewTask` (PUL-602), and `submitTask`
+> (PUL-601) does not exist yet. Every task stays open until then. That is expected, not a bug.
 
 ### PUL-414 — Amendment M + `accounts` table (migration 010a)
 
 **Budget:** M · **Reads:** Amendment M (§10 log), §11.2, §9.6 ¹² · **Depends:** PUL-401, PUL-207
 
-- [ ] 414.1 Amendment M written into §9.6, §11.2 / §11.9, §13.2 / 13.3.1 / 13.4.5 / 13.8, §14.3, this plan, and CLAUDE.md
-- [ ] 414.2 `db/schema/accounts.ts` per §11.2; `projects.client_id` → `projects.account_id`; `accounts_client_idx`, `projects_account_idx`
-- [ ] 414.3 Migration `0009_accounts.sql` backfills one account per existing client and re-points projects, re-runnable
-- [ ] 414.4 `seedMinimal` / `seedFull` gain accounts; `reset()` truncates them FK-safe
+- [x] 414.1 Amendment M written into §9.6, §11.2 / §11.9, §13.2 / 13.3.1 / 13.4.5 / 13.8, §14.3, this plan, and CLAUDE.md
+- [x] 414.2 `db/schema/accounts.ts` per §11.2; `projects.client_id` → `projects.account_id`; `accounts_client_idx`, `projects_account_idx`
+- [x] 414.3 Migration `0009_accounts.sql` backfills one account per existing client and re-points projects, re-runnable
+- [x] 414.4 `seedMinimal` / `seedFull` gain accounts; `reset()` truncates them FK-safe
 
-**Done when:** schema diff vs §11 is empty and every existing suite passes with projects reached through accounts. *(414.2–414.4 change the column every project query reads, so the query and input rework in 415.3–415.4 lands in this same branch if the build would otherwise go red; say so in the PR.)*
+**Done when:** ✅ schema diff vs §11 is empty and every existing suite passes with projects reached through accounts. *(414.2–414.4 change the column every project query reads, so the query and input rework in 415.3–415.4 lands in this same branch if the build would otherwise go red; say so in the PR.)*
+
+> **Merged in PR #50**, together with PUL-415, as the note above allowed (the column swap broke
+> every project query). The Amendment M docs went in first, in PR #49.
+>
+> - **`0009_accounts.sql` came from a two-step generate.** drizzle-kit was run twice, once to add
+>   `accounts` + `projects.account_id` and once to drop `projects.client_id`, and the two outputs
+>   were hand-merged into one file with the backfill between them. That kept the column swap away
+>   from drizzle-kit's interactive rename prompt. `meta/0009_snapshot.json` is the final state and
+>   `drizzle-kit generate` reports no changes against it.
+> - **Idempotent backfill.** Backfilled account ids are deterministic, `acc_` || the client id,
+>   so a re-run cannot duplicate an account. The backfill runs only while `projects.client_id`
+>   still exists (via `EXECUTE`, so the block still parses once the column is gone), and every
+>   other statement is guarded. Running the whole file twice is a no-op.
+> - Each backfilled account copies its client's name, timestamps and archived state, so every
+>   existing project keeps its client.
 
 ---
 
@@ -1358,14 +1372,35 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §13.2.4–13.2.6, §13.3.1–13.3.3, §9.6 ¹² · **Depends:** PUL-414
 
-- [ ] 415.1 `account.read` / `account.create` / `account.update` / `account.archive` in `lib/authz.ts` per §9.6 ¹²
-- [ ] 415.2 `createAccount`, `updateAccount`, `archiveAccount` (`GATE:account_in_use`), `unarchiveAccount` in `features/clients/actions.ts`; `archiveClient` gated on live accounts
-- [ ] 415.3 `createProject` / `updateProject` / `createProjectFromTemplate` take `accountId`; `requireLiveAccount` also checks the client
-- [ ] 415.4 Every project query joins through accounts; `PickableProject` gains `accountId` / `accountName`
-- [ ] 415.5 `{{AccountName}}` title token; seed templates use it where they mean the end business
-- [ ] 415.6 Tests: `features/clients/accounts.test.ts` (CRUD, both gates, audit, denial) → CI manifest; `authorize.test.ts` counts; project and start-project tests on `accountId`
+- [x] 415.1 `account.read` / `account.create` / `account.update` / `account.archive` in `lib/authz.ts` per §9.6 ¹²
+- [x] 415.2 `createAccount`, `updateAccount`, `archiveAccount` (`GATE:account_in_use`), `unarchiveAccount` in `features/clients/actions.ts`; `archiveClient` gated on live accounts
+- [x] 415.3 `createProject` / `updateProject` / `createProjectFromTemplate` take `accountId`; `requireLiveAccount` also checks the client
+- [x] 415.4 Every project query joins through accounts; `PickableProject` gains `accountId` / `accountName`
+- [x] 415.5 `{{AccountName}}` title token; seed templates use it where they mean the end business
+- [x] 415.6 Tests: `features/clients/accounts.test.ts` (CRUD, both gates, audit, denial) → CI manifest; `authorize.test.ts` counts; project and start-project tests on `accountId`
 
-**Done when:** an account can be created, used for a project and archived only when empty, all audited.
+**Done when:** ✅ an account can be created, used for a project and archived only when empty, all audited.
+
+> **Merged in PR #50** (with PUL-414).
+>
+> - **`requireLiveAccount` checks the client too.** It joins `accounts` to `clients` and requires
+>   both to be live. An archived account *or* an account under an archived client is
+>   `NOT_FOUND`, not `GATE`: no picker offers either, so a payload naming one is a stale form or
+>   a hand-made request. It returns the account and client names for the title tokens. Every
+>   project write path (`createProject`, `updateProject` when `accountId` changes,
+>   `createProjectFromTemplate`) calls it on the `tx`.
+> - **`unarchiveAccount` refuses under an archived client** with `GATE:client_archived`
+>   ("Unarchive the client first."), mapped in `lib/error-toast.ts`. An account cannot come back
+>   to life underneath an archived client.
+> - **`{{AccountName}}`** is the fourth title token, beside `{{ClientName}}` (the white-label
+>   partner), `{{ProjectName}}` and `{{MonthName}}`. It is substituted in `projectTaskTitle`
+>   (`features/templates/start-project.ts`). The seed templates use it where the title means
+>   the end business: service page copy, monthly reports, the requirements doc.
+> - **402.1 stays action-only.** No Create Project UI exists: `createProject` takes `accountId`
+>   and is tested, but nothing in the app calls it. The only way to make a project in the UI is
+>   the Start Project wizard (PUL-506). The workspace tree (PUL-417) is where a manual path would
+>   go, if one is wanted.
+> - **Tests:** `features/clients/accounts.test.ts` (17) is in the CI manifest.
 
 ---
 
@@ -1429,8 +1464,48 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 418.3 Workbook: client scope = summary + a sheet per account; account scope = one sheet; filename names the scope
 - [ ] 418.4 Export buttons in the client and account overviews
 - [ ] 418.5 Tests: extend `client-export.test.ts` (scoping, sheet split, refusals)
+- [ ] 418.6 Test: the workbook contains no "EasyGrow" string in cells, sheet names, filename or file properties
 
 **Done when:** a client file and an account file each open in Excel and Google Sheets with no internal field present.
+
+---
+
+### PUL-419 — Onboarding month (Month 0)
+
+**Budget:** M · **Reads:** §14.4.2, §14.4.3, §13.3.2, §13.3.7a, §11 (`template_months`) · **Depends:** PUL-417
+
+- [ ] 419.1 A template may have one optional **Month 0**, labelled **"Onboarding"** (not `Month 0 - …`). It is per template: templates without one behave exactly as today
+- [ ] 419.2 Template detail + Add Month wizard: add / remove the Onboarding month; it sorts before Month 1 and is not part of the 12-month cascade
+- [ ] 419.3 Due-date computation: Month 0 starts on the project start date; its `day` / `after` / `before_deadline` rules resolve against that start like any other month
+- [ ] 419.4 Start Project: Month 0 tasks clone like any other month's (`month = 0`); the project list and filters show it as "Onboarding"
+- [ ] 419.5 Tests: extend `due-rule-compute.test.ts` (Month 0 anchors on the start date) and `cascade.test.ts` (Month 0 never enters the cascade; Months 1–12 unchanged with and without it)
+
+**Done when:** a template with an Onboarding month starts a project whose onboarding tasks fall due from the start date, and a template without one generates exactly the same project as before.
+
+> **Open question before building:** Month 1 also starts on the project start date today
+> (§13.3.2). With an Onboarding month present, does Month 1 still start on `startDate` (the two
+> overlap), or does it move? Get a ruling from Jaki first; 419.3 and 419.5 depend on the answer.
+
+---
+
+### PUL-420 — `/clients` page (clients out of Settings)
+
+**Budget:** M · **Reads:** §14.12a, §9.6 ¹⁰ ¹², §14.1 · **Depends:** PUL-415, PUL-110
+
+- [x] 420.1 `/clients` page (§14.12a) in the nav directly above Projects for SA, HR, PM and TL; employees are 404'd by the route guard
+- [x] 420.2 No new actions: it reuses 13.2's client and account actions. Client controls show only to holders of `client.*` (SA, HR); account controls only to holders of `account.*` (SA, HR, PM, TL)
+- [x] 420.3 The Settings Clients section and `SETTINGS_SECTIONS` in `lib/nav.ts` deleted; `/settings` back to its placeholder until PUL-903
+- [x] 420.4 The Start Project wizard's "no clients" / "no accounts" hints link to `/clients`
+- [x] 420.5 Test: `tests/nav.test.ts` (14 items, Clients above Projects, `/clients` access per role)
+
+**Done when:** ✅ a TL or PM can manage accounts without Settings access, and an employee cannot reach `/clients`.
+
+> **Built inside PUL-416's PR (#51), merged**, and ticketed afterwards. It was a follow-on from
+> PUL-415, not part of PUL-416's scope. *(Moved here from the note under PUL-207.)*
+>
+> Why: Amendment M gave TL / PM account rights (§9.6 ¹²), but Settings is SA + HR only, so
+> managers had no screen for them. PUL-417's workspace tree still adds account management inside
+> Projects; `/clients` stays as the flat management page.
 
 ---
 
@@ -1508,8 +1583,8 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > *different* task list (prev-month review, GBP performance check, a *recurring* weekly rank
 > check…) that predates Amendment D's removal of recurring tasks. The prototype's `tpls` carries
 > the post-Amendment-D shape: explicit `Rank check — week 1…4` rows, 11 tasks in Month 1 and 4
-> in Month 2. **Needs a ruling** (Jaki): §3.3.6 should be amended to describe the seeded
-> template. A note there points here.
+> in Month 2. **Resolved 2026-09-30:** the seed is authoritative, and §3.3.6 now describes the
+> 15-task template.
 >
 > **No test file was added; the manifest stays at 16.** The constraint probes and the seed
 > walk were throwaway checks. The hierarchy's contract test is PUL-502's
@@ -1687,14 +1762,28 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.4.3 · **Depends:** PUL-503
 
-- [ ] 504.1 3-step modal (indicator: Set month & date → Add categories → Add tasks & subtasks); in-memory state; Cancel discards
-- [ ] 504.2 Step 1: start-month ▾ + start-day ▾ (28/29/30/31 dynamic, auto-clamp), info banner, live label, 12-month cascade preview ("Filling out now" / "Auto-created")
-- [ ] 504.3 Step 2: category builder + preset datalist + duplicate refusal
-- [ ] 504.4 Step 3: category tabs with live counts, task cards with inline subtask inputs, quick-add panel, `N tasks · N subtasks · N categories` banner
-- [ ] 504.5 Save: Month 1 full + Months 2–12 empty scaffolds with cascaded clamped dates; Month 1 auto-expands
-- [ ] 504.6 Test: `features/templates/add-month-wizard.test.ts` (12 months, correct dates, Feb clamp) → CI manifest
+- [x] 504.1 3-step modal (indicator: Set month & date → Add categories → Add tasks & subtasks); in-memory state; Cancel discards
+- [x] 504.2 Step 1: start-month ▾ + start-day ▾ (28/29/30/31 dynamic, auto-clamp), info banner, live label, 12-month cascade preview ("Filling out now" / "Auto-created")
+- [x] 504.3 Step 2: category builder + preset datalist + duplicate refusal
+- [x] 504.4 Step 3: category tabs with live counts, task cards with inline subtask inputs, quick-add panel, `N tasks · N subtasks · N categories` banner
+- [x] 504.5 Save: Month 1 full + Months 2–12 empty scaffolds with cascaded clamped dates; Month 1 auto-expands
+- [x] 504.6 Test: `features/templates/add-month-wizard.test.ts` (12 months, correct dates, Feb clamp) → CI manifest — **shipped as `features/templates/cascade.test.ts`**
 
-**Done when:** picking Sep 10 yields `Month 2 — October 10` … `Month 12 — August 10` with zero manual month creation.
+**Done when:** ✅ picking Sep 10 yields `Month 2 - October 10` … `Month 12 - August 10` with zero manual month creation.
+
+> **Merged in PR #45.** Wizard: `features/templates/components/add-month-wizard.tsx`; save action
+> §13.3.7a `createTemplateMonths`; date math in the pure `features/templates/cascade.ts`.
+>
+> - **504.6 shipped as `cascade.test.ts`** (8 tests), not `add-month-wizard.test.ts`: the thing
+>   worth testing is the pure cascade, which has no UI in it, so the file is named for what it
+>   tests. It is in the CI manifest under that name.
+> - **Month names use a hyphen:** `Month 2 - October 10`, a spaced `" - "`, not the em dash this
+>   ticket and §14.4.3 first showed. That is also the name saved on the month row. §14.4.2 /
+>   §14.4.3 were amended to match.
+> - **February is 29 in the cascade.** A template month has no year, so a recurring template must
+>   not lose Feb 29. Clamping to the real February of a given year is PUL-505's job, when a project
+>   gives the months a year. The clamp is always from the start day, never from the previous
+>   month: a Jan 31 cycle goes Feb 29 → Mar 31.
 
 ---
 
@@ -1702,11 +1791,27 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §3.2, §13.6.1 · **Depends:** PUL-501
 
-- [ ] 505.1 Pure fn: (`ruleKind`, `ruleVal`, `ruleRef`, project start, deadline, holidays) → date; Sun–Thu week; weekend/holiday shifts
-- [ ] 505.2 `After task #` resolves the dependency's computed date
-- [ ] 505.3 Test: `features/templates/due-rule-compute.test.ts` — all three kinds + shift edges → CI manifest
+- [x] 505.1 Pure fn: (`ruleKind`, `ruleVal`, `ruleRef`, project start, deadline, holidays) → date; Sun–Thu week; weekend/holiday shifts
+- [x] 505.2 `After task #` resolves the dependency's computed date
+- [x] 505.3 Test: `features/templates/due-rule-compute.test.ts` — all three kinds + shift edges → CI manifest
 
-**Done when:** shifted dates match hand-computed fixtures.
+**Done when:** ✅ shifted dates match hand-computed fixtures.
+
+> **Merged in PR #46.** `computeDueDates` in `features/templates/due-rule-compute.ts`: pure, no
+> `Date`, all day math through `lib/dates`. Test: `due-rule-compute.test.ts` (22).
+>
+> - **`before_deadline` shifts BACKWARD** to the previous working day, never forward, so a task
+>   never lands after the deadline (owner's ruling: a Friday deadline with n = 0 → the Thursday
+>   before). `day` and `after` results shift forward. §13.3.2 records the same rule.
+> - **Month-aware:** Month k starts on `startDate` + (k−1) calendar months, clamped to the real
+>   month of the project's year (Jan 31, 2027 → Feb 28, 2027). The month start itself is never
+>   shifted; only the final due date is. `day` 0 is treated as Day 1.
+> - **Holidays are an empty set until PUL-301.** The function takes a holiday set, but the
+>   `holidays` table is Phase 3 and not built, so `createProjectFromTemplate` passes an empty set
+>   (`TODO(PUL-301)` in the action) and only Fri/Sat are skipped. The shift logic itself is tested
+>   with holiday fixtures.
+> - Failures (`no_deadline`, `bad_ref` + the task id) are returned, not thrown; the action maps
+>   them to the §13.3.2 GATEs.
 
 ---
 
@@ -1714,12 +1819,25 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3.8 · **Depends:** PUL-503, PUL-505, PUL-402
 
-- [ ] 506.1 4 steps per §14.3.8: client+name → dates → role→person mapping (unassigned allowed) → scrollable preview (`#N · title with [Client] · category · role · rule pill · QC badge`)
-- [ ] 506.2 Generate: walk `tplAllTasks`; clone with `_catName`, `_monthNum`, `{{ClientName}}` substitution, subtasks as `{id,title,done:false}`, checklist, computed due
-- [ ] 506.3 Navigate to new project, list tab, month filter cleared; toast with counts
-- [ ] 506.4 Test: `features/templates/start-project.test.ts` (tokens, subtask cloning, cat/month carry-over) → CI manifest
+- [x] 506.1 4 steps per §14.3.8: client+name → dates → role→person mapping (unassigned allowed) → scrollable preview (`#N · title with [Client] · category · role · rule pill · QC badge`)
+- [x] 506.2 Generate: walk `tplAllTasks`; clone with `_catName`, `_monthNum`, `{{ClientName}}` substitution, subtasks as `{id,title,done:false}`, checklist, computed due
+- [x] 506.3 Navigate to new project, list tab, month filter cleared; toast with counts
+- [x] 506.4 Test: `features/templates/start-project.test.ts` (tokens, subtask cloning, cat/month carry-over) → CI manifest
 
-**Done when:** template → live project in under a minute on staging, every task correct.
+**Done when:** template → live project in under a minute on staging, every task correct. **Not yet:** it works end to end locally, but staging is PUL-004, which is parked, so this line stays open.
+
+> **Merged in PR #47.** Action: `createProjectFromTemplate` in `features/projects/actions.ts`
+> (§13.3.2 records its as-built guard order, audit and payloads). Wizard:
+> `features/templates/components/start-project-wizard.tsx`. Test: `start-project.test.ts` (10).
+>
+> - **Step 1 is Client ▾ → Account ▾ → name** since PUL-415 (Amendment M); PUL-417.6 adds
+>   "+ New account" there.
+> - **Four title tokens,** not one: `{{ClientName}}`, `{{AccountName}}`, `{{ProjectName}}`,
+>   `{{MonthName}}`, all through `projectTaskTitle`, which the preview shares with the action so
+>   the two cannot disagree.
+> - **Preview dates use the same `computeDueDates`** with the same empty holiday set as the
+>   action (see PUL-505), so the preview matches what is generated.
+> - After Generate it toasts the counts and opens `/projects?project=…&tab=list`.
 
 ---
 
@@ -2181,14 +2299,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 1 — Foundation                         | PUL-101 … PUL-113   | 13     |
 | 2 — Employees & Clients                | PUL-201 … PUL-207   | 7      |
 | 3 — Attendance                         | PUL-301 … PUL-308   | 8      |
-| 4 — Projects & Tasks                   | PUL-401 … PUL-418   | 18     |
+| 4 — Projects & Tasks                   | PUL-401 … PUL-420   | 20     |
 | 5 — Templates & Start Project          | PUL-501 … PUL-506   | 6      |
 | 6 — QC, Review & EOD                   | PUL-601 … PUL-607   | 7      |
 | 7 — Leave                              | PUL-701 … PUL-707   | 7      |
 | 8 — Dashboards, Notifications & Polish | PUL-801 … PUL-809   | 9      |
 | 9 — Reports, Audit & Settings          | PUL-901 … PUL-903   | 3      |
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
-| **Total**                              |                     | **88** |
+| **Total**                              |                     | **90** |
 
 Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 

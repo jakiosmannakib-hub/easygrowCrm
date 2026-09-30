@@ -22,6 +22,7 @@
 
 import { can, type Role, type User } from '../../lib/authz';
 import { isManagerRole, type TaskStatus } from './display';
+import type { WorkspaceMenuFlags } from './workspace-tree';
 
 /** Everything a capability decision needs. Deliberately the shape `getTaskDetail` already has. */
 export interface CapabilityInput {
@@ -96,5 +97,29 @@ export function taskCapabilities({ viewer, task, project }: CapabilityInput): Ta
     canManageSubtasks: can(actor, 'project_task.subtask_manage', resource) && !childLocked,
     // Rule 4 — no lock term, deliberately.
     canComment: can(actor, 'project_task.comment'),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// The workspace tree's ⋯ menu (PUL-417.2, §14.3 Amendment M)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The §9.6 cells behind the tree's per-node menu, for the /projects page to hand down. Same
+ * rule as `taskCapabilities`: derived from `can()`, computed on the server, display only.
+ * `nodeMenuItems` (workspace-tree.ts) turns these into the items each node shows.
+ */
+export function workspaceMenuFlags(viewer: User): WorkspaceMenuFlags {
+  return {
+    clientUpdate: can(viewer, 'client.update'),
+    clientArchive: can(viewer, 'client.archive'),
+    accountCreate: can(viewer, 'account.create'),
+    accountUpdate: can(viewer, 'account.update'),
+    accountArchive: can(viewer, 'account.archive'),
+    projectCreate: can(viewer, 'project.create'),
+    projectUpdate: can(viewer, 'project.update'),
+    projectArchive: can(viewer, 'project.archive'),
+    // The wizard starts from the template list, so the viewer must be able to open it too.
+    startFromTemplate: can(viewer, 'project.create') && can(viewer, 'template.read'),
   };
 }

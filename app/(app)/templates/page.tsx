@@ -56,6 +56,7 @@ export default async function TemplatesPage() {
       accounts,
       // Only what the dropdown draws: not role / active.
       assignees: users.map((u) => ({ id: u.id, name: u.name })),
+      canCreateAccount: can(viewer, 'account.create'),
       templates: Object.fromEntries(trees.map((tree) => [tree.id, toStartProjectTemplate(tree)])),
     };
   }

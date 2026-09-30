@@ -126,7 +126,10 @@ Visibility: Board/List/Calendar all roles; Review + Workload MGR/HR; **Manager Q
 
 ### 14.3.4 List / Calendar
 
-**List view:** collapsible **Month → Category → Task** tree matching the template hierarchy. Month header: chevron, `Month N — MonthName`, done count, "Current cycle" pill on `p.month`. Category header: chevron, color dot, name, done count. Task row columns: **Task · Owner · Status pill · Due date · Priority · Est · ⋯**.
+**List view:** collapsible **Month → Category → Task → Subtask** tree matching the template hierarchy, drawn like a file tree. Month header: chevron, `Month N — MonthName`, done count, "Current cycle" pill on `p.month`. Category header: chevron, color dot, name, done count. Task row columns: **Task · Assignee · Status pill · Due date · Priority · Est · ⋯** *(was "Owner"; renamed to match the filter bar and Task Detail, which already said Assignee)*.
+- **Chevrons:** every collapsible row (month, category, and a task that has subtasks) starts with a right-pointing chevron that rotates to point down when open. Month and category groups start open; tasks start collapsed. A task with no subtasks gets an empty chevron-sized spacer instead, so titles stay aligned. The whole month/category header row is the toggle; on a task row only the chevron toggles, because the title opens Task Detail.
+- **Guide lines:** a gutter of one 20px step per ancestor level (none on months, one on categories, two on tasks, three on subtasks). Each step carries a 1px vertical line in the border color, centred under that ancestor's chevron. Rows have no vertical padding of their own, so the lines of consecutive rows meet and read as one continuous guide from a parent down through its children.
+- **Subtask rows** (shown when their task is expanded, fetched on expand): done / not-done icon · title, muted (struck through when done), under three guide steps. Clicking one opens the parent task's Task Detail. The task row carries a `2/4` subtask badge beside its title.
 - **Due date cell** renders the full date with year (`Aug 8, 2026`), plus `· Today` or `· Overdue` suffix where relevant. Below the date on the same cell: `2/4 subtasks` small line when the task has subtasks (muted, 11px).
 - Task title click → Task Detail modal. Status pill inline-editable per 14.3.2.
 - `+ Add task in {Category}` link at the bottom of each open category group (MGR).
@@ -204,7 +207,7 @@ Layout:
 - **Breadcrumb hint** (visual only, not clickable): `Agency › {template} › Month › Category › Task`.
 - **Toolbar:** month/task summary count + **+ Add month** button (MGR only).
 - **Month groups** — one collapsible card per month, in order:
-  - **Month header:** chevron · calendar icon · month name (`Month 1 — January 10`) · meta (`N tasks · N categories`) · action buttons **Add category** / **Rename** / `×` delete.
+  - **Month header:** chevron · calendar icon · month name (`Month 1 - January 10`, a spaced hyphen, not an em dash) · meta (`N tasks · N categories`) · action buttons **Add category** / **Rename** / `×` delete.
   - **Column header row** (when open): Task · Role · Due rule · Priority · Est · QC gate · Proof · ⋯ *(PUL-416: `qc_required` is always true, so the QC badge now shows on every task and the "QC Gates" stat equals the task count. Whether to drop both is an open UI call, not yet decided.)*
   - **Category groups** nested inside the month, each collapsible:
     - Category header: color dot · name · task count · **Add task** / **Rename** / `×` delete.
@@ -220,12 +223,12 @@ Triggered by **+ Add month** (MGR only). A single modal with a 3-step indicator:
 **Step 1 — Set month & date:**
 - Info banner explains: *"Pick a start month and day. All 12 months will be created at once so you never have to make them again. You'll only fill out categories and tasks for Month 1 here — Months 2–12 stay empty until you open them."*
 - Pickers: **Start month** ▾ (January–December) · **Start day** ▾ (dynamic — 28/29/30/31 based on the selected month; day auto-clamps down if the current selection is invalid for the new month).
-- Live label preview: `Month N — MonthName Day` (updates without re-rendering the modal).
-- **12-month cascade preview** — a scrollable list showing every month that will be created, each with number badge, computed date (`Month 1 — September 10`, `Month 2 — October 10`, `Month 3 — November 10`, …), and pill (`Filling out now` on Month 1, `Auto-created` on 2–12).
+- Live label preview: `Month N - MonthName Day` (updates without re-rendering the modal). *(As built, PUL-504: template month names use a spaced hyphen `" - "`, not an em dash. This is also the name saved on the month row, e.g. `Month 2 - October 10`.)*
+- **12-month cascade preview** — a scrollable list showing every month that will be created, each with number badge, computed date (`Month 1 - September 10`, `Month 2 - October 10`, `Month 3 - November 10`, …), and pill (`Filling out now` on Month 1, `Auto-created` on 2–12).
 - Next button: `Next: Set up Month 1 →`.
 
 **Step 2 — Add categories:**
-- Header confirms which month is being set up (`Adding categories for Month N — MonthName Day. Only Month 1 gets set up now; Months 2–12 will be created empty.`).
+- Header confirms which month is being set up (`Adding categories for Month N - MonthName Day. Only Month 1 gets set up now; Months 2–12 will be created empty.`).
 - Growing list of added categories, each with color dot + × remove.
 - Add row: text input with `<datalist>` of preset names (**On-page SEO, Content, Link Building, Technical, Reporting, Design**), Enter or **+ Add** to append. Duplicate names refused with a toast.
 - Next button disabled until at least one category exists.
@@ -237,7 +240,7 @@ Triggered by **+ Add month** (MGR only). A single modal with a 3-step indicator:
 - Summary banner: `N tasks · N subtasks · N categories` — live count across all tabs.
 - **Save month** button:
   - Creates **Month 1** with the user's categories, tasks, and subtasks.
-  - Creates **Months 2–12** as empty scaffolds — each with the correctly cascaded date (`Month 2 — October 10`, etc.), no categories, no tasks — ready for later editing.
+  - Creates **Months 2–12** as empty scaffolds — each with the correctly cascaded date (`Month 2 - October 10`, etc.), no categories, no tasks — ready for later editing.
   - Auto-expands Month 1 in the detail view; keeps Months 2–12 collapsed.
   - Toast: *"All 12 months created — Month N has X categor(y/ies), Y task(s), Z subtask(s). Months (N+1)–(N+11) are empty scaffolds."*
 

@@ -4,6 +4,24 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * PUL-422: the app sidebar's icon rail. Matches only on the sidebar itself or inside it
+ * ([data-app-sidebar]), so the phone drawer, which portals elsewhere, never becomes a rail.
+ * On when <html data-sidebar="collapsed"> (a saved choice), or below 1440px unless
+ * data-sidebar="expanded". Pure CSS, so the first paint is right before any JS runs
+ * (components/shell/sidebar-pref.ts). Keep 1440px in step with SIDEBAR_WIDE_QUERY there.
+ */
+@custom-variant rail {
+  :root[data-sidebar="collapsed"] &:where([data-app-sidebar], [data-app-sidebar] *) {
+    @slot;
+  }
+  @media (width < 1440px) {
+    :root:not([data-sidebar="expanded"]) &:where([data-app-sidebar], [data-app-sidebar] *) {
+      @slot;
+    }
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

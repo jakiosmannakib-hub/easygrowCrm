@@ -8,8 +8,8 @@
 // Reuses the existing dialogs where they exist: the /clients client form and archive confirm,
 // the account form and archive confirm, and `ArchiveProjectBody`, the confirm the project header
 // uses too (§14.15 r.6). Project rename and New project had no dialog, so two small bodies live
-// here, calling §13.3.3 `updateProject` and §13.3.1 `createProject`. Start from template opens
-// /templates, where the wizard lives (417.6 prefills its account).
+// here, calling §13.3.3 `updateProject` and §13.3.1 `createProject`. Start from template asks the
+// workspace to open the Start Project wizard with this account prefilled (PUL-417.6).
 //
 // Same conventions as the clients dialogs: a controlled Dialog, the body mounted only while
 // open (MOUNTING IS THE RESET), `router.refresh()` after a write so the tree re-reads. Nothing
@@ -72,12 +72,15 @@ export function WorkspaceNodeMenu({
   target,
   items,
   onProjectCreated,
+  onStartFromTemplate,
 }: {
   target: NodeMenuTarget;
   /** From `nodeMenuItems`; empty renders nothing. */
   items: NodeMenuItem[];
   /** Selects a project just created from this menu. */
   onProjectCreated?: (projectId: string) => void;
+  /** An account's "Start from template": the workspace opens the wizard, prefilled. */
+  onStartFromTemplate?: () => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState<OpenDialog>(null);
@@ -93,7 +96,7 @@ export function WorkspaceNodeMenu({
 
   function onPick(item: NodeMenuItem) {
     if (item === 'start_from_template') {
-      router.push('/templates');
+      onStartFromTemplate?.();
       return;
     }
     setOpen(item);

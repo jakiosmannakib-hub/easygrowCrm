@@ -1,27 +1,24 @@
 // app/(app)/projects/page.tsx (PUL-408, reshaped by PUL-417 into the §14.3 workspace)
 //
 // The Client › Account › Project tree on the left, the selected node on the right. Everything
-// the client needs arrives from here whole: the tree (`getWorkspaceTree`), every dropdown's
-// options, the viewer's ⋯ menu flags (computed with `can()`), and the first task list for the
-// selection the URL names. From then on the selection lives in the URL and the task list is
-// re-read through `loadFilteredTasks`.
+// the client needs arrives from here whole: the tree (`getWorkspaceTree`, which also feeds the
+// client and account overviews), the viewer's ⋯ menu flags (computed with `can()`), the Start
+// Project wizard's templates, and the first task list when the URL names a project. From then on
+// the selection lives in the URL and the task list is re-read through `loadFilteredTasks`.
 
-import {
-  accountsListQuery,
-  activeClientsQuery,
-  clientsListQuery,
-} from '@/features/clients/queries';
+import { accountsListQuery, clientsListQuery } from '@/features/clients/queries';
 import { assignableUsersQuery } from '@/features/employees/queries';
 import { workspaceMenuFlags } from '@/features/projects/capabilities';
 import { ProjectsWorkspace } from '@/features/projects/components/projects-workspace';
 import { isManagerRole } from '@/features/projects/display';
 import {
-  activeProjectsQuery,
   getFilteredTasks,
   getWorkspaceTree,
   projectMonthsQuery,
 } from '@/features/projects/queries';
-import { resolveSelection, selectionFilters } from '@/features/projects/workspace-tree';
+import { resolveSelection } from '@/features/projects/workspace-tree';
+import { templatesListQuery } from '@/features/templates/queries';
+import { toStartProjectTemplate } from '@/features/templates/start-project';
 import { can } from '@/lib/authz';
 import { requireRouteAccess } from '@/lib/route-guard';
 
@@ -75,21 +72,27 @@ export default async function ProjectsPage({
     flags.accountArchive ||
     flags.projectCreate;
 
-  // Independent of each other — fetched concurrently.
-  const [tree, clients, projects, projectMonths, clientRows, accountRows] = await Promise.all([
+  // Independent of each other, so fetched concurrently. Templates only for a viewer who can use
+  // "Start from template" (§14.3.8); the whole set is a handful of trees in five queries, and
+  // reading it here avoids a load action §13 does not define.
+  const [tree, projectMonths, clientRows, accountRows, templates] = await Promise.all([
     getWorkspaceTree(),
-    activeClientsQuery(),
-    activeProjectsQuery(),
     projectMonthsQuery(),
     managesClientsOrAccounts ? clientsListQuery() : Promise.resolve([]),
     managesClientsOrAccounts ? accountsListQuery() : Promise.resolve([]),
+    flags.startFromTemplate ? templatesListQuery() : Promise.resolve([]),
   ]);
 
-  // The same resolution the client makes from `useSearchParams`, so the first task list matches
-  // the selection the page opens on. Month and Assignee start at All ("month filter cleared",
-  // §14.3.8).
+  // The same resolution the client makes from `useSearchParams`. Only a project selection has a
+  // task list; the overviews and the agency tabs draw from the tree or fetch their own. Month
+  // and Assignee start at All ("month filter cleared", §14.3.8).
   const selection = resolveSelection(tree, params);
-  const initialTasks = await getFilteredTasks(selectionFilters(selection));
+  const initialTasks = selection.project
+    ? {
+        projectId: selection.project,
+        rows: await getFilteredTasks({ projectId: selection.project }),
+      }
+    : null;
 
   return (
     <ProjectsWorkspace
@@ -97,16 +100,25 @@ export default async function ProjectsPage({
       flags={flags}
       clientRows={clientRows}
       accountRows={accountRows}
-      clients={clients}
-      projects={projects}
       projectMonths={projectMonths}
       assignees={assignees}
-      // §14.3: the Excel exports are MGR-only. admin_hr is manager-level for people ops but
-      // is not a delivery manager, and `isManagerRole` is the §9.6 delivery set.
-      canExport={isManagerRole(viewer.role)}
+      startProject={
+        flags.startFromTemplate
+          ? {
+              templates: templates.map(toStartProjectTemplate),
+              // `startFromTemplate` implies `project.create`, i.e. a delivery manager, so
+              // `assignees` above is the assignable roster (active, not SA).
+              assignees: assignees.map((u) => ({ id: u.id, name: u.name })),
+              canCreateAccount: flags.accountCreate,
+            }
+          : null
+      }
       // The Board's `+ Add task` (PUL-409). Read off the §9.6 table rather than restated:
       // the same `can()` call `loadProjectHeader` makes for the header's `+ New Task`.
       canCreateTask={can(viewer, 'project_task.create')}
+      // §14.3: the Excel exports are MGR-only. admin_hr is manager-level for people ops but is
+      // not a delivery manager, and `isManagerRole` is the §9.6 delivery set (as in PUL-413).
+      canExport={isManagerRole(viewer.role)}
       // The List view's inline status control needs to know who is looking (§14.3.2). Only
       // `{ id, role }` crosses to the client, not the whole session user.
       viewer={{ id: viewer.id, role: viewer.role }}

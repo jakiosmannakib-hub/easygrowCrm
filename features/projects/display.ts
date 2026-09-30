@@ -879,3 +879,19 @@ export function parseProjectTab(raw: string | null | undefined, role: Role): Pro
   const tab = PROJECT_TABS.find((t) => t.key === raw);
   return tab && tab.visibleTo.includes(role) ? tab.key : 'board';
 }
+
+/** The tabs shown with nothing selected (§14.3 Amendment M): agency-wide Review and Workload. */
+export type AgencyTabKey = Extract<ProjectTabKey, 'review' | 'workload'>;
+
+/**
+ * `?tab=` with nothing selected → `'review'` or `'workload'`, defaulting to Review. `null` when
+ * the role sees neither (an employee), so the page shows its empty state instead.
+ */
+export function parseAgencyTab(raw: string | null | undefined, role: Role): AgencyTabKey | null {
+  const visible = PROJECT_TABS.filter(
+    (t): t is Extract<(typeof PROJECT_TABS)[number], { key: AgencyTabKey }> =>
+      (t.key === 'review' || t.key === 'workload') && t.visibleTo.includes(role),
+  );
+  if (visible.length === 0) return null;
+  return visible.find((t) => t.key === raw)?.key ?? visible[0].key;
+}

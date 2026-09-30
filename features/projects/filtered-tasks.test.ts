@@ -143,21 +143,6 @@ describe('getFilteredTasks — the four filters', () => {
     expect(await idsFor({ clientId: seed.client.id })).not.toContain('pt_other');
   });
 
-  it('filters by account (the workspace tree selection, PUL-417)', async () => {
-    // seedFull puts each project under its own account of the same client, so the client
-    // filter returns all six and the account filter must split them.
-    expect(await idsFor({ accountId: seed.secondAccount.id })).toEqual([
-      'pt_seed_4',
-      'pt_seed_5',
-      'pt_seed_6',
-    ]);
-    expect(await idsFor({ accountId: seed.account.id })).toEqual([
-      'pt_seed_1',
-      'pt_seed_2',
-      'pt_seed_3',
-    ]);
-  });
-
   it('filters by project', async () => {
     expect(await idsFor({ projectId: seed.secondProject.id })).toEqual([
       'pt_seed_4',

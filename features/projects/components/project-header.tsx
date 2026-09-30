@@ -1,6 +1,7 @@
 // features/projects/components/project-header.tsx — PUL-408 Stage 2, §14.3
 //
-// The project header: breadcrumb `📁 Client › Project · type · Month N`, progress `X/Y · N%`
+// The project header: breadcrumb `📁 Client › 🏢 Account › Project · type · Month N` (Amendment
+// M), progress `X/Y · N%`
 // with a bar, the §3.1.3 health chip, "+ New Task" (MGR) and the ⋯ overflow carrying Archive
 // (MGR).
 //
@@ -122,6 +123,12 @@ export function ProjectHeader({
         <p className="text-sm font-medium">
           <span aria-hidden="true">📁 </span>
           <span className="text-muted-foreground">{header.client.name}</span>
+          <span className="text-muted-foreground" aria-hidden="true">
+            {' › '}
+          </span>
+          {/* Amendment M: the account sits between client and project. */}
+          <span aria-hidden="true">🏢 </span>
+          <span className="text-muted-foreground">{header.account.name}</span>
           <span className="text-muted-foreground" aria-hidden="true">
             {' › '}
           </span>

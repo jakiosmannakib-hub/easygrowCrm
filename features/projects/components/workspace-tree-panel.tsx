@@ -87,6 +87,7 @@ export function WorkspaceTreePanel({
   tree,
   selection,
   onSelect,
+  onStartFromTemplate,
   flags,
   clientRows,
   accountRows,
@@ -94,6 +95,8 @@ export function WorkspaceTreePanel({
   tree: WorkspaceTree;
   selection: WorkspaceSelection;
   onSelect: (selection: WorkspaceSelection) => void;
+  /** An account's "Start from template": open the wizard with this client and account. */
+  onStartFromTemplate: (prefill: { clientId: string; accountId: string }) => void;
   flags: WorkspaceMenuFlags;
   /** Full rows for the reused client dialogs, by id. Empty when the viewer manages none. */
   clientRows: ReadonlyMap<string, ClientRow>;
@@ -225,6 +228,12 @@ export function WorkspaceTreePanel({
                               <WorkspaceNodeMenu
                                 target={{ kind: 'account', client: clientRow, account: accountRow }}
                                 items={nodeMenuItems('account', account.archived, flags)}
+                                onStartFromTemplate={() =>
+                                  onStartFromTemplate({
+                                    clientId: client.id,
+                                    accountId: account.id,
+                                  })
+                                }
                                 onProjectCreated={(projectId) =>
                                   onSelect({
                                     client: client.id,

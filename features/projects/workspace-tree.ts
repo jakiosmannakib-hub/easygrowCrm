@@ -5,10 +5,14 @@
 // component can import `filterTree` and `resolveSelection` directly; `getWorkspaceTree` in
 // queries.ts is the only producer of a tree and calls `buildWorkspaceTree` to shape its rows.
 
+import { progressPct, projectHealth, type ProjectHealth } from './display';
+
 /** A project leaf. The counts are over non-deleted tasks only. */
 export interface WorkspaceProjectNode {
   id: string;
   name: string;
+  /** `YYYY-MM-DD`, an Asia/Dhaka day: anchors the project pane's Month labels. */
+  startDate: string;
   /** `status = 'archived'`. Only ever true when the tree was read with `includeArchived`. */
   archived: boolean;
   /** Tasks not yet closed: every status except approved / completed / cancelled (§3.1.3). */
@@ -21,6 +25,8 @@ export interface WorkspaceProjectNode {
   doneTaskCount: number;
   /** Every task except cancelled ones, the §3.1 progress denominator. */
   totalTaskCount: number;
+  /** Open tasks with `due_date` before today in Asia/Dhaka (§3.1.3): overviews and health. */
+  overdueTaskCount: number;
 }
 
 export interface WorkspaceAccountNode {
@@ -59,11 +65,13 @@ export interface WorkspaceRow {
   accountArchived: boolean | null;
   projectId: string | null;
   projectName: string | null;
+  projectStartDate: string | null;
   projectArchived: boolean | null;
   openTaskCount: number | null;
   awaitingReviewCount: number | null;
   doneTaskCount: number | null;
   totalTaskCount: number | null;
+  overdueTaskCount: number | null;
 }
 
 /**
@@ -109,12 +117,14 @@ export function buildWorkspaceTree(rows: readonly WorkspaceRow[]): WorkspaceTree
     account.projects.push({
       id: row.projectId,
       name: row.projectName ?? '',
+      startDate: row.projectStartDate ?? '',
       archived: row.projectArchived ?? false,
       openTaskCount: Number(row.openTaskCount ?? 0),
       awaitingReviewCount,
       awaitingReview: awaitingReviewCount > 0,
       doneTaskCount: Number(row.doneTaskCount ?? 0),
       totalTaskCount: Number(row.totalTaskCount ?? 0),
+      overdueTaskCount: Number(row.overdueTaskCount ?? 0),
     });
   }
 
@@ -222,22 +232,6 @@ export function selectionHref(selection: WorkspaceSelection, tab: string): strin
   return query === '' ? '/projects' : `/projects?${query}`;
 }
 
-/**
- * The task-list scope for a selection: the deepest selected level only, since the tree has
- * already made its ancestors consistent. Structurally a subset of `TaskFilters`, which this
- * file cannot import (queries.ts is server-only).
- */
-export function selectionFilters(selection: WorkspaceSelection): {
-  clientId?: string;
-  accountId?: string;
-  projectId?: string;
-} {
-  if (selection.project) return { projectId: selection.project };
-  if (selection.account) return { accountId: selection.account };
-  if (selection.client) return { clientId: selection.client };
-  return {};
-}
-
 // ── The per-node ⋯ menu (§14.3) ─────────────────────────────────────────────────────────
 
 /**
@@ -315,4 +309,66 @@ export function parseCollapsed(raw: string | null): ReadonlySet<string> {
 /** The inverse of `parseCollapsed`. Sorted, so equal sets store identical strings. */
 export function serializeCollapsed(collapsed: ReadonlySet<string>): string {
   return JSON.stringify([...collapsed].sort());
+}
+
+// ── The overviews (417.3) ───────────────────────────────────────────────────────────────
+
+/** The nodes a selection points at, or undefined where nothing is selected at that level. */
+export function selectedNodes(
+  tree: WorkspaceTree,
+  selection: WorkspaceSelection,
+): {
+  client?: WorkspaceClientNode;
+  account?: WorkspaceAccountNode;
+  project?: WorkspaceProjectNode;
+} {
+  const client = tree.find((c) => c.id === selection.client);
+  const account = client?.accounts.find((a) => a.id === selection.account);
+  const project = account?.projects.find((p) => p.id === selection.project);
+  return { client, account, project };
+}
+
+/** One account card's numbers on the client overview (§14.3). */
+export interface WorkspaceSummary {
+  projectCount: number;
+  done: number;
+  total: number;
+  /** `progressPct(done, total)`: the §3.1 rounding, 0 for nothing countable. */
+  pct: number;
+  open: number;
+  awaitingReview: number;
+  overdue: number;
+}
+
+/**
+ * Sums a set of projects. Progress is pooled over TASKS (all done over all countable), not an
+ * average of per-project percentages, so a one-task side project cannot swing the card.
+ */
+export function summarizeProjects(projects: readonly WorkspaceProjectNode[]): WorkspaceSummary {
+  let done = 0;
+  let total = 0;
+  let open = 0;
+  let awaitingReview = 0;
+  let overdue = 0;
+  for (const p of projects) {
+    done += p.doneTaskCount;
+    total += p.totalTaskCount;
+    open += p.openTaskCount;
+    awaitingReview += p.awaitingReviewCount;
+    overdue += p.overdueTaskCount;
+  }
+  return {
+    projectCount: projects.length,
+    done,
+    total,
+    pct: progressPct(done, total),
+    open,
+    awaitingReview,
+    overdue,
+  };
+}
+
+/** The §3.1.3 health chip for a tree project: the same thresholds as the project header. */
+export function projectNodeHealth(project: WorkspaceProjectNode): ProjectHealth {
+  return projectHealth(project.overdueTaskCount, project.awaitingReviewCount);
 }

@@ -118,6 +118,7 @@ describe('getWorkspaceTree', () => {
               {
                 id: seed.project.id,
                 name: 'Seed Retainer',
+                startDate: '2026-01-01',
                 archived: false,
                 // Seed tasks: planned, in_progress, submitted.
                 openTaskCount: 3,
@@ -125,6 +126,8 @@ describe('getWorkspaceTree', () => {
                 awaitingReview: true,
                 doneTaskCount: 0,
                 totalTaskCount: 3,
+                // The seed tasks carry no due date, so none can be overdue.
+                overdueTaskCount: 0,
               },
             ],
           },
@@ -152,6 +155,32 @@ describe('getWorkspaceTree', () => {
       `${seed.client.id}/${seed.account.id}/${seed.project.id}`,
       'c_zeta',
     ]);
+  });
+
+  it('counts overdue over OPEN tasks due before today in Dhaka (§3.1.3)', async () => {
+    // Frozen clock: 2026-09-15 in Asia/Dhaka.
+    await addProject('p_due', seed.account.id, 'Due dates');
+    await addTasks('p_due', [
+      'planned',
+      'in_progress',
+      'planned',
+      'approved',
+      'cancelled',
+      'planned',
+    ]);
+    const due = (i: number, dueDate: string | null) =>
+      db
+        .update(projectTasks)
+        .set({ dueDate })
+        .where(eq(projectTasks.id, `p_due_t${i}`));
+    await due(0, '2026-09-14'); // yesterday, open: overdue
+    await due(1, '2026-01-01'); // long past, open: overdue
+    await due(2, '2026-09-15'); // today: not overdue (strictly before)
+    await due(3, '2026-01-01'); // past but approved: closed, not overdue
+    await due(4, '2026-01-01'); // past but cancelled: not overdue
+    await due(5, null); // no due date: never overdue
+
+    expect(findProject(await getWorkspaceTree(), 'p_due')?.overdueTaskCount).toBe(2);
   });
 
   it('counts open, awaiting review, done and total per project, ignoring deleted tasks', async () => {

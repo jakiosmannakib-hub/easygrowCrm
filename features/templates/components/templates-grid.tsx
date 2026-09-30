@@ -27,6 +27,8 @@ export interface StartProjectData {
   /** Live accounts of live clients (Amendment M); step 1 filters them by the picked client. */
   accounts: AccountOption[];
   assignees: PickOption[];
+  /** `can(viewer, 'account.create')`: the wizard's "+ New account" (PUL-417.6). */
+  canCreateAccount: boolean;
   /** Per template id. */
   templates: Record<string, StartProjectTemplate>;
 }
@@ -107,6 +109,7 @@ function TemplateCard({
             clients={startProject.clients}
             accounts={startProject.accounts}
             assignees={startProject.assignees}
+            canCreateAccount={startProject.canCreateAccount}
           />
         ) : null}
       </CardFooter>

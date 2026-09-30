@@ -7,16 +7,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Role } from '../../lib/authz';
 import { workspaceMenuFlags } from './capabilities';
-import { parseProjectTab } from './display';
+import { parseAgencyTab, parseProjectTab } from './display';
 import {
   buildWorkspaceTree,
   filterTree,
   nodeMenuItems,
   parseCollapsed,
+  projectNodeHealth,
   resolveSelection,
-  selectionFilters,
+  selectedNodes,
   selectionHref,
   serializeCollapsed,
+  summarizeProjects,
   type WorkspaceMenuFlags,
   type WorkspaceProjectNode,
   type WorkspaceRow,
@@ -33,6 +35,8 @@ function project(id: string, name: string): WorkspaceProjectNode {
     awaitingReview: false,
     doneTaskCount: 0,
     totalTaskCount: 0,
+    overdueTaskCount: 0,
+    startDate: '2026-01-01',
   };
 }
 
@@ -103,11 +107,13 @@ describe('buildWorkspaceTree', () => {
     accountArchived: null,
     projectId: null,
     projectName: null,
+    projectStartDate: null,
     projectArchived: null,
     openTaskCount: null,
     awaitingReviewCount: null,
     doneTaskCount: null,
     totalTaskCount: null,
+    overdueTaskCount: null,
   };
 
   it('nests rows by client and account, keeping first-seen order', () => {
@@ -184,6 +190,8 @@ describe('buildWorkspaceTree', () => {
         awaitingReviewCount: 2,
         doneTaskCount: 3,
         totalTaskCount: 7,
+        overdueTaskCount: 1,
+        projectStartDate: '2026-03-15',
       },
     ])[0].accounts[0].projects;
 
@@ -192,6 +200,7 @@ describe('buildWorkspaceTree', () => {
       awaitingReviewCount: 0,
       awaitingReview: false,
       totalTaskCount: 0,
+      overdueTaskCount: 0,
     });
     expect(busy).toMatchObject({
       openTaskCount: 4,
@@ -199,6 +208,78 @@ describe('buildWorkspaceTree', () => {
       awaitingReview: true,
       doneTaskCount: 3,
       totalTaskCount: 7,
+      overdueTaskCount: 1,
+      startDate: '2026-03-15',
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('the overviews (417.3)', () => {
+  const counted = (
+    id: string,
+    c: { done: number; total: number; open: number; review: number; overdue: number },
+  ): WorkspaceProjectNode => ({
+    ...project(id, id),
+    doneTaskCount: c.done,
+    totalTaskCount: c.total,
+    openTaskCount: c.open,
+    awaitingReviewCount: c.review,
+    awaitingReview: c.review > 0,
+    overdueTaskCount: c.overdue,
+  });
+
+  it('pools an account card over tasks, not an average of project percentages', () => {
+    // 9/10 and 0/1: averaging the percentages would say 45%; pooled it is 9/11 = 82%.
+    expect(
+      summarizeProjects([
+        counted('p1', { done: 9, total: 10, open: 1, review: 1, overdue: 0 }),
+        counted('p2', { done: 0, total: 1, open: 1, review: 0, overdue: 1 }),
+      ]),
+    ).toEqual({
+      projectCount: 2,
+      done: 9,
+      total: 11,
+      pct: 82,
+      open: 2,
+      awaitingReview: 1,
+      overdue: 1,
+    });
+  });
+
+  it('summarizes an account with no projects as zeros, not NaN', () => {
+    expect(summarizeProjects([])).toEqual({
+      projectCount: 0,
+      done: 0,
+      total: 0,
+      pct: 0,
+      open: 0,
+      awaitingReview: 0,
+      overdue: 0,
+    });
+  });
+
+  it('gives a tree project the same §3.1.3 health as the header', () => {
+    const health = (overdue: number, review: number) =>
+      projectNodeHealth(counted('p', { done: 0, total: 5, open: 5, review, overdue }));
+    expect(health(0, 0)).toBe('on_track');
+    expect(health(1, 0)).toBe('at_risk');
+    expect(health(0, 3)).toBe('at_risk');
+    expect(health(2, 0)).toBe('delayed');
+    expect(health(4, 9)).toBe('critical');
+  });
+
+  it('finds the selected nodes, and nothing below the deepest selected level', () => {
+    expect(selectedNodes(TREE, { client: 'c_acme', account: 'a_bright', project: null })).toEqual({
+      client: TREE[0],
+      account: TREE[0].accounts[1],
+      project: undefined,
+    });
+    expect(selectedNodes(TREE, { client: null, account: null, project: null })).toEqual({
+      client: undefined,
+      account: undefined,
+      project: undefined,
     });
   });
 });
@@ -342,7 +423,7 @@ describe('resolveSelection', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
-describe('selectionHref and selectionFilters (the URL is the selection, §14.3)', () => {
+describe('selectionHref (the URL is the selection, §14.3)', () => {
   const sel = { client: 'c_acme', account: 'a_joe', project: 'p_geo' };
 
   it('writes every selected level, and the tab only when it is not the Board default', () => {
@@ -367,15 +448,6 @@ describe('selectionHref and selectionFilters (the URL is the selection, §14.3)'
     });
     expect(back).toEqual(sel);
   });
-
-  it('scopes the task list to the deepest selected level only', () => {
-    expect(selectionFilters(sel)).toEqual({ projectId: 'p_geo' });
-    expect(selectionFilters({ ...sel, project: null })).toEqual({ accountId: 'a_joe' });
-    expect(selectionFilters({ client: 'c_acme', account: null, project: null })).toEqual({
-      clientId: 'c_acme',
-    });
-    expect(selectionFilters({ client: null, account: null, project: null })).toEqual({});
-  });
 });
 
 describe('parseProjectTab', () => {
@@ -387,6 +459,20 @@ describe('parseProjectTab', () => {
     expect(parseProjectTab('review', 'employee')).toBe('board');
     expect(parseProjectTab('nonsense', 'super_admin')).toBe('board');
     expect(parseProjectTab(null, 'super_admin')).toBe('board');
+  });
+});
+
+describe('parseAgencyTab (nothing selected, §14.3 Amendment M)', () => {
+  it('defaults to Review and accepts Workload for MGR and HR', () => {
+    expect(parseAgencyTab(null, 'team_leader')).toBe('review');
+    expect(parseAgencyTab('workload', 'admin_hr')).toBe('workload');
+    // A project-only tab carried over from a project selection falls back to Review.
+    expect(parseAgencyTab('board', 'super_admin')).toBe('review');
+  });
+
+  it('is null for an employee, who sees neither agency tab', () => {
+    expect(parseAgencyTab('review', 'employee')).toBeNull();
+    expect(parseAgencyTab(null, 'employee')).toBeNull();
   });
 });
 

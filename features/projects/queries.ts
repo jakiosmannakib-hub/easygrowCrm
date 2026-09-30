@@ -458,8 +458,6 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
  */
 export interface TaskFilters {
   clientId?: string;
-  /** The workspace tree's account selection (PUL-417). */
-  accountId?: string;
   projectId?: string;
   /** A retainer month number, or `'all'`. Tasks with `month IS NULL` appear only under `'all'`. */
   month?: number | 'all';
@@ -587,7 +585,6 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
   // A project reaches its client through its account (Amendment M), so the client filter reads
   // `accounts.client_id`; the join is below.
   if (filters.clientId) where.push(eq(accounts.clientId, filters.clientId));
-  if (filters.accountId) where.push(eq(projects.accountId, filters.accountId));
   if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
 
   // `typeof === 'number'` rather than a truthiness check: month 0 is not a valid retainer month
@@ -726,6 +723,8 @@ export interface ProjectHeader {
   type: string;
   status: (typeof projects.$inferSelect)['status'];
   client: { name: string };
+  /** The breadcrumb's middle crumb (Amendment M: Client › Account › Project). */
+  account: { name: string };
   /** §11.2's derived `currentMonth` — never stored, never incremented by anyone. */
   currentMonth: number;
   /** §3.1 / §14.3's `X/Y · N%`. */
@@ -767,6 +766,7 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
       status: projects.status,
       startDate: projects.startDate,
       clientName: clients.name,
+      accountName: accounts.name,
     })
     .from(projects)
     .innerJoin(accounts, eq(accounts.id, projects.accountId))
@@ -808,6 +808,7 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
     type: head.type,
     status: head.status,
     client: { name: head.clientName },
+    account: { name: head.accountName },
     currentMonth: retainerMonth(head.startDate, today),
     progress: { done, total, pct: progressPct(done, total) },
     health: projectHealth(Number(counts?.overdue ?? 0), Number(counts?.waitingReview ?? 0)),
@@ -1229,6 +1230,8 @@ export async function getWorkspaceTree(options: WorkspaceTreeOptions = {}): Prom
   }
 
   const includeArchived = options.includeArchived === true;
+  // From the clock port (via dhakaToday), so a frozen test clock moves "overdue" too.
+  const today = dhakaToday();
 
   const counts = db
     .select({
@@ -1248,6 +1251,13 @@ export async function getWorkspaceTree(options: WorkspaceTreeOptions = {}): Prom
       total: sql<number>`count(*) filter (where ${projectTasks.status} <> 'cancelled')::int`.as(
         'total_count',
       ),
+      // §3.1.3, as in getProjectHeader: OPEN tasks past their due date, against the Dhaka clock.
+      // Feeds the overviews' overdue counts and each project's health chip.
+      overdue: sql<number>`count(*) filter (
+        where ${projectTasks.status} not in ('approved','completed','cancelled')
+          and ${projectTasks.dueDate} is not null
+          and ${projectTasks.dueDate} < ${today}
+      )::int`.as('overdue_count'),
     })
     .from(projectTasks)
     .where(isNull(projectTasks.deletedAt))
@@ -1267,6 +1277,7 @@ export async function getWorkspaceTree(options: WorkspaceTreeOptions = {}): Prom
       >`case when ${accounts.id} is null then null else ${accounts.deletedAt} is not null end`,
       projectId: projects.id,
       projectName: projects.name,
+      projectStartDate: projects.startDate,
       projectArchived: sql<
         boolean | null
       >`case when ${projects.id} is null then null else ${projects.status} = 'archived' end`,
@@ -1274,6 +1285,7 @@ export async function getWorkspaceTree(options: WorkspaceTreeOptions = {}): Prom
       awaitingReviewCount: counts.submitted,
       doneTaskCount: counts.done,
       totalTaskCount: counts.total,
+      overdueTaskCount: counts.overdue,
     })
     .from(clients)
     .leftJoin(

@@ -302,7 +302,7 @@ function AddClientDialog() {
   );
 }
 
-function ArchiveConfirmBody({ client, onDone }: { client: ClientRow; onDone: () => void }) {
+export function ArchiveConfirmBody({ client, onDone }: { client: ClientRow; onDone: () => void }) {
   const router = useRouter();
   const [archiving, setArchiving] = useState(false);
 

@@ -458,6 +458,8 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
  */
 export interface TaskFilters {
   clientId?: string;
+  /** The workspace tree's account selection (PUL-417). */
+  accountId?: string;
   projectId?: string;
   /** A retainer month number, or `'all'`. Tasks with `month IS NULL` appear only under `'all'`. */
   month?: number | 'all';
@@ -585,6 +587,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
   // A project reaches its client through its account (Amendment M), so the client filter reads
   // `accounts.client_id`; the join is below.
   if (filters.clientId) where.push(eq(accounts.clientId, filters.clientId));
+  if (filters.accountId) where.push(eq(projects.accountId, filters.accountId));
   if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
 
   // `typeof === 'number'` rather than a truthiness check: month 0 is not a valid retainer month

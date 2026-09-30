@@ -346,6 +346,7 @@ export type LoadTaskDetailInput = z.infer<typeof LoadTaskDetailInput>;
  */
 export const LoadFilteredTasksInput = z.object({
   clientId: z.string().min(1).optional(),
+  accountId: z.string().min(1).optional(),
   projectId: z.string().min(1).optional(),
   month: z.union([z.number().int().positive(), z.literal('all')]).optional(),
   assigneeId: z.union([z.string().min(1), z.literal('unassigned'), z.literal('all')]).optional(),

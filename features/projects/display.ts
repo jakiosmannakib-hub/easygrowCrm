@@ -835,3 +835,47 @@ export function bucketTasksByDay<T extends { dueDate: string | null }>(
   }
   return buckets;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// §14.3 tabs (moved here from the filter bar in PUL-417 so the page can validate `?tab=`)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+const ALL_TAB_ROLES: readonly Role[] = [
+  'super_admin',
+  'team_leader',
+  'project_manager',
+  'admin_hr',
+  'employee',
+];
+/** §14.3: "Review + Workload MGR/HR". */
+const MGR_HR_TAB_ROLES: readonly Role[] = [
+  'super_admin',
+  'team_leader',
+  'project_manager',
+  'admin_hr',
+];
+
+/**
+ * §14.3's tab strip, each with an explicit role list (the `lib/nav.ts` convention rather than a
+ * live `can()`, which would pull lib/authz into a client bundle). Hiding a tab is cosmetic
+ * (§9.5 r.2): `loadReviewQueue` and `loadWorkload` refuse on the server. Manager QA (SA + TL)
+ * is PUL-604 and is deliberately not offered yet.
+ */
+export const PROJECT_TABS = [
+  { key: 'board', label: 'Board', visibleTo: ALL_TAB_ROLES },
+  { key: 'list', label: 'List', visibleTo: ALL_TAB_ROLES },
+  { key: 'calendar', label: 'Calendar', visibleTo: ALL_TAB_ROLES },
+  { key: 'review', label: 'Review', visibleTo: MGR_HR_TAB_ROLES },
+  { key: 'workload', label: 'Workload', visibleTo: MGR_HR_TAB_ROLES },
+] as const;
+
+export type ProjectTabKey = (typeof PROJECT_TABS)[number]['key'];
+
+/**
+ * `?tab=` → a tab this role can see, else `'board'`. So an employee's link to `?tab=review`
+ * opens the Board instead of a tab strip with nothing selected.
+ */
+export function parseProjectTab(raw: string | null | undefined, role: Role): ProjectTabKey {
+  const tab = PROJECT_TABS.find((t) => t.key === raw);
+  return tab && tab.visibleTo.includes(role) ? tab.key : 'board';
+}

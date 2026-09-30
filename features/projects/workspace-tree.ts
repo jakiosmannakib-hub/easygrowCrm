@@ -209,3 +209,110 @@ export function resolveSelection(
 
   return { client: null, account: null, project: null };
 }
+
+/** The URL for a selection (§14.3: `/projects?client=…&account=…&project=…&tab=…`). */
+export function selectionHref(selection: WorkspaceSelection, tab: string): string {
+  const params = new URLSearchParams();
+  if (selection.client) params.set('client', selection.client);
+  if (selection.account) params.set('account', selection.account);
+  if (selection.project) params.set('project', selection.project);
+  // Board is the default, so a bare selection URL stays short.
+  if (tab !== 'board') params.set('tab', tab);
+  const query = params.toString();
+  return query === '' ? '/projects' : `/projects?${query}`;
+}
+
+/**
+ * The task-list scope for a selection: the deepest selected level only, since the tree has
+ * already made its ancestors consistent. Structurally a subset of `TaskFilters`, which this
+ * file cannot import (queries.ts is server-only).
+ */
+export function selectionFilters(selection: WorkspaceSelection): {
+  clientId?: string;
+  accountId?: string;
+  projectId?: string;
+} {
+  if (selection.project) return { projectId: selection.project };
+  if (selection.account) return { accountId: selection.account };
+  if (selection.client) return { clientId: selection.client };
+  return {};
+}
+
+// ── The per-node ⋯ menu (§14.3) ─────────────────────────────────────────────────────────
+
+/**
+ * The viewer's §9.6 cells behind the ⋯ menu, computed with `can()` on the server page. Display
+ * only: every action re-authorizes (§9.5 r.2).
+ */
+export interface WorkspaceMenuFlags {
+  clientUpdate: boolean;
+  clientArchive: boolean;
+  accountCreate: boolean;
+  accountUpdate: boolean;
+  accountArchive: boolean;
+  projectCreate: boolean;
+  projectUpdate: boolean;
+  projectArchive: boolean;
+  /** `project.create` AND `template.read`: the template list is where the wizard starts. */
+  startFromTemplate: boolean;
+}
+
+export type NodeMenuItem =
+  'new_account' | 'new_project' | 'start_from_template' | 'rename' | 'archive';
+
+export type WorkspaceNodeKind = 'client' | 'account' | 'project';
+
+/**
+ * Which §14.3 menu items a node offers this viewer, in display order.
+ *
+ * Each level adds the level below it: a client offers New account, an account offers New
+ * project and Start from template, a project adds nothing. An archived node offers only Rename,
+ * because creating under it or archiving it again is refused by the actions (`GATE:*_archived`).
+ * An empty list means the ⋯ button is not rendered at all.
+ */
+export function nodeMenuItems(
+  kind: WorkspaceNodeKind,
+  archived: boolean,
+  flags: WorkspaceMenuFlags,
+): NodeMenuItem[] {
+  const items: NodeMenuItem[] = [];
+
+  if (kind === 'client') {
+    if (flags.accountCreate && !archived) items.push('new_account');
+    if (flags.clientUpdate) items.push('rename');
+    if (flags.clientArchive && !archived) items.push('archive');
+  } else if (kind === 'account') {
+    if (flags.projectCreate && !archived) items.push('new_project');
+    if (flags.startFromTemplate && !archived) items.push('start_from_template');
+    if (flags.accountUpdate) items.push('rename');
+    if (flags.accountArchive && !archived) items.push('archive');
+  } else {
+    if (flags.projectUpdate) items.push('rename');
+    if (flags.projectArchive && !archived) items.push('archive');
+  }
+
+  return items;
+}
+
+// ── Collapse state (a per-viewer convenience, §14.3) ────────────────────────────────────
+
+/**
+ * Stored collapse state → the set of collapsed node ids. Anything unreadable (missing, not
+ * JSON, not an array of strings) is an empty set, i.e. everything expanded: browser storage is
+ * never authoritative and the tree must render without it.
+ */
+export function parseCollapsed(raw: string | null): ReadonlySet<string> {
+  if (!raw) return new Set();
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return new Set();
+    return new Set(value.filter((id): id is string => typeof id === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+/** The inverse of `parseCollapsed`. Sorted, so equal sets store identical strings. */
+export function serializeCollapsed(collapsed: ReadonlySet<string>): string {
+  return JSON.stringify([...collapsed].sort());
+}

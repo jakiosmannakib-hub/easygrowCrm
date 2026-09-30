@@ -1,13 +1,23 @@
 // features/projects/workspace-tree.test.ts (PUL-417.7, helpers half)
 //
-// The pure helpers behind the §14.3 workspace tree: row grouping, the in-memory search, and the
-// URL selection. No database. The query itself is exercised in get-workspace-tree.test.ts.
+// The pure helpers behind the §14.3 workspace tree: row grouping, the in-memory search, the URL
+// selection, the per-node ⋯ menu gating and the stored collapse state. No database. The query
+// itself is exercised in get-workspace-tree.test.ts.
 
 import { describe, expect, it } from 'vitest';
+import type { Role } from '../../lib/authz';
+import { workspaceMenuFlags } from './capabilities';
+import { parseProjectTab } from './display';
 import {
   buildWorkspaceTree,
   filterTree,
+  nodeMenuItems,
+  parseCollapsed,
   resolveSelection,
+  selectionFilters,
+  selectionHref,
+  serializeCollapsed,
+  type WorkspaceMenuFlags,
   type WorkspaceProjectNode,
   type WorkspaceRow,
   type WorkspaceTree,
@@ -327,5 +337,140 @@ describe('resolveSelection', () => {
     // The selection resolves against whatever tree it is given, e.g. the live-only tree
     // after the project was archived.
     expect(resolveSelection(filterTree(TREE, 'harbor'), { project: 'p_geo' })).toEqual(none);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('selectionHref and selectionFilters (the URL is the selection, §14.3)', () => {
+  const sel = { client: 'c_acme', account: 'a_joe', project: 'p_geo' };
+
+  it('writes every selected level, and the tab only when it is not the Board default', () => {
+    expect(selectionHref(sel, 'board')).toBe('/projects?client=c_acme&account=a_joe&project=p_geo');
+    expect(selectionHref(sel, 'list')).toBe(
+      '/projects?client=c_acme&account=a_joe&project=p_geo&tab=list',
+    );
+    expect(selectionHref({ client: null, account: null, project: null }, 'board')).toBe(
+      '/projects',
+    );
+    expect(selectionHref({ client: null, account: null, project: null }, 'review')).toBe(
+      '/projects?tab=review',
+    );
+  });
+
+  it('round-trips through resolveSelection', () => {
+    const url = new URL(selectionHref(sel, 'calendar'), 'http://x');
+    const back = resolveSelection(TREE, {
+      client: url.searchParams.get('client'),
+      account: url.searchParams.get('account'),
+      project: url.searchParams.get('project'),
+    });
+    expect(back).toEqual(sel);
+  });
+
+  it('scopes the task list to the deepest selected level only', () => {
+    expect(selectionFilters(sel)).toEqual({ projectId: 'p_geo' });
+    expect(selectionFilters({ ...sel, project: null })).toEqual({ accountId: 'a_joe' });
+    expect(selectionFilters({ client: 'c_acme', account: null, project: null })).toEqual({
+      clientId: 'c_acme',
+    });
+    expect(selectionFilters({ client: null, account: null, project: null })).toEqual({});
+  });
+});
+
+describe('parseProjectTab', () => {
+  it('accepts a tab the role can see and falls back to the Board otherwise', () => {
+    expect(parseProjectTab('list', 'employee')).toBe('list');
+    expect(parseProjectTab('review', 'project_manager')).toBe('review');
+    expect(parseProjectTab('workload', 'admin_hr')).toBe('workload');
+    // Review and Workload are MGR/HR tabs (§14.3): an employee's link lands on the Board.
+    expect(parseProjectTab('review', 'employee')).toBe('board');
+    expect(parseProjectTab('nonsense', 'super_admin')).toBe('board');
+    expect(parseProjectTab(null, 'super_admin')).toBe('board');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('nodeMenuItems with the real §9.6 flags (workspaceMenuFlags)', () => {
+  const menusFor = (role: Role) => {
+    const flags = workspaceMenuFlags({ id: 'u', role, active: true });
+    return {
+      client: nodeMenuItems('client', false, flags),
+      account: nodeMenuItems('account', false, flags),
+      project: nodeMenuItems('project', false, flags),
+    };
+  };
+
+  it('gives the super admin every item', () => {
+    expect(menusFor('super_admin')).toEqual({
+      client: ['new_account', 'rename', 'archive'],
+      account: ['new_project', 'start_from_template', 'rename', 'archive'],
+      project: ['rename', 'archive'],
+    });
+  });
+
+  it('gives TL and PM accounts and projects but not client rename or archive (§9.6 ¹²)', () => {
+    const expected = {
+      client: ['new_account'],
+      account: ['new_project', 'start_from_template', 'rename', 'archive'],
+      project: ['rename', 'archive'],
+    };
+    expect(menusFor('team_leader')).toEqual(expected);
+    expect(menusFor('project_manager')).toEqual(expected);
+  });
+
+  it('gives HR clients and accounts but nothing that creates or changes a project', () => {
+    expect(menusFor('admin_hr')).toEqual({
+      client: ['new_account', 'rename', 'archive'],
+      account: ['rename', 'archive'],
+      project: [],
+    });
+  });
+
+  it('gives an employee no menu at all', () => {
+    expect(menusFor('employee')).toEqual({ client: [], account: [], project: [] });
+  });
+});
+
+describe('nodeMenuItems on an archived node', () => {
+  const all: WorkspaceMenuFlags = {
+    clientUpdate: true,
+    clientArchive: true,
+    accountCreate: true,
+    accountUpdate: true,
+    accountArchive: true,
+    projectCreate: true,
+    projectUpdate: true,
+    projectArchive: true,
+    startFromTemplate: true,
+  };
+
+  it('offers only Rename: nothing can be created under it or archived twice', () => {
+    expect(nodeMenuItems('client', true, all)).toEqual(['rename']);
+    expect(nodeMenuItems('account', true, all)).toEqual(['rename']);
+    expect(nodeMenuItems('project', true, all)).toEqual(['rename']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+describe('parseCollapsed / serializeCollapsed (browser storage is never authoritative)', () => {
+  it('round-trips a set, sorted so equal sets store equal strings', () => {
+    const stored = serializeCollapsed(new Set(['c_b', 'a_1', 'c_a']));
+    expect(stored).toBe('["a_1","c_a","c_b"]');
+    expect([...parseCollapsed(stored)].sort()).toEqual(['a_1', 'c_a', 'c_b']);
+  });
+
+  it('reads anything unreadable as nothing collapsed', () => {
+    expect(parseCollapsed(null).size).toBe(0);
+    expect(parseCollapsed('').size).toBe(0);
+    expect(parseCollapsed('{not json').size).toBe(0);
+    expect(parseCollapsed('{"a":1}').size).toBe(0);
+    expect(parseCollapsed('"c_acme"').size).toBe(0);
+  });
+
+  it('keeps only the string ids from a mixed array', () => {
+    expect([...parseCollapsed('["c_acme", 3, null, "a_joe"]')]).toEqual(['c_acme', 'a_joe']);
   });
 });

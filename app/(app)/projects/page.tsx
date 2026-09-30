@@ -1,38 +1,39 @@
-// app/(app)/projects/page.tsx — PUL-408 Stage 1, §14.3
+// app/(app)/projects/page.tsx (PUL-408, reshaped by PUL-417 into the §14.3 workspace)
 //
-// Replaces the PUL-110.4 placeholder. This stage ships the filter bar and the page shell only:
-// the project header (PUL-408.2) and the Board / List / Calendar views (PUL-409 / 410 / 411)
-// are still to come, and the New Task modal is PUL-408's second stage.
-//
-// Every dropdown's options are fetched here, server-side, and handed down whole — the cascade
-// runs in memory in the client component. The task list is the one thing the filters narrow on
-// the server, and it is re-read through `loadFilteredTasks` as they change.
+// The Client › Account › Project tree on the left, the selected node on the right. Everything
+// the client needs arrives from here whole: the tree (`getWorkspaceTree`), every dropdown's
+// options, the viewer's ⋯ menu flags (computed with `can()`), and the first task list for the
+// selection the URL names. From then on the selection lives in the URL and the task list is
+// re-read through `loadFilteredTasks`.
 
-import { activeClientsQuery } from '@/features/clients/queries';
+import {
+  accountsListQuery,
+  activeClientsQuery,
+  clientsListQuery,
+} from '@/features/clients/queries';
 import { assignableUsersQuery } from '@/features/employees/queries';
-import { ProjectsFilterBar } from '@/features/projects/components/projects-filter-bar';
+import { workspaceMenuFlags } from '@/features/projects/capabilities';
+import { ProjectsWorkspace } from '@/features/projects/components/projects-workspace';
+import { isManagerRole } from '@/features/projects/display';
 import {
   activeProjectsQuery,
   getFilteredTasks,
+  getWorkspaceTree,
   projectMonthsQuery,
 } from '@/features/projects/queries';
-import { isManagerRole } from '@/features/projects/display';
+import { resolveSelection, selectionFilters } from '@/features/projects/workspace-tree';
 import { can } from '@/lib/authz';
 import { requireRouteAccess } from '@/lib/route-guard';
-
-/** The tabs `?tab=` may open. Review / Workload stay click-only (they are role-gated). */
-const LINKABLE_TABS = ['board', 'list', 'calendar'] as const;
-type LinkableTab = (typeof LINKABLE_TABS)[number];
 
 export default async function ProjectsPage({
   searchParams,
 }: {
   /**
-   * `?project=<id>&tab=list` opens one project, on one tab, with the month filter cleared: the
-   * Start Project wizard's landing (§14.3.8, PUL-506). An unknown or archived project id is
-   * ignored and the page opens unfiltered.
+   * §14.3: the URL is the selection, `?client=&account=&project=&tab=`. `?project=` alone (the
+   * Start Project landing, §14.3.8) derives its account and client; unknown, archived or
+   * mismatched ids are ignored rather than trusted (`resolveSelection`).
    */
-  searchParams: Promise<{ project?: string; tab?: string }>;
+  searchParams: Promise<{ client?: string; account?: string; project?: string; tab?: string }>;
 }) {
   // THE security boundary (§9.5): unauthenticated → /sign-in, wrong role → 404. The sidebar
   // hiding this item is cosmetic and is not access control.
@@ -59,49 +60,57 @@ export default async function ProjectsPage({
     ? await assignableUsersQuery()
     : [{ id: viewer.id, name: viewer.name, image: viewer.image ?? null }];
 
+  /**
+   * The ⋯ menu's §9.6 cells (§14.3: "each item shown only when the viewer's role allows it").
+   * Decided here on the DB-read role; hiding is presentation, every action re-authorizes.
+   */
+  const flags = workspaceMenuFlags(viewer);
+  // The reused client and account dialogs need full rows. Only read when some menu item can use
+  // them, so an employee's page does not carry every client's contact and notes for nothing.
+  const managesClientsOrAccounts =
+    flags.clientUpdate ||
+    flags.clientArchive ||
+    flags.accountCreate ||
+    flags.accountUpdate ||
+    flags.accountArchive ||
+    flags.projectCreate;
+
   // Independent of each other — fetched concurrently.
-  const [clients, projects, projectMonths] = await Promise.all([
+  const [tree, clients, projects, projectMonths, clientRows, accountRows] = await Promise.all([
+    getWorkspaceTree(),
     activeClientsQuery(),
     activeProjectsQuery(),
     projectMonthsQuery(),
+    managesClientsOrAccounts ? clientsListQuery() : Promise.resolve([]),
+    managesClientsOrAccounts ? accountsListQuery() : Promise.resolve([]),
   ]);
 
-  const linked = params.project ? projects.find((p) => p.id === params.project) : undefined;
-  const initialView = linked
-    ? {
-        clientId: linked.clientId,
-        projectId: linked.id,
-        tab: LINKABLE_TABS.includes(params.tab as LinkableTab)
-          ? (params.tab as LinkableTab)
-          : 'board',
-      }
-    : null;
-
-  // The first page, so the shell renders with real rows instead of a spinner: unfiltered, or the
-  // linked project's tasks when the page was opened on one.
-  const initialTasks = await getFilteredTasks(initialView ? { projectId: initialView.projectId } : {});
+  // The same resolution the client makes from `useSearchParams`, so the first task list matches
+  // the selection the page opens on. Month and Assignee start at All ("month filter cleared",
+  // §14.3.8).
+  const selection = resolveSelection(tree, params);
+  const initialTasks = await getFilteredTasks(selectionFilters(selection));
 
   return (
-    <div className="space-y-6 p-6">
-      <h1 className="text-lg font-semibold">Projects</h1>
-
-      <ProjectsFilterBar
-        clients={clients}
-        projects={projects}
-        projectMonths={projectMonths}
-        assignees={assignees}
-        // §14.3: the Excel exports are MGR-only. admin_hr is manager-level for people ops but
-        // is not a delivery manager, and `isManagerRole` is the §9.6 delivery set.
-        canExport={isManagerRole(viewer.role)}
-        // The Board's `+ Add task` (PUL-409). Read off the §9.6 table rather than restated —
-        // the same `can()` call `loadProjectHeader` makes for the header's `+ New Task`.
-        canCreateTask={can(viewer, 'project_task.create')}
-        // The List view's inline status control needs to know who is looking (§14.3.2). Only
-        // `{ id, role }` crosses to the client — not the whole session user.
-        viewer={{ id: viewer.id, role: viewer.role }}
-        initialTasks={initialTasks}
-        initialView={initialView}
-      />
-    </div>
+    <ProjectsWorkspace
+      tree={tree}
+      flags={flags}
+      clientRows={clientRows}
+      accountRows={accountRows}
+      clients={clients}
+      projects={projects}
+      projectMonths={projectMonths}
+      assignees={assignees}
+      // §14.3: the Excel exports are MGR-only. admin_hr is manager-level for people ops but
+      // is not a delivery manager, and `isManagerRole` is the §9.6 delivery set.
+      canExport={isManagerRole(viewer.role)}
+      // The Board's `+ Add task` (PUL-409). Read off the §9.6 table rather than restated:
+      // the same `can()` call `loadProjectHeader` makes for the header's `+ New Task`.
+      canCreateTask={can(viewer, 'project_task.create')}
+      // The List view's inline status control needs to know who is looking (§14.3.2). Only
+      // `{ id, role }` crosses to the client, not the whole session user.
+      viewer={{ id: viewer.id, role: viewer.role }}
+      initialTasks={initialTasks}
+    />
   );
 }

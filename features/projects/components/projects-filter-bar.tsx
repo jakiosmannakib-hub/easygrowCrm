@@ -8,6 +8,11 @@
 // agency runs tens of projects, so one unfiltered fetch is smaller than the JS that would page
 // it, and changing Client ▾ costs no round trip. Only the TASK list is refetched, because that
 // is the one thing the filters actually narrow server-side.
+//
+// PUL-417: the URL is the selection. Client, account, project and tab are props resolved from
+// the URL by the workspace; Client ▾ / Project ▾ and the tab strip report changes upward through
+// `onNavigate` instead of holding them. Month and Assignee stay local. (417.4 removes Client ▾
+// and Project ▾ once the tree is the only way to choose.)
 
 'use client';
 
@@ -22,7 +27,8 @@ import {
 import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
 import { ClientExportButtons } from './client-export-buttons';
-import { monthLabel, type Role, type StatusMenuViewer } from '../display';
+import { monthLabel, PROJECT_TABS, type ProjectTabKey, type StatusMenuViewer } from '../display';
+import { selectionFilters, type WorkspaceSelection } from '../workspace-tree';
 import { ProjectHeader } from './project-header';
 import { ReviewTab } from './review-tab';
 import { TaskBoard } from './task-board';
@@ -53,34 +59,6 @@ const ALL = 'all';
 /** Assignee ▾'s claimable-work option. No user id can collide with it. */
 const UNASSIGNED = 'unassigned';
 
-const ALL_ROLES: readonly Role[] = [
-  'super_admin',
-  'team_leader',
-  'project_manager',
-  'admin_hr',
-  'employee',
-];
-/** §14.3: "Review + Workload MGR/HR". */
-const MGR_HR_ROLES: readonly Role[] = ['super_admin', 'team_leader', 'project_manager', 'admin_hr'];
-
-/**
- * §14.3's tab strip, with each tab's visibility as an explicit role list — the same convention
- * as `lib/nav.ts`, rather than a live `can()` (which would pull lib/authz into a client bundle).
- *
- * Hiding a tab is cosmetic (§9.5 r.2): `loadReviewQueue` authorizes `review.read` and
- * `loadWorkload` role-gates, so an employee who forced a tab open would be refused by the server.
- * Manager QA (SA + TL) is PUL-604 and is deliberately not offered yet.
- */
-const TABS = [
-  { key: 'board', label: 'Board', visibleTo: ALL_ROLES },
-  { key: 'list', label: 'List', visibleTo: ALL_ROLES },
-  { key: 'calendar', label: 'Calendar', visibleTo: ALL_ROLES },
-  { key: 'review', label: 'Review', visibleTo: MGR_HR_ROLES },
-  { key: 'workload', label: 'Workload', visibleTo: MGR_HR_ROLES },
-] as const;
-
-type TabKey = (typeof TABS)[number]['key'];
-
 /**
  * **The whole filter state, declared upfront — §16.10.**
  *
@@ -96,38 +74,29 @@ type TabKey = (typeof TABS)[number]['key'];
  * would put a `Number(...)` in each handler, which is the kind of scattered coercion that ends
  * up inconsistent.
  *
- * `tab` lives in the same object rather than its own `useState` because §16.10 is about the
- * state *schema* being in one declared place, and because it is the one key that deliberately
- * does NOT refetch: all three tabs read the same rows (§16.9 / PUL-408.3). Keeping it here is
- * what makes that visible — the fetch effect simply doesn't list it as a dependency.
+ * Client, account, project and tab are NOT here since PUL-417: the URL owns them and they
+ * arrive as props, so there is one source of truth for the selection rather than a copy that
+ * can drift from the tree.
  */
 interface FilterState {
-  /** A client id, or `ALL`. */
-  clientId: string;
-  /** A project id, or `ALL`. */
-  projectId: string;
   /** A stringified retainer month number, or `ALL`. */
   month: string;
+  /**
+   * The selected project this state was last reset for. Month ▾ is only meaningful against one
+   * project's start date, so when the URL moves to another project the month is reset during
+   * render (React's "adjusting state when a prop changes"), not by an effect watching it.
+   */
+  forProject: string | null;
   /** A user id, `UNASSIGNED`, or `ALL`. */
   assigneeId: string;
-  tab: TabKey;
 }
 
-const INITIAL_STATE: FilterState = {
-  clientId: ALL,
-  projectId: ALL,
-  month: ALL,
-  assigneeId: ALL,
-  tab: 'board',
-};
-
-/** State → the wire shape. The single place a sentinel becomes an absent key. */
-function toFilters(state: FilterState): TaskFilters {
+/** Selection + state → the wire shape. The single place a sentinel becomes an absent key. */
+function toFilters(selection: WorkspaceSelection, month: string, assigneeId: string): TaskFilters {
   return {
-    clientId: state.clientId === ALL ? undefined : state.clientId,
-    projectId: state.projectId === ALL ? undefined : state.projectId,
-    month: state.month === ALL ? ALL : Number(state.month),
-    assigneeId: state.assigneeId,
+    ...selectionFilters(selection),
+    month: month === ALL ? ALL : Number(month),
+    assigneeId,
   };
 }
 
@@ -140,7 +109,10 @@ export function ProjectsFilterBar({
   canCreateTask,
   viewer,
   initialTasks,
-  initialView = null,
+  selection,
+  tab,
+  onNavigate,
+  onTreeStale,
 }: {
   clients: PickableClient[];
   /** Every ACTIVE project, each carrying its `clientId` so Project ▾ can scope in memory. */
@@ -164,43 +136,67 @@ export function ProjectsFilterBar({
   /** The server's first result, so the page has rows before the client ever runs. */
   initialTasks: FilteredTaskRow[];
   /**
-   * Open on one project and tab (`/projects?project=…&tab=…`, the Start Project landing,
-   * PUL-506). Month and Assignee stay at All: "month filter cleared" (§14.3.8). The page has
-   * already checked the project is active; `null` opens the default view.
+   * The URL's selection, already resolved against the tree by the workspace (`?project=` alone
+   * has its account and client filled in; unknown ids are null). Month and Assignee start at
+   * All: "month filter cleared" on the Start Project landing (§14.3.8).
    */
-  initialView?: { clientId: string; projectId: string; tab: 'board' | 'list' | 'calendar' } | null;
+  selection: WorkspaceSelection;
+  /** `?tab=`, already checked against this viewer's role (`parseProjectTab`). */
+  tab: ProjectTabKey;
+  /** Client ▾, Project ▾ and the tab strip ask the workspace to move the URL. */
+  onNavigate: (selection: WorkspaceSelection, tab: ProjectTabKey) => void;
+  /** Called after any mutation here, so the workspace can re-read the tree's counts. */
+  onTreeStale: () => void;
 }) {
-  // Every key still comes from INITIAL_STATE (§16.10); `initialView` only overrides values.
-  const [state, setState] = useState<FilterState>(() =>
-    initialView ? { ...INITIAL_STATE, ...initialView } : INITIAL_STATE,
-  );
+  // Every key declared upfront (§16.10), starting at All.
+  const [state, setState] = useState<FilterState>(() => ({
+    month: ALL,
+    forProject: selection.project,
+    assigneeId: ALL,
+  }));
   const [tasks, setTasks] = useState<FilteredTaskRow[]>(initialTasks);
   const [loading, setLoading] = useState(false);
 
+  // The project changed (tree click, Project ▾, Back): clear the month. Assignee is kept, as
+  // it was before PUL-417, because "my tasks" is meaningful across projects.
+  if (state.forProject !== selection.project) {
+    setState((s) => ({ ...s, month: ALL, forProject: selection.project }));
+  }
+
+  const clientId = selection.client ?? ALL;
+  const projectId = selection.project ?? ALL;
+  const month = state.forProject === selection.project ? state.month : ALL;
+
   /**
-   * The cascade, as three functions rather than one generic setter.
-   *
-   * Choosing a client RESETS project and month; choosing a project RESETS month. Without that,
-   * picking Client A → Project A1 → Month 3 and then switching to Client B leaves `projectId`
-   * pointing at a project client B does not own, and the task list silently returns nothing
-   * that matches. Resetting downstream keys is the cascade.
+   * The cascade. Choosing a client clears account and project; choosing a project takes its
+   * account and client with it, so the URL is never a project under a client that does not own
+   * it. Month clears when the project changes (above).
    */
-  function pickClient(clientId: string) {
-    setState((s) => ({ ...s, clientId, projectId: ALL, month: ALL }));
+  function pickClient(value: string) {
+    onNavigate({ client: value === ALL ? null : value, account: null, project: null }, tab);
   }
 
-  function pickProject(projectId: string) {
-    setState((s) => ({ ...s, projectId, month: ALL }));
+  function pickProject(value: string) {
+    const project = value === ALL ? undefined : projects.find((p) => p.id === value);
+    onNavigate(
+      project
+        ? { client: project.clientId, account: project.accountId, project: project.id }
+        : { ...selection, project: null },
+      tab,
+    );
   }
 
-  // Project ▾ shows only the selected client's projects; Month ▾ only exists once a single
-  // project is chosen, because "Month 3" means nothing across two projects with different
-  // start dates.
-  const scopedProjects =
-    state.clientId === ALL ? projects : projects.filter((p) => p.clientId === state.clientId);
+  // Project ▾ shows only the selected account's (or else client's) projects; Month ▾ only
+  // exists once a single project is chosen, because "Month 3" means nothing across two
+  // projects with different start dates.
+  const scopedProjects = selection.account
+    ? projects.filter((p) => p.accountId === selection.account)
+    : selection.client
+      ? projects.filter((p) => p.clientId === selection.client)
+      : projects;
 
   const selectedProject =
-    state.projectId === ALL ? null : (projects.find((p) => p.id === state.projectId) ?? null);
+    projectId === ALL ? null : (projects.find((p) => p.id === projectId) ?? null);
 
   const monthsForProject =
     selectedProject === null
@@ -208,7 +204,7 @@ export function ProjectsFilterBar({
       : (projectMonths.find((m) => m.projectId === selectedProject.id)?.months ?? []);
 
   /**
-   * Refetch the task list whenever a FILTER changes — `state.tab` is deliberately absent from
+   * Refetch the task list whenever a FILTER changes; `tab` is deliberately absent from
    * the dependency list (all three tabs read the same rows, PUL-408.3).
    *
    * The ref guards a slow response from an earlier filter landing after a newer one: click
@@ -232,6 +228,12 @@ export function ProjectsFilterBar({
    */
   const [taskNonce, setTaskNonce] = useState(0);
 
+  /** After a mutation: re-read this list and header, and the tree's counts. */
+  function refresh() {
+    setTaskNonce((n) => n + 1);
+    onTreeStale();
+  }
+
   /**
    * The Review tab title's count (§14.3.5). `null` until the Review tab has loaded once — the
    * queue is its own fetch, made only when the tab opens, so before then there is no number to
@@ -247,7 +249,7 @@ export function ProjectsFilterBar({
       // cascading render (`react-hooks/set-state-in-effect`, correctly). Here it lands in a
       // microtask, after the render that scheduled the effect has committed.
       setLoading(true);
-      const result = await loadFilteredTasks(toFilters(state));
+      const result = await loadFilteredTasks(toFilters(selection, month, state.assigneeId));
       if (token !== latestRequest.current) return; // a newer filter has already won
 
       if (!result.ok) {
@@ -258,13 +260,13 @@ export function ProjectsFilterBar({
       setTasks(result.data);
       setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `state.tab` must NOT refetch.
-  }, [state.clientId, state.projectId, state.month, state.assigneeId, taskNonce]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the selection's ids, not the object; `tab` must NOT refetch.
+  }, [selection.client, selection.account, selection.project, month, state.assigneeId, taskNonce]);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={state.clientId} onValueChange={(v: string | null) => pickClient(v ?? ALL)}>
+        <Select value={clientId} onValueChange={(v: string | null) => pickClient(v ?? ALL)}>
           <SelectTrigger aria-label="Client" className="w-44">
             {/*
               The children FUNCTION is required, not decoration. Left bare, `Select.Value`
@@ -290,7 +292,7 @@ export function ProjectsFilterBar({
           </SelectContent>
         </Select>
 
-        <Select value={state.projectId} onValueChange={(v: string | null) => pickProject(v ?? ALL)}>
+        <Select value={projectId} onValueChange={(v: string | null) => pickProject(v ?? ALL)}>
           <SelectTrigger aria-label="Project" className="w-52">
             <SelectValue>
               {(v: string | null) =>
@@ -311,7 +313,7 @@ export function ProjectsFilterBar({
         </Select>
 
         <Select
-          value={state.month}
+          value={month}
           onValueChange={(v: string | null) => setState((s) => ({ ...s, month: v ?? ALL }))}
           // "Month 3" is only meaningful against one project's start date, so the control is
           // inert until a project is chosen — and inert with a reason the user can read.
@@ -389,27 +391,27 @@ export function ProjectsFilterBar({
           // The page's one refetch counter: a Task Detail edit on the Board reloads the header
           // too, so progress and health move with the card (PUL-409 Stage 2).
           refreshKey={taskNonce}
-          onChanged={() => setTaskNonce((n) => n + 1)}
+          onChanged={refresh}
         />
       )}
 
       {/* §14.3's tabs, filtered to what this role may see. Board / List / Calendar are
           PUL-409 / 410 / 411; Review + Workload are PUL-412; Manager QA is PUL-604. */}
       <div className="border-border flex gap-1 overflow-x-auto border-b">
-        {TABS.filter((tab) => tab.visibleTo.includes(viewer.role)).map((tab) => (
+        {PROJECT_TABS.filter((t) => t.visibleTo.includes(viewer.role)).map((t) => (
           <button
-            key={tab.key}
+            key={t.key}
             type="button"
-            onClick={() => setState((s) => ({ ...s, tab: tab.key }))}
+            onClick={() => onNavigate(selection, t.key)}
             className={
-              state.tab === tab.key
+              tab === t.key
                 ? 'border-primary text-foreground -mb-px shrink-0 border-b-2 px-3 py-2 text-xs font-medium'
                 : 'text-muted-foreground hover:text-foreground -mb-px shrink-0 border-b-2 border-transparent px-3 py-2 text-xs'
             }
           >
-            {tab.label}
+            {t.label}
             {/* §14.3.5: "Tab title shows count" — once the Review tab has loaded it. */}
-            {tab.key === 'review' && reviewCount !== null ? (
+            {t.key === 'review' && reviewCount !== null ? (
               <span className="text-muted-foreground ml-1 tabular-nums">({reviewCount})</span>
             ) : null}
           </button>
@@ -419,11 +421,11 @@ export function ProjectsFilterBar({
       {/*
         The active tab's panel. Every view receives the SAME `tasks` array — none of them
         fetches — which is what makes "filter changes update every tab identically"
-        (PUL-408.3) true by construction, and why switching tabs never refetches (`state.tab`
+        (PUL-408.3) true by construction, and why switching tabs never refetches (`tab`
         is absent from the fetch effect's dependencies). Board (PUL-409), List (PUL-410) and
         Calendar (PUL-411) are all fed the same `tasks` / `loading` / nonce bump.
       */}
-      {state.tab === 'board' ? (
+      {tab === 'board' ? (
         <TaskBoard
           tasks={tasks}
           loading={loading}
@@ -431,12 +433,12 @@ export function ProjectsFilterBar({
           // board is handed null and the button does not render.
           addToProjectId={canCreateTask && selectedProject !== null ? selectedProject.id : null}
           // After a task is created from the board, re-read list + header together.
-          onTaskCreated={() => setTaskNonce((n) => n + 1)}
+          onTaskCreated={refresh}
           // Re-read after the Task Detail modal closes, through the same nonce New Task and
           // Archive use — a status or assignee change made in the modal moves the card.
-          onTaskClosed={() => setTaskNonce((n) => n + 1)}
+          onTaskClosed={refresh}
         />
-      ) : state.tab === 'list' ? (
+      ) : tab === 'list' ? (
         <TaskList
           // Re-keyed per project so collapse state resets on a switch: its keys (`month:3`) are
           // structural, and "Month 3 collapsed" in one project means nothing in another.
@@ -454,16 +456,16 @@ export function ProjectsFilterBar({
           canCreateTask={canCreateTask}
           // Inline status change, modal close and `+ Add task in {Category}` all re-read list +
           // header through the one nonce.
-          onChanged={() => setTaskNonce((n) => n + 1)}
+          onChanged={refresh}
         />
-      ) : state.tab === 'calendar' ? (
+      ) : tab === 'calendar' ? (
         <TaskCalendar
           tasks={tasks}
           loading={loading}
           // Modal close re-reads list + header through the one nonce, same as Board and List.
-          onChanged={() => setTaskNonce((n) => n + 1)}
+          onChanged={refresh}
         />
-      ) : state.tab === 'review' ? (
+      ) : tab === 'review' ? (
         /*
           Review and Workload are NOT presentations of `tasks`: each reads its own query
           (`getReviewQueue` / `getWorkload`) and fetches on mount — i.e. when the tab is opened —
@@ -473,7 +475,7 @@ export function ProjectsFilterBar({
           projectId={selectedProject?.id}
           onCount={setReviewCount}
           // A modal edit can change what the other tabs and the header show — re-read them too.
-          onChanged={() => setTaskNonce((n) => n + 1)}
+          onChanged={refresh}
         />
       ) : (
         <WorkloadTab projectId={selectedProject?.id} />

@@ -12,12 +12,13 @@
 
 import { useEffect, useState } from 'react';
 import { MoreHorizontalIcon } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/menu';
 import { showErrorToast } from '@/lib/show-error-toast';
-import { archiveProject, loadProjectHeader } from '../actions';
+import { loadProjectHeader } from '../actions';
 import { HEALTH_DISPLAY } from '../display';
+import { ArchiveProjectBody } from './archive-project-body';
 import { NewTaskModal } from './new-task-modal';
 
 /**
@@ -57,7 +58,8 @@ export function ProjectHeader({
   const [payload, setPayload] = useState<HeaderPayload | null>(null);
   const [failed, setFailed] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [archiving, setArchiving] = useState(false);
+  /** The §14.15 r.6 archive confirm. */
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   useEffect(() => {
     // Guards a stale response from an earlier project landing on a newer one — switching
@@ -94,24 +96,6 @@ export function ProjectHeader({
    */
   function refetchAll() {
     onChanged();
-  }
-
-  async function onArchive() {
-    setArchiving(true);
-    try {
-      const result = await archiveProject({ projectId });
-      if (!result.ok) {
-        // Including GATE:pending_reviews, whose message already names the blocking task —
-        // `showErrorToast` surfaces it verbatim rather than restating it here (§14.3).
-        showErrorToast(result);
-        return;
-      }
-      // Not optimistic: archiving is an accountability action (§14.15 r.5).
-      toast.success('Project archived.');
-      refetchAll();
-    } finally {
-      setArchiving(false);
-    }
   }
 
   if (failed) {
@@ -181,8 +165,8 @@ export function ProjectHeader({
                 }
               />
               <MenuContent>
-                <MenuItem variant="destructive" disabled={archiving} onClick={() => void onArchive()}>
-                  {archiving ? 'Archiving…' : 'Archive project'}
+                <MenuItem variant="destructive" onClick={() => setConfirmingArchive(true)}>
+                  Archive project
                 </MenuItem>
               </MenuContent>
             </Menu>
@@ -206,6 +190,21 @@ export function ProjectHeader({
           <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
+
+      {viewer.canArchive ? (
+        <Dialog open={confirmingArchive} onOpenChange={setConfirmingArchive}>
+          <DialogContent className="sm:max-w-md">
+            {/* Mounted only while open, so every confirm starts fresh. */}
+            {confirmingArchive ? (
+              <ArchiveProjectBody
+                project={{ id: projectId, name: header.name }}
+                onArchived={refetchAll}
+                onDone={() => setConfirmingArchive(false)}
+              />
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {viewer.canCreateTask ? (
         <NewTaskModal

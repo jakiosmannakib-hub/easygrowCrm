@@ -152,7 +152,7 @@ describe('createTask (§13.4.1)', () => {
       await createTask(
         payload({
           priority: 'urgent',
-          qcRequired: false,
+          qcRequired: true,
           proofRequired: true,
           clientVisible: true,
         }),
@@ -163,12 +163,23 @@ describe('createTask (§13.4.1)', () => {
 
     expect(row).toMatchObject({
       priority: 'urgent',
-      qcRequired: false,
+      qcRequired: true,
       proofRequired: true,
       clientVisible: true,
       // Still never an input — an override of the others must not disturb it.
       status: 'planned',
     });
+  });
+
+  it('refuses qcRequired: false at validation (Amendment M, PUL-416)', async () => {
+    // QA is mandatory, so `false` is not a well-formed payload. It rejects (a Zod failure, per
+    // PUL-111) before authorize or the transaction, and no task is written.
+    actAs(seed.teamLeader.id);
+    const before = await taskCount();
+
+    await expect(createTask(payload({ qcRequired: false as never }))).rejects.toThrow();
+
+    expect(await taskCount()).toBe(before);
   });
 
   it('seeds task_checklist_items in input order, all undone', async () => {

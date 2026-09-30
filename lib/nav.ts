@@ -19,6 +19,7 @@ export type AppRoute =
   | '/dashboard'
   | '/employees'
   | '/attendance'
+  | '/clients'
   | '/projects'
   | '/templates'
   | '/my-tasks'
@@ -45,11 +46,17 @@ const SA_HR: Role[] = ['super_admin', 'admin_hr'];
 /** §14.1's "SA, HR, PM, TL" — everyone except employees. */
 const MANAGERS: Role[] = ['super_admin', 'admin_hr', 'project_manager', 'team_leader'];
 
-/** The 13 sidebar items in §14.1 order. `visibleTo` is transcribed from that table verbatim. */
+/**
+ * The 14 sidebar items in §14.1 order. `visibleTo` is transcribed from that table verbatim,
+ * plus Clients: moved out of Settings into its own page, directly above Projects. Its audience
+ * is everyone who can manage something on it (§9.6: `client.*` SA/HR, `account.*` SA/HR/TL/PM),
+ * so employees, who hold neither, do not get the item or the route.
+ */
 export const NAV_ITEMS: NavItem[] = [
   { route: '/dashboard', label: 'Dashboard', icon: 'LayoutDashboard', visibleTo: ALL },
   { route: '/employees', label: 'Employees', icon: 'Users', visibleTo: SA_HR },
   { route: '/attendance', label: 'Attendance', icon: 'Clock', visibleTo: ALL },
+  { route: '/clients', label: 'Clients', icon: 'Building2', visibleTo: MANAGERS },
   { route: '/projects', label: 'Projects', icon: 'FolderKanban', visibleTo: ALL },
   { route: '/templates', label: 'Project Templates', icon: 'LayoutTemplate', visibleTo: MANAGERS },
   { route: '/my-tasks', label: 'My Tasks', icon: 'ListChecks', visibleTo: MANAGERS },
@@ -67,6 +74,7 @@ export const PAGE_META: Record<AppRoute, { title: string; subtitle: string }> = 
   '/dashboard': { title: 'Dashboard', subtitle: 'Your day at a glance' },
   '/employees': { title: 'Employees', subtitle: 'People, roles, and offboarding' },
   '/attendance': { title: 'Attendance', subtitle: 'Sign-in, breaks, and hours' },
+  '/clients': { title: 'Clients', subtitle: 'White-label partners and the businesses they resell to' },
   '/projects': { title: 'Projects', subtitle: 'Client work and delivery boards' },
   '/templates': { title: 'Project Templates', subtitle: 'Reusable month, category, and task structures' },
   '/my-tasks': { title: 'My Tasks', subtitle: 'Your private checklist' },
@@ -79,31 +87,6 @@ export const PAGE_META: Record<AppRoute, { title: string; subtitle: string }> = 
   '/settings': { title: 'Settings', subtitle: 'Working hours, holidays, and policy' },
 };
 
-/**
- * The sections inside `/settings` (§14.14), each with its own curated `visibleTo`, in the same
- * explicit-list style as `NAV_ITEMS`. Presentation only: the page is already SA/HR-only via
- * `requireRouteAccess('/settings')`, and every action behind a section authorizes itself.
- *
- * Only Clients exists so far (PUL-207). PUL-903 adds the policy fields and the holidays editor.
- */
-export type SettingsSectionId = 'clients';
-
-export interface SettingsSection {
-  id: SettingsSectionId;
-  label: string;
-  visibleTo: Role[];
-}
-
-export const SETTINGS_SECTIONS: SettingsSection[] = [
-  // §9.6 ¹⁰ / §14.14: client management lives with Settings, SA + HR.
-  { id: 'clients', label: 'Clients', visibleTo: SA_HR },
-];
-
-/** Whether a role sees a given Settings section. Cosmetic — never the security boundary. */
-export function canSeeSettingsSection(role: Role, id: SettingsSectionId): boolean {
-  const section = SETTINGS_SECTIONS.find((s) => s.id === id);
-  return section ? section.visibleTo.includes(role) : false;
-}
 
 /** The sidebar items a role sees, in §14.1 order. Cosmetic — never the security boundary. */
 export function visibleNavItems(role: Role): NavItem[] {

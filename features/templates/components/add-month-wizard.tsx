@@ -64,7 +64,6 @@ interface WizardTask {
   priority: TaskPriority;
   estHours: number | null;
   dueRule: { kind: WizardRuleKind; n: number };
-  qcRequired: boolean;
   proofRequired: boolean;
   subtasks: string[];
 }
@@ -77,7 +76,6 @@ interface TaskDraft {
   estHours: string;
   dueKind: WizardRuleKind;
   dueN: string;
-  qcRequired: boolean;
   proofRequired: boolean;
 }
 
@@ -111,7 +109,6 @@ const EMPTY_DRAFT: TaskDraft = {
   estHours: '2',
   dueKind: 'day',
   dueN: '1',
-  qcRequired: true,
   proofRequired: false,
 };
 
@@ -277,7 +274,6 @@ function WizardBody({
         priority: d.priority,
         estHours: hours,
         dueRule: { kind: d.dueKind, n },
-        qcRequired: d.qcRequired,
         proofRequired: d.proofRequired,
         subtasks: [],
       };
@@ -330,7 +326,6 @@ function WizardBody({
             priority: t.priority,
             estHours: t.estHours ?? undefined,
             dueRule: t.dueRule,
-            qcRequired: t.qcRequired,
             proofRequired: t.proofRequired,
             subtasks: t.subtasks,
           })),
@@ -518,7 +513,6 @@ function WizardBody({
                     <span className="font-medium">{t.title}</span>
                     <span className="text-muted-foreground">· {t.roleHint || 'No role'}</span>
                     <Badge variant="outline">{rulePill(t.dueRule)}</Badge>
-                    {t.qcRequired ? <Badge variant="secondary">QC</Badge> : null}
                     <Button
                       type="button"
                       variant="ghost"
@@ -699,15 +693,6 @@ function WizardBody({
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={s.draft.qcRequired}
-                  onChange={(e) => setDraft('qcRequired', e.target.checked)}
-                  className="size-3.5"
-                />
-                QC gate
-              </label>
               <label className="flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"

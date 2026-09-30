@@ -158,7 +158,8 @@ export const CreateTaskInput = z.object({
   estimatedHours: z.number().nonnegative().max(9999.99).optional(),
   expectedOutput: z.string().optional(),
   sopUrl: z.string().optional(),
-  qcRequired: z.boolean().optional(),
+  /** Amendment M (PUL-416): QA is mandatory, so only `true` or absent. The DB CHECK backs it. */
+  qcRequired: z.literal(true).optional(),
   proofRequired: z.boolean().optional(),
   clientVisible: z.boolean().optional(),
   /** Another live task in the SAME project (§13.4.1) — checked in the action. */
@@ -226,7 +227,8 @@ export type ChangeTaskStatusOpenInput = z.infer<typeof ChangeTaskStatusOpenInput
  * is a deliberate SUBSET, and a schema that widened automatically when the DB enum gained a
  * value would hand managers a status the contract never granted.
  *
- * Note `approved` is in the list even though the action always refuses it (`GATE:use_review`).
+ * Note `approved` and `completed` are in the list even though the action always refuses both
+ * (`GATE:use_review`; `completed` since Amendment M).
  * That is intentional — the payload is *well-formed*, it is the ACT that is refused, and the
  * distinction matters: a caller that sends it deserves the specific "use the review screen"
  * sentence, not a shape error. §13.4.5 lists it, so the schema lists it.

@@ -1296,16 +1296,19 @@ export async function changeTaskStatusOpen(input: ChangeTaskStatusOpenInput) {
  *
  * Guards, in the order they run:
  *
- *   1. **`approved` is refused outright — `GATE:use_review`.** Approving a submitted task has
- *      to go through §13.4.7 `reviewTask` (Phase 6) so that a `task_reviews` row exists. An
- *      approval with no review row is an approval nobody signed, and the QC trail is the whole
- *      point of the status. This is checked FIRST so the answer does not depend on the origin
- *      status: direct-approve is wrong from everywhere.
+ *   1. **`approved` and `completed` are refused outright: `GATE:use_review`.** Approving a
+ *      submitted task has to go through §13.4.7 `reviewTask` (Phase 6) so that a `task_reviews`
+ *      row exists. An approval with no review row is an approval nobody signed, and the QC trail
+ *      is the whole point of the status. `completed` was the manager's QC bypass (§4.2) until
+ *      Amendment M removed it: every task now closes through review, so a direct `completed` is
+ *      the same unsigned close under another name and gets the same refusal. Checked FIRST so
+ *      the answer does not depend on the origin status: both are wrong from everywhere.
  *   2. **`revision_required` requires a `note` — `GATE:note_required`.** Sending work back
  *      without saying why is the failure mode the note exists to prevent (§14.3.2's modal).
  *   3. **Same status is a no-op**, matching the slice convention (`assignTask`,
- *      `changeTaskStatusOpen`, `updateProject`). Note `approved → approved` never reaches this
- *      branch — guard 1 already refused it — so the no-op covers the three reachable targets.
+ *      `changeTaskStatusOpen`, `updateProject`). Note `approved → approved` and
+ *      `completed → completed` never reach this branch (guard 1 already refused them), so the
+ *      no-op covers the two reachable targets.
  *
  * **`cancelled` from `submitted` is allowed, and resolves the open submission implicitly.**
  * There is no orphan to clean up: the submission row simply never receives a review, and the
@@ -1313,10 +1316,13 @@ export async function changeTaskStatusOpen(input: ChangeTaskStatusOpenInput) {
  * a cancelled task drops out of it cleanly. Deleting or back-filling the submission would
  * destroy the record that the work WAS submitted, which is exactly what the QC trail is for.
  *
- * **`completed` from a non-terminal state is the QC bypass, and it is allowed on purpose**
- * (§4.2) — that is what the status is for. What makes it safe is that it is loud: the audit row
- * is written with the DISTINCT action `project_task.status_overridden`, never
- * `status_changed`, so "how often did we bypass QC?" is one grep rather than a judgement call.
+ * **Old `completed` rows are untouched.** The enum value stays so rows closed before Amendment M
+ * still read, still render as "Done", and still satisfy dependencies
+ * (`DEPENDENCY_SATISFIED_STATUSES`). Only new writes of it are refused.
+ *
+ * Every override that does go through is audited under the DISTINCT action
+ * `project_task.status_overridden`, never `status_changed`, so "how often did a manager force a
+ * status?" is one grep rather than a judgement call.
  *
  * Notify: `N:task_status_changed` → the assignee (§13.4.5), after commit, only when the status
  * actually moved. An unassigned task notifies nobody.
@@ -1349,12 +1355,15 @@ export async function setTaskStatusProtected(input: SetTaskStatusProtectedInput)
         throw new AppError('NOT_FOUND', 'Task not found');
       }
 
-      // Guard 1 — direct approve is never allowed here (§13.4.5).
-      if (parsed.status === 'approved') {
-        throw new AppError('GATE', 'Approve this task from the review screen, not the status menu', {
-          reason: 'use_review',
-          taskId: task.id,
-        });
+      // Guard 1: nothing closes a task here (§13.4.5, Amendment M). Only a review does.
+      if (parsed.status === 'approved' || parsed.status === 'completed') {
+        throw new AppError(
+          'GATE',
+          parsed.status === 'approved'
+            ? 'Approve this task from the review screen, not the status menu'
+            : 'Tasks close only through review: submit it, then approve it from the review screen',
+          { reason: 'use_review', taskId: task.id, status: parsed.status },
+        );
       }
 
       // Guard 2 — a revision has to say why (§13.4.5).
@@ -1409,8 +1418,9 @@ export async function setTaskStatusProtected(input: SetTaskStatusProtectedInput)
       const [row] = updated;
 
       // 4. AUDIT — same tx, and under its OWN action name (§13.4.5). `status_overridden` rather
-      // than `status_changed` is what makes the QC bypass greppable: the two paths must never
-      // share an action string, or "was this approved or waved through?" stops being answerable.
+      // than `status_changed` is what makes a manager override greppable: the two paths must never
+      // share an action string, or "did the assignee move this or was it forced?" stops being
+      // answerable.
       await writeAudit(tx, {
         actorId: actor.id,
         action: 'project_task.status_overridden',

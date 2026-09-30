@@ -38,8 +38,9 @@ export interface StatusDisplay {
  *   - `completed` is "Done" and `approved` is "Done ✓". They read almost the same on purpose:
  *     both mean the work is finished. The check-shield icon on `approved` is the *only* visual
  *     difference, because the difference is QC-approved vs. manager-closed (a QC bypass), which
- *     is a provenance distinction, not a progress one. "Completed" is a manager-only status and
- *     the word never appears as an employee-facing label.
+ *     is a provenance distinction, not a progress one. Amendment M removed that bypass, so no
+ *     new row is ever `completed`; the label stays so rows closed before it still render. The
+ *     word "Completed" never appears as an employee-facing label.
  */
 export const STATUS_DISPLAY = {
   planned: {
@@ -158,12 +159,13 @@ export const OPEN_SETTABLE_STATUSES = ['planned', 'in_progress', 'blocked'] as c
 /**
  * The statuses §13.4.5 `setTaskStatusProtected` accepts FROM THE MENU — the manager overrides.
  *
- * **`approved` is deliberately absent.** The action lists it (a well-formed payload) but always
- * refuses it with `GATE:use_review`: approving goes through the Phase-6 review modal, never the
- * status menu (§14.3.2). Offering it here would render a menu item whose only possible outcome
- * is an error toast.
+ * **`approved` and `completed` are deliberately absent.** The action lists both (a well-formed
+ * payload) but always refuses them with `GATE:use_review`: a task closes only when a manager
+ * approves its submission in the Phase-6 review modal, never from the status menu (§14.3.2,
+ * Amendment M). Offering either here would render a menu item whose only possible outcome is an
+ * error toast.
  */
-export const PROTECTED_SETTABLE_STATUSES = ['revision_required', 'completed', 'cancelled'] as const;
+export const PROTECTED_SETTABLE_STATUSES = ['revision_required', 'cancelled'] as const;
 
 /**
  * The statuses a task can be moved OUT OF via the menu — `OPEN_STATUSES` in actions.ts.
@@ -179,27 +181,6 @@ export const STATUS_CHANGEABLE_FROM = [
   'blocked',
   'revision_required',
 ] as const;
-
-/**
- * The label a status carries **in the dropdown**, which differs from its pill label in exactly
- * one case.
- *
- * §14.3.2 writes the manager set as "… Needs revision · Done (Completed) · Cancelled", with the
- * parenthetical distinguishing it from "Done (Approved)", which is NOT in the menu. The pill
- * stays plain "Done" — on a board, provenance is carried by the check-shield icon, but in a menu
- * there is no pill to compare against, so the word does the work.
- *
- * This is a MANAGER-only control. CLAUDE.md's "'Completed' never appears as an employee-facing
- * label" is scoped to what employees see; the manager choosing an explicit QC bypass is exactly
- * who should see the word.
- *
- * PUL-809's forbidden-words grep does NOT cover this file — §17 scopes the "Completed" glob to
- * `features/attendance/**` and `features/daily-plan/**`, and §17's PUL-809 note now says not to
- * widen it to `features/**` for exactly this reason.
- */
-export function statusMenuLabel(status: TaskStatus): string {
-  return status === 'completed' ? 'Done (Completed)' : STATUS_DISPLAY[status].label;
-}
 
 /**
  * Who is looking, as far as the menu is concerned.

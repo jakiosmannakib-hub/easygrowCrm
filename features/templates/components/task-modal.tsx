@@ -386,7 +386,6 @@ function TaskModalBody({
         </Field>
 
         <div className="flex flex-wrap gap-x-4 gap-y-2">
-          <Check label="QC required" checked={form.qcRequired} onChange={(v) => set('qcRequired', v)} />
           <Check
             label="Proof required"
             checked={form.proofRequired}

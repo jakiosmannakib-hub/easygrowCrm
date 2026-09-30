@@ -149,6 +149,8 @@ export const templateTasks = pgTable(
   },
   (table) => [
     check('due_rule_kind', sql`${table.dueRule}->>'kind' in ('day', 'before_deadline', 'after')`),
+    // Amendment M (PUL-416): a template can no longer mint a task that skips review.
+    check('template_tasks_qc_required_check', sql`${table.qcRequired} = true`),
     index('tt_category_idx').on(table.categoryId, table.position),
   ],
 );

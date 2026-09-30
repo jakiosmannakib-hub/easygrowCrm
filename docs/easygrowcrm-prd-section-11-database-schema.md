@@ -164,7 +164,7 @@ create table project_tasks (
   actual_hours     numeric(6,2),
   expected_output  text,
   sop_url          text,
-  qc_required      boolean not null default true,
+  qc_required      boolean not null default true check (qc_required = true),  -- always true since Amendment M (PUL-416); `project_tasks_qc_required_check`
   proof_required   boolean not null default false,
   client_visible   boolean not null default false,
   depends_on       text references project_tasks(id),
@@ -337,7 +337,7 @@ create table template_tasks (
   priority        task_priority not null default 'medium',
   est_hours       numeric(6,2),
   due_rule        jsonb not null,              -- see below
-  qc_required     boolean not null default true,
+  qc_required     boolean not null default true check (qc_required = true),  -- always true (PUL-416); `template_tasks_qc_required_check`
   proof_required  boolean not null default false,
   client_visible  boolean not null default false,
   sop_url         text,
@@ -650,6 +650,7 @@ revoke update, delete on audit_log from easygrowcrm_app;
 | 009 | QC trail | task_submissions + task_reviews (+ one_review_per_submission) | PUL-401, PUL-603 |
 | 010 | templates hierarchy | templates + template_months + template_categories + template_tasks + template_task_subtasks | PUL-501 |
 | 010a | accounts (Amendment M) | accounts; `projects.client_id` → `projects.account_id` with backfill. Drizzle file `0009_accounts.sql` | PUL-414 |
+| 010b | QA mandatory (Amendment M) | backfill `qc_required = false` → true on `project_tasks` and `template_tasks` (row counts via `RAISE NOTICE`, no audit row), then `CHECK (qc_required = true)` on both; re-runnable. Drizzle file `0010_qc_required_always.sql` | PUL-416 |
 | 011 | leave | leave_requests + leave_quotas (seeded) | PUL-701 |
 | 012 | notifications | notifications + webhook_outbox | PUL-801 |
 

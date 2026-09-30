@@ -81,13 +81,13 @@ Actor legend: **SA** super_admin · **TL** team_leader · **PM** project_manager
 
 ## 13.2 Clients
 
-Client management lives with Settings (SA + HR). TL/PM pick clients when starting projects; they don't administer the client list.
+Client management lives on its own page, `/clients` (§14.12a; moved out of Settings 2026-09-30), and is SA + HR only. TL/PM open that page too, but only to manage accounts (§9.6 ¹²): they pick clients when starting projects and don't administer the client list.
 
 ### 13.2.1 `createClient` — **Who:** SA, HR (`client.create`). **Input:** `{ name, contact?, notes? }`. **Audit:** `client.created`.
 ### 13.2.2 `updateClient` — **Who:** SA, HR (`client.update`). **Input:** `{ clientId, name?, contact?, notes? }`. **Audit:** `client.updated`.
 ### 13.2.3 `archiveClient` — **Who:** SA, HR (`client.archive`). **Guards:** no non-archived projects reference it (`GATE:client_in_use`). *(Amendment M: no live **accounts** reference it; same code.)* **Tx:** soft delete. **Audit:** `client.archived`. (`client.read` is open to all roles per §9.6 ¹⁰.)
 
-**Accounts (Amendment M).** A client's end businesses. Unlike clients, managers administer them too (§9.6 ¹²), from the Projects workspace (§14.3).
+**Accounts (Amendment M).** A client's end businesses. Unlike clients, managers administer them too (§9.6 ¹²), from `/clients` (§14.12a) today and from the Projects workspace (§14.3) once PUL-417 lands.
 
 ### 13.2.4 `createAccount` — **Who:** SA, TL, PM, HR (`account.create`). **Input:** `{ clientId, name, location?, website?, notes? }`. **Guards:** client exists and is live (`NOT_FOUND`). **Audit:** `account.created`.
 ### 13.2.5 `updateAccount` — **Who:** SA, TL, PM, HR (`account.update`). **Input:** `{ accountId, name?, location?, website?, notes? }` (moving an account to another client is not supported). **Audit:** `account.updated` (diff only).
@@ -188,7 +188,9 @@ All **Who:** MGR (`template.create/update/delete`; HR reads only, §9.6 ⁹). Al
 > - **Task fields** on both task actions: `title, roleHint, priority, estHours, dueRule,
 >   qcRequired, proofRequired, clientVisible, sopUrl, expectedOutput, checklist`. There is no
 >   category field: a task cannot move between categories. Edits follow the PUL-203
->   partial-update convention with a diff-only audit row.
+>   partial-update convention with a diff-only audit row. *(PUL-416: `qcRequired` is
+>   `z.literal(true)`, defaulting to true on add and optional on update, here and in
+>   13.3.7a. `false` fails validation, and a DB CHECK backs it.)*
 > - **Audit rows are keyed on the template** (`resource_type = 'template'`), each naming the
 >   month / category / task it touched. Every hierarchy edit locks the template row, and a
 >   soft-deleted template is NOT_FOUND for all of them.
@@ -200,7 +202,7 @@ All **Who:** MGR (`template.create/update/delete`; HR reads only, §9.6 ⁹). Al
 ### 13.4.1 `createTask`
 - **Who:** MGR (`project_task.create`)
 - **Input:** `{ projectId, title, category, month?, description?, assigneeId?, dueDate?, priority?, estimatedHours?, expectedOutput?, sopUrl?, qcRequired?, proofRequired?, clientVisible?, dependsOn?, checklist?: string[] }`
-- **Guards:** project active; assignee active & not SA (trigger backs this); `dependsOn` in same project, no cycle.
+- **Guards:** project active; assignee active & not SA (trigger backs this); `dependsOn` in same project, no cycle. *(PUL-416, Amendment M: `qcRequired` accepts only `true` or omitted; `false` is a `VALIDATION` failure, backed by the `project_tasks_qc_required_check` CHECK. Review is mandatory.)*
 - **Audit:** `project_task.created`. **Notify:** `N:task_assigned` → assignee if set.
 
 ### 13.4.2 `updateTaskFields`

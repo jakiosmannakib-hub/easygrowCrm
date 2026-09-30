@@ -12,6 +12,14 @@
 // plus the per-role reachability of each, the shared optimistic lock, and the two gates that
 // only exist on the protected path (`use_review`, `note_required`).
 //
+// Amendment M (PUL-416): `completed` is no longer a manager override. It is refused with
+// `GATE:use_review` exactly like a direct `approved`, and "completed is illegal for every role"
+// below proves no role and no action can write it.
+//
+// Mutation proof (run by hand at PUL-416): deleting `|| parsed.status === 'completed'` from
+// guard 1 in `setTaskStatusProtected` fails 13 tests: the matrix's 8 `* → completed` cases,
+// the 3 manager roles in the every-role block, the named-refusal test and the legacy-row test.
+//
 // STILL OWED: §13.4.6 `submitTask` is the third and last way a task's status moves, and it is
 // not built yet (its own ticket). When it lands, its transitions belong HERE rather than in a
 // new file — the point of a matrix test is that one file answers "can X move from A to B?".
@@ -445,9 +453,10 @@ describe('changeTaskStatusOpen — the rest of the contract', () => {
 describe('the protected-status transition matrix (§13.4.5)', () => {
   for (const from of taskStatus.enumValues) {
     for (const to of PROTECTED) {
-      // `approved` is refused from everywhere — the guard runs before the origin is consulted.
-      const verdict =
-        to === 'approved' ? 'GATE:use_review' : from === to ? 'no-op' : 'allowed (override)';
+      // `approved` and `completed` are refused from everywhere: the guard runs before the origin
+      // is consulted (Amendment M closes every task through review).
+      const refused = to === 'approved' || to === 'completed';
+      const verdict = refused ? 'GATE:use_review' : from === to ? 'no-op' : 'allowed (override)';
 
       it(`${from} → ${to} is ${verdict}`, async () => {
         await putTaskAt(subject(), { status: from });
@@ -463,7 +472,7 @@ describe('the protected-status transition matrix (§13.4.5)', () => {
           ...(to === 'revision_required' && { note: 'Headings are still H3.' }),
         });
 
-        if (to === 'approved') {
+        if (refused) {
           expectFail(result, 'GATE', 'use_review');
           expect((await taskRow(subject())).status).toBe(from);
           expect(await auditFor(subject())).toHaveLength(0);
@@ -491,47 +500,127 @@ describe('the protected-status transition matrix (§13.4.5)', () => {
   }
 });
 
-describe('the QC bypass is loud (§4.2, §13.4.5)', () => {
-  it('completed from a non-terminal state is ALLOWED and audited as status_overridden', async () => {
-    // This is the bypass §4.2 deliberately permits: a manager marking work done without it
-    // passing through review. What makes it acceptable is that the audit names it as an
-    // override, so "how often did we skip QC?" is one grep.
-    await putTaskAt(subject(), { status: 'in_progress' });
+describe('completed is illegal for every role (Amendment M, PUL-416)', () => {
+  // Every role, from every origin status, through both status actions. Managers reach the
+  // action and get the named `GATE:use_review`; everyone else is stopped earlier by
+  // `authorize()` (FORBIDDEN). Either way the row never becomes `completed` and no override is
+  // audited. The subject task is assigned to employees[0] so the assignee, the one non-manager
+  // with a status cell, is covered too.
+  type Who = { label: string; id: () => string; manager: boolean; setup?: () => Promise<void> };
+
+  const WHO: Who[] = [
+    { label: 'super_admin', id: () => seed.superAdmin.id, manager: true },
+    { label: 'team_leader', id: () => seed.teamLeader.id, manager: true },
+    { label: 'project_manager', id: () => seed.projectManager.id, manager: true },
+    {
+      label: 'admin_hr',
+      id: () => seed.employees[2].id,
+      manager: false,
+      // The fixture has no HR user; promote one so the role comes from a real row.
+      setup: async () => {
+        await db
+          .update(userTable)
+          .set({ role: 'admin_hr' })
+          .where(eq(userTable.id, seed.employees[2].id));
+      },
+    },
+    { label: 'employee (assignee)', id: () => seed.employees[0].id, manager: false },
+    { label: 'employee (not assignee)', id: () => seed.employees[1].id, manager: false },
+  ];
+
+  async function overridesFor(taskId: string) {
+    return (await auditFor(taskId)).filter((a) => a.action === 'project_task.status_overridden');
+  }
+
+  for (const who of WHO) {
+    it(`${who.label}: setTaskStatusProtected(completed) is refused from every origin`, async () => {
+      await who.setup?.();
+      actAs(who.id());
+
+      for (const from of taskStatus.enumValues) {
+        await putTaskAt(subject(), { status: from, assigneeId: seed.employees[0].id });
+        const before = await taskRow(subject());
+
+        const result = await setTaskStatusProtected({
+          taskId: subject(),
+          version: before.version,
+          status: 'completed',
+        });
+
+        if (who.manager) {
+          expectFail(result, 'GATE', 'use_review');
+        } else {
+          expectFail(result, 'FORBIDDEN');
+        }
+
+        const after = await taskRow(subject());
+        expect(after.status, `${who.label} from ${from}`).toBe(from);
+        expect(after.version, `${who.label} from ${from}`).toBe(before.version);
+      }
+
+      expect(await overridesFor(subject())).toHaveLength(0);
+      expect(__sentNotifications()).toHaveLength(0);
+    });
+
+    it(`${who.label}: changeTaskStatusOpen cannot carry completed at all`, async () => {
+      // The open action's enum never listed it, so it fails validation (a rejection, per
+      // PUL-111) before any gate or lock. Pinned so nobody widens that enum to "help".
+      await who.setup?.();
+      await putTaskAt(subject(), { status: 'in_progress', assigneeId: seed.employees[0].id });
+      actAs(who.id());
+
+      await expect(
+        changeTaskStatusOpen({
+          taskId: subject(),
+          version: 1,
+          status: 'completed' as never,
+        }),
+      ).rejects.toThrow();
+
+      expect((await taskRow(subject())).status).toBe('in_progress');
+    });
+  }
+
+  it('the refusal names the gate the toast maps, and carries the refused status', async () => {
     actAs(seed.projectManager.id);
 
-    const before = await taskRow(subject());
-    const row = expectOk(
-      await setTaskStatusProtected({
-        taskId: subject(),
-        version: before.version,
-        status: 'completed',
-      }),
-    );
-
-    expect(row.status).toBe('completed');
-
-    const audit = await auditFor(subject());
-    expect(audit).toHaveLength(1);
-    // THE assertion this ticket turns on — the distinct action string.
-    expect(audit[0].action).toBe('project_task.status_overridden');
-    expect(audit[0].action).not.toBe('project_task.status_changed');
-    expect(audit[0]).toMatchObject({
-      actorId: seed.projectManager.id,
-      resourceType: 'project_task',
-      before: { status: 'in_progress', version: 1 },
-      after: { status: 'completed', version: 2 },
+    const result = await setTaskStatusProtected({
+      taskId: subject(),
+      version: 1,
+      status: 'completed',
     });
+
+    const failure = expectFail(result, 'GATE', 'use_review');
+    expect(failure.message).toMatch(/review/i);
   });
 
+  it('a legacy completed row is left alone: still completed, still locked in the menu', async () => {
+    // Old rows are untouched (PUL-416 point 4). The menu is closed on them for everyone, and a
+    // manager asking for `completed` again is still refused rather than treated as a no-op, so
+    // the refusal never depends on what the row already holds.
+    await putTaskAt(subject(), { status: 'completed' });
+    actAs(seed.projectManager.id);
+
+    expectFail(
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      'GATE',
+      'use_review',
+    );
+
+    expect((await taskRow(subject())).status).toBe('completed');
+  });
+});
+
+describe('overrides are audited distinctly (§13.4.5)', () => {
   it('the two paths never share an action string', async () => {
-    // Move the same task twice — once by the pill, once by the override — and the audit log
-    // must distinguish them. If either path were renamed to match the other, the bypass would
-    // become invisible in exactly the query that exists to find it.
+    // Move the same task twice (once by the pill, once by the override) and the audit log
+    // must distinguish them. If either path were renamed to match the other, a forced status
+    // would become invisible in exactly the query that exists to find it.
     actAs(seed.projectManager.id);
 
     expectOk(await changeTaskStatusOpen({ taskId: subject(), version: 1, status: 'in_progress' }));
     expectOk(
-      await setTaskStatusProtected({ taskId: subject(), version: 2, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 2, status: 'cancelled' }),
     );
 
     const actions = (await auditFor(subject())).map((a) => a.action);
@@ -652,7 +741,7 @@ describe('setTaskStatusProtected is MGR-only (§9.6)', () => {
     actAs(seed.employees[1].id);
 
     expectFail(
-      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
       'FORBIDDEN',
     );
 
@@ -673,7 +762,7 @@ describe('setTaskStatusProtected is MGR-only (§9.6)', () => {
       await setTaskStatusProtected({
         taskId: task,
         version: before.version,
-        status: 'completed',
+        status: 'cancelled',
       }),
       'FORBIDDEN',
     );
@@ -702,10 +791,10 @@ describe('setTaskStatusProtected is MGR-only (§9.6)', () => {
     actAs(seed.employees[1].id);
 
     const row = expectOk(
-      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
     );
 
-    expect(row.status).toBe('completed');
+    expect(row.status).toBe('cancelled');
   });
 });
 
@@ -716,7 +805,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
     await db.update(projectTasks).set({ version: 2 }).where(eq(projectTasks.id, subject()));
 
     expectFail(
-      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
       'CONFLICT',
       'stale_version',
     );
@@ -736,7 +825,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
       await setTaskStatusProtected({
         taskId: task,
         version: before.version,
-        status: 'completed',
+        status: 'cancelled',
       }),
     );
 
@@ -745,7 +834,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
     expect(sent[0]).toMatchObject({
       to: seed.employees[0].id,
       type: 'task_status_changed',
-      data: { taskId: task, status: 'completed' },
+      data: { taskId: task, status: 'cancelled' },
     });
   });
 
@@ -753,7 +842,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
     actAs(seed.projectManager.id); // `subject()` is unassigned
 
     expectOk(
-      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
     );
 
     expect(__sentNotifications()).toHaveLength(0);
@@ -783,7 +872,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
       await setTaskStatusProtected({
         taskId: 'pt_does_not_exist',
         version: 1,
-        status: 'completed',
+        status: 'cancelled',
       }),
       'NOT_FOUND',
     );
@@ -794,7 +883,7 @@ describe('setTaskStatusProtected — lock, notify and the rest', () => {
     actAs(seed.projectManager.id);
 
     expectFail(
-      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'completed' }),
+      await setTaskStatusProtected({ taskId: subject(), version: 1, status: 'cancelled' }),
       'NOT_FOUND',
     );
   });

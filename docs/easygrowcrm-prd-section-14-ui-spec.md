@@ -16,16 +16,17 @@
 | 1 | Dashboard | `/dashboard` | all |
 | 2 | Employees | `/employees` | SA, HR |
 | 3 | Attendance | `/attendance` | all |
-| 4 | Projects | `/projects` | all |
-| 5 | Project Templates | `/templates` | SA, HR, PM, TL |
-| 6 | My Tasks | `/my-tasks` | SA, HR, PM, TL |
-| 7 | Daily Task Plan | `/daily-plan` | all |
-| 8 | End-of-Day Reports | `/eod` | all |
-| 9 | Leave Requests | `/leave` | all |
-| 10 | Review | `/review` | SA, HR, PM, TL |
-| 11 | Reports | `/reports` | SA, HR, PM, TL |
-| 12 | Audit Log | `/audit` | SA, HR *(new — was not in prototype)* |
-| 13 | Settings | `/settings` | SA, HR |
+| 4 | Clients | `/clients` | SA, HR, PM, TL *(added 2026-09-30, moved out of Settings; §14.12a)* |
+| 5 | Projects | `/projects` | all |
+| 6 | Project Templates | `/templates` | SA, HR, PM, TL |
+| 7 | My Tasks | `/my-tasks` | SA, HR, PM, TL |
+| 8 | Daily Task Plan | `/daily-plan` | all |
+| 9 | End-of-Day Reports | `/eod` | all |
+| 10 | Leave Requests | `/leave` | all |
+| 11 | Review | `/review` | SA, HR, PM, TL |
+| 12 | Reports | `/reports` | SA, HR, PM, TL |
+| 13 | Audit Log | `/audit` | SA, HR *(new — was not in prototype)* |
+| 14 | Settings | `/settings` | SA, HR |
 
 - Sidebar: logo top, items with lucide icon + label, active item highlighted, Logout at bottom. **The prototype's user-switcher dropdown must NOT ship.**
 - Hidden items don't render (no grayed-out state). Route access is enforced server-side regardless (§9.5) — the sidebar is cosmetic.
@@ -101,7 +102,7 @@ Visibility: Board/List/Calendar all roles; Review + Workload MGR/HR; **Manager Q
 - Colors/labels per status map. Display labels: Planned "Not Started" · In Progress "Working on it" · Blocked "Blocked" · Submitted "Awaiting review" · Revision Required "Needs revision" *(renamed from prototype's "Stuck — revision" — "Stuck" collided with Blocked)* · Approved "Done ✓" **with a small check-shield icon** · Completed "Done" *(no icon — the icon is what visually distinguishes QC-approved from manager-closed, review fix)* · Cancelled "Cancelled".
 - Dropdown option sets:
   - **EMP (assignee, unlocked):** Not Started · Working on it · Blocked · ➤ *Submit for review…*
-  - **MGR:** the open set + Needs revision · Cancelled. *(Amendment M removed "Done (Completed)": no one closes a task without review. The rest of this bullet is kept for history.)* ~~the open set + Needs revision · Done (Completed) · Cancelled.~~ **"Done (Approved)" is NOT in the dropdown** — approving goes through the Review modal only (13.4.5 `GATE:use_review`). Completed here *is* the explicit QC-bypass and is audited as such.
+  - **MGR:** the open set + Needs revision · Cancelled. *(Amendment M removed "Done (Completed)": no one closes a task without review. The rest of this bullet is kept for history.)* ~~the open set + Needs revision · Done (Completed) · Cancelled.~~ **"Done (Approved)" is NOT in the dropdown** — approving goes through the Review modal only (13.4.5 `GATE:use_review`). ~~Completed here *is* the explicit QC-bypass and is audited as such.~~ *(PUL-416: `setTaskStatusProtected` now refuses `completed` with `GATE:use_review` too, for every role. Legacy `completed` rows still render as "Done" and still satisfy dependencies.)*
   - Locked states (submitted/approved/completed/cancelled): pill read-only for EMP; current status always shown even if outside the option set.
   - Dependency-blocked: pill shows Blocked color regardless of stored status, lock icon, tooltip names the dependency (§13.4.6 guard).
 - ➤ *Submit for review…* opens the Submit modal, never changes status directly.
@@ -144,11 +145,11 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
 
 ### 14.3.8 New Task modal / Start Project Wizard
 
-**New Task modal:** fields per 13.4.1; category pre-filled when opened from a category group; assignee ▾ excludes SA and inactive users.
+**New Task modal:** fields per 13.4.1; category pre-filled when opened from a category group; assignee ▾ excludes SA and inactive users. *(PUL-416, Amendment M: there is no "QC required" toggle. Review is mandatory, so `qcRequired` is never sent and the column default, true, applies.)*
 
 **Start Project wizard** (from a template card or its detail view):
 - Summary banner at top: `N tasks · N months · N roles · N QC gates will be generated`.
-- **Step 1 — Choose client & project name:** client ▾ (from `getClients`, 13.8) · project name (defaults to template name, editable).
+- **Step 1 — Choose client & project name:** client ▾ (from `getClients`, 13.8) · project name (defaults to template name, editable). *(When the chosen client has no active accounts, or there are no active clients at all, the hint links to `/clients` (§14.12a), where accounts and clients are managed.)*
 - **Step 2 — Set dates:** start date · deadline (both `Aug 08, 2026` full-date format).
 - **Step 3 — Assign team members to roles:** one row per template role → assignee ▾ (active non-SA users). Rows may be left unassigned; those tasks are created with `assignee = null` and surface in the Unassigned group.
 - **Step 4 — Preview:** scrollable list of every task that will be generated, one row per task showing `#N · title (with [Client] shown in place of the token) · category · role · due-rule pill · QC badge`. Read-only — this is the last confirmation before Create.
@@ -204,7 +205,7 @@ Layout:
 - **Toolbar:** month/task summary count + **+ Add month** button (MGR only).
 - **Month groups** — one collapsible card per month, in order:
   - **Month header:** chevron · calendar icon · month name (`Month 1 — January 10`) · meta (`N tasks · N categories`) · action buttons **Add category** / **Rename** / `×` delete.
-  - **Column header row** (when open): Task · Role · Due rule · Priority · Est · QC gate · Proof · ⋯
+  - **Column header row** (when open): Task · Role · Due rule · Priority · Est · QC gate · Proof · ⋯ *(PUL-416: `qc_required` is always true, so the QC badge now shows on every task and the "QC Gates" stat equals the task count. Whether to drop both is an open UI call, not yet decided.)*
   - **Category groups** nested inside the month, each collapsible:
     - Category header: color dot · name · task count · **Add task** / **Rename** / `×` delete.
     - **Task rows** — expandable when the task has subtasks (chevron `▶` to the left). Row columns match the header. Task title shows `#N` global index, a `token` badge when the title contains `{{ClientName}}`, and a small subtask count (`3 subtasks`) inline.
@@ -232,7 +233,7 @@ Triggered by **+ Add month** (MGR only). A single modal with a 3-step indicator:
 **Step 3 — Add tasks & subtasks:**
 - Category tabs across the top (`Content (2)`, `Reporting (1)` — count updates live). Active tab is where new tasks land; switch by click.
 - Existing task cards for the active category: header row (`#N` · title · role · due-rule pill · QC badge · × remove) followed by an inline subtask block (existing subtasks as `└ N.M title ×`, then an **Add subtask…** input + **+ Subtask** button).
-- **Quick add task** panel below: title (required) · role ▾ (only roles declared on the template) · priority ▾ · est (hours) · due rule ▾ (**Day N / N days before deadline** — dependency-based rules deferred to per-task edit) · QC gate checkbox · Proof required checkbox · **+ Add task**. Enter in title also adds.
+- **Quick add task** panel below: title (required) · role ▾ (only roles declared on the template) · priority ▾ · est (hours) · due rule ▾ (**Day N / N days before deadline** — dependency-based rules deferred to per-task edit) · ~~QC gate checkbox~~ · Proof required checkbox · **+ Add task**. Enter in title also adds. *(PUL-416: the QC gate checkbox is removed; review is mandatory.)*
 - Summary banner: `N tasks · N subtasks · N categories` — live count across all tabs.
 - **Save month** button:
   - Creates **Month 1** with the user's categories, tasks, and subtasks.
@@ -242,7 +243,7 @@ Triggered by **+ Add month** (MGR only). A single modal with a 3-step indicator:
 
 ### 14.4.4 Add/Edit Task modal (from template detail)
 Opened from the per-category **Add task** button or the row **Edit** button.
-- Fields: name (`{{ClientName}}` token supported and documented inline) · role ▾ · priority ▾ · estimate (hours) · **due-rule editor** (Amendment D — exactly three options: **Day N from month start** / **N days before deadline** / **After task #** with a dependency dropdown of every other task in the template) · QC gate checkbox · Proof required checkbox · Checklist textarea (one item per line).
+- Fields: name (`{{ClientName}}` token supported and documented inline) · role ▾ · priority ▾ · estimate (hours) · **due-rule editor** (Amendment D — exactly three options: **Day N from month start** / **N days before deadline** / **After task #** with a dependency dropdown of every other task in the template) · ~~QC gate checkbox~~ · Proof required checkbox · Checklist textarea (one item per line). *(PUL-416: the QC checkbox is removed; review is mandatory and the actions accept only `qcRequired: true` or omitted.)*
 - **Subtasks section** at the bottom — bordered panel with header showing count. Existing subtasks render as `└ N title ×` rows. Inline `New subtask title…` input + **+ Create subtask** button below (Enter to add). The live list is modal-local state (*prototype used `window._tftSubs`; real build: component state, §16.10*); the modal never closes while managing subtasks — one Save writes the task and its subtasks together (13.3.7d `updateTemplateTask` takes the full replacement list).
 - Edit mode also shows a **Delete task** button (red, left of Cancel).
 
@@ -296,11 +297,20 @@ Score-free rebuild (Amendment H): **Delivery** — tasks approved per person/per
 ## 14.12 Employees `/employees` (SA, HR)
 Card grid: avatar, name, title, dept chip, role badge, Active/Deactivated pill; filters (dept, status, search). **+ Add Employee** → modal: email, name, role ▾, title, dept, join date (13.1.1) — copy explains *"They'll sign in with their company Google account. No invitation email is sent."* *(DECIDED Phase 1, PUL-202.3, owner's call: two sentences, no em dash; was "…Google account — no invitation email is sent.")* Card → detail: edit fields (13.1.2); **Change role** (SA only, 13.1.3); **Deactivate** → the **offboarding checklist modal** (13.1.4): lists every open assignment (reassign ▾ / cancel) and every routed review (reroute ▾); the Deactivate button stays disabled until every row is resolved; blocked entirely with an explanation if it would leave <2 managers.
 
+## 14.12a Clients `/clients` (SA, HR, PM, TL)
+*(ADDED 2026-09-30: client management moved out of Settings into its own page. No new actions; it uses 13.2's client and account actions.)* Employees don't get the nav item, and the route guard 404s them like every other guarded page (§9.5).
+
+- **Toolbar:** name search · **Show archived** checkbox (off by default) · `N of M` count · **+ Add Client** (SA, HR only).
+- **Client list:** one row per client: expand chevron · name · contact · Active/Archived pill · account count (`N`, plus `(+M archived)` when any are archived). **Edit** and **Archive…** on the row (SA, HR only); archive is blocked with `GATE:client_in_use` while the client has live accounts. Clicking a row expands it rather than opening Edit, because not every viewer can edit. Notes are edited in the Edit dialog, not shown as a column.
+- **Expanded row:** the client's accounts (name, location, Active/Archived) with **+ Add account**, **Edit**, **Archive…** and **Unarchive** (SA, HR, PM, TL: `account.*`, §9.6 ¹²). Archive is blocked with `GATE:account_in_use` while the account has live projects. For an archived client, Add and Unarchive are not offered.
+- **Permission-gated controls are hidden, not disabled.** The page computes one flag per resource with `can()` and requires create, update and archive all to be allowed, so if those cells ever diverge the controls hide rather than over-offer. Presentation only: every action re-authorizes.
+- Deliberately a flat list. PUL-417 adds the Client › Account › Project tree to the Projects workspace (§14.3).
+
 ## 14.13 Audit Log `/audit` (SA; HR scoped)
 Filters: actor ▾, resource type ▾, resource id, date range. Table: time · actor · action · resource · before→after (expandable JSON diff). Paginated. HR sees only leave/employee rows — no toggle, silently scoped. Banner: *"Viewing this log is itself logged."*
 
 ## 14.14 Settings `/settings` (SA, HR)
-Company name · timezone (display-only Asia/Dhaka) · work days · shift start/end · grace time · work target · half-day target · break allowances · auto-close hours · **Discord webhook URL** (with **Send test** button; DECIDED Phase 1 — was "webhook URL", target is Discord) · **Holidays** editor (date + name rows, 13.7.3) · **Clients** section (the home of client management per §9.6 ¹⁰: list + add / edit / archive, 13.2; archive blocked with `GATE:client_in_use` while live projects exist). *(inviteExpiryHours, officeIP: deleted.)*
+Company name · timezone (display-only Asia/Dhaka) · work days · shift start/end · grace time · work target · half-day target · break allowances · auto-close hours · **Discord webhook URL** (with **Send test** button; DECIDED Phase 1 — was "webhook URL", target is Discord) · **Holidays** editor (date + name rows, 13.7.3). *(inviteExpiryHours, officeIP: deleted.)* *(2026-09-30: the **Clients** section moved out to its own page, `/clients` (§14.12a). Settings holds no client management. Until PUL-903 builds these fields, `/settings` renders the shared placeholder.)*
 
 ---
 

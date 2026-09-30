@@ -61,6 +61,7 @@ These are the rules that, if broken, cost the most to unwind. Most are mechanica
 ### Data shape
 - **Templates are a strict hierarchy:** Template → Month → Category → Task → Subtask. There is no flat `tasks[]`. `tplAllTasks()` is the *only* way to flatten one. No parallel flat caches of hierarchical data.
 - **Clients are white-label partners (Amendment M):** Client › **Account** (the partner's end business) › Project. A project belongs to an account (`projects.account_id`), never directly to a client; reach the client through the account. Don't add a `client_id` back onto `projects`.
+- **QA is mandatory: `qc_required` is always true (Amendment M, PUL-416).** A CHECK on `project_tasks` and `template_tasks` rejects `false`, and the actions accept only `true` or omitted. Don't add a QC toggle back to any form, and don't write a branch that skips review on `qc_required`.
 - **State is declared upfront.** No lazy `if (!state.x) state.x = …` initializers; no `window.*` globals as state (both were prototype patterns that caused real bugs).
 
 ### Language (mechanically grepped by CI, PUL-809)

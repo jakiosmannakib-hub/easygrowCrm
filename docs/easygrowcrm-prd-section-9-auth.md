@@ -335,7 +335,7 @@ Legend: **SA** super_admin · **TL** team_leader · **PM** project_manager · **
 
 ⁹ **HR may read templates**, but **template editing stays manager-only** — HR does not build delivery workflows. Note the prototype's `canEdit` includes `admin_hr`; that is a prototype deviation and the PRD wins (Amendment A / §16.16). `template.create/update/delete` covers the entire hierarchy: months, categories, tasks, and subtasks within a template (add / rename / reorder / delete at every level, per §14.4.2–§14.4.5).
 
-¹⁰ Everyone can **read** clients (client names appear on projects, filters, and task titles that every employee sees). Create/update/archive is SA + HR only, consistent with its home in Settings (§14.14); archive is blocked with a `GATE` while the client has live projects. *(Amendment M: while it has live **accounts**.)*
+¹⁰ Everyone can **read** clients (client names appear on projects, filters, and task titles that every employee sees). Create/update/archive is SA + HR only, on the `/clients` page (§14.12a; moved out of Settings 2026-09-30, and that page is open to SA, HR, PM and TL so managers can reach accounts, ¹²); archive is blocked with a `GATE` while the client has live projects. *(Amendment M: while it has live **accounts**.)*
 
 ¹² **Amendment M.** An account is a client's end business (Client › Account › Project). Everyone reads accounts, for the same reason as ¹⁰. Unlike clients, **managers as well as SA + HR** create, update and archive them, because managers onboard end businesses from the Projects workspace (§14.3). Archive is blocked with `GATE:account_in_use` while the account has live projects.
 

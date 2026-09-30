@@ -562,7 +562,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 - [x] 207.1 Clients table lands with migration 007 prep or its own mini-migration — name, contact, active flag (v1-minimal per §11)
 - [x] 207.2 Actions: create / edit / archive-client (archive blocked if live projects exist → `GATE`)
-- [x] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section)
+- [x] 207.3 Minimal UI: managed from a section in Settings or a lightweight `/clients` list (owner's call — default: Settings section) *(revisited 2026-09-30: moved to `/clients`; see the note below)*
 - [x] 207.4 Tests: CRUD + archive gate + audit
 
 **Done when:** the Phase 4 filter bar and Phase 5 Start Project wizard have real clients to select.
@@ -571,6 +571,17 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > `0004_clients.sql`, `features/clients/*`, the Settings section, and `clients.test.ts` in the CI
 > manifest. *(This note previously read "built, NOT yet merged"; it was left stale after the
 > merge and is corrected here.)*
+>
+> **Clients moved out of Settings (2026-09-30, built, not yet merged; no ticket number yet).**
+> Amendment M gave TL / PM account rights (§9.6 ¹²), but Settings is SA + HR only, so managers had
+> no screen for them. Clients now has its own page, `/clients` (§14.12a), in the nav directly above
+> Projects for SA, HR, PM and TL; employees are 404'd by the route guard. No new actions: it
+> reuses 13.2's client and account actions. Client controls are hidden unless the viewer holds
+> `client.*` (SA, HR); account controls unless `account.*` (SA, HR, PM, TL). The Settings Clients
+> section and `SETTINGS_SECTIONS` in `lib/nav.ts` were deleted; `/settings` is back to the
+> placeholder until PUL-903. The Start Project wizard's "no clients" / "no accounts" hints link to
+> `/clients`. Test: `tests/nav.test.ts` (14 items, Clients above Projects, `/clients` access per
+> role). PUL-417's workspace tree still adds account management inside Projects.
 >
 > `clients` shipped **alone** rather than with `projects` + `personal_tasks` as §11.9's logical
 > migration 007 groups them, because `projects` belongs to PUL-401. That split is where the
@@ -1362,11 +1373,34 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** S · **Reads:** Amendment M, §13.4.5, §14.3.2 · **Depends:** PUL-404
 
-- [ ] 416.1 `completed` out of `PROTECTED_SETTABLE_STATUSES`; `setTaskStatusProtected` refuses it with `GATE:use_review`
-- [ ] 416.2 Manager pill menu offers Needs revision · Cancelled only
-- [ ] 416.3 Tests: `status-transitions.test.ts` (`completed` illegal for every role), `status-pill.test.ts`
+- [x] 416.1 `completed` out of `PROTECTED_SETTABLE_STATUSES`; `setTaskStatusProtected` refuses it with `GATE:use_review`
+- [x] 416.2 Manager pill menu offers Needs revision · Cancelled only
+- [x] 416.3 Tests: `status-transitions.test.ts` (`completed` illegal for every role), `status-pill.test.ts`
+- [x] 416.4 *(added during the build)* `qc_required` is always true: migration `0010_qc_required_always.sql` backfills `false` → true on `project_tasks` and `template_tasks` (row counts via `RAISE NOTICE`) and adds `CHECK (qc_required = true)` on both, re-runnable; QC checkbox removed from the New Task modal, the template task modal and the Add Month wizard; actions accept `qcRequired: true` or omitted only; seed templates flipped to `qcGate: true`; test `features/projects/qc-required-check.test.ts` → CI manifest
 
 **Done when:** no code path can write `completed`; old `completed` rows still render and still satisfy dependencies.
+
+> **Status: built, not yet merged** (branch `feat/pul-416-remove-completed-bypass`).
+>
+> - **Approve today:** no code path reaches `approved`. `reviewTask` (PUL-602) and `submitTask`
+>   (PUL-601) are not built, `setTaskStatusProtected` refuses it, and `changeTaskStatusOpen` never
+>   accepted it. Until PUL-602 lands, no task can close through the app at all.
+> - **`use_review`** now refuses both `approved` and `completed`; its toast sentence was reworded to
+>   say how a task closes. `statusMenuLabel()` (the "Done (Completed)" menu label) was deleted:
+>   with `completed` out of the menu it had no caller.
+> - **No code path skipped review when `qc_required` was false**, so nothing was deleted for it.
+>   The only readers are display: the `N QC gates` count (`template-meta.ts`) and the QC badges in
+>   the template tree and the Start Project preview. They now show on every task. **Open UI call:**
+>   keep or drop them.
+> - **416.4's backfill writes no audit row, by ruling.** It is a schema migration, not an actor's
+>   mutation, and `audit_log.actor_id` is a foreign key to a real user; there is no system user.
+>   The counts are reported with `RAISE NOTICE` instead.
+> - **Tests:** `status-transitions.test.ts` covers all six role cases from all eight origins through
+>   both status actions; mutation proof: removing the `completed` guard fails 13 of 101.
+>   `qc-required-check.test.ts` (8) proves both CHECKs, carries an in-file mutation proof (drop
+>   the CHECK in a rolled-back tx, the same insert succeeds) and runs the real 0010 file twice.
+>   Dropping both CHECKs by hand fails its refusal tests. `filtered-tasks.test.ts` gained a legacy
+>   `completed` upstream case; `create-task.test.ts` a `qcRequired: false` refusal.
 
 ---
 
@@ -1995,12 +2029,16 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** the banned words are mechanically unshippable.
 
-> **Do not widen the "Completed" glob to `features/**`.** PUL-407 ships a deliberate,
+> ~~**Do not widen the "Completed" glob to `features/**`.** PUL-407 ships a deliberate,
 > **manager-only** menu label `"Done (Completed)"` in `features/projects/display.ts`
-> (`statusMenuLabel`), which §14.3.2 specifies verbatim to distinguish it from "Done (Approved)".
-> CLAUDE.md's rule is scoped to *employee-facing* labels, and this is the manager choosing an
-> explicit QC bypass — exactly who should see the word. The two globs above are correct as
-> written; widening them would either break CI or invite someone to "fix" a correct label.
+> (`statusMenuLabel`), which §14.3.2 specifies verbatim to distinguish it from "Done (Approved)".~~
+>
+> **Updated at PUL-416.** That label and `statusMenuLabel()` are gone (Amendment M removed the
+> bypass), so the reason above no longer holds. One legitimate "Completed" remains in
+> `features/**`: `CLIENT_STATUS_LABEL` in `features/projects/display.ts`, the client Excel
+> export's relabel of `approved` (§3.1.7). So a widened glob would still need that file (or that
+> map) excluded. **Needs a ruling at PUL-809:** keep the two narrow globs, or widen to
+> `features/**` with that one exclusion.
 
 ---
 

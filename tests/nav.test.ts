@@ -15,6 +15,7 @@ const ALL_ROUTES: AppRoute[] = [
   '/dashboard',
   '/employees',
   '/attendance',
+  '/clients',
   '/projects',
   '/templates',
   '/my-tasks',
@@ -37,10 +38,11 @@ const EMPLOYEE_ROUTES: AppRoute[] = [
   '/leave',
 ];
 
-/** SA, HR, PM, TL rows minus the two SA/HR-only ones. */
+/** SA, HR, PM, TL rows minus the three SA/HR-only ones. Clients is not one of them. */
 const MANAGER_ROUTES: AppRoute[] = [
   '/dashboard',
   '/attendance',
+  '/clients',
   '/projects',
   '/templates',
   '/my-tasks',
@@ -60,8 +62,8 @@ const EXPECTED: Record<Role, AppRoute[]> = {
 };
 
 describe('the nav table itself', () => {
-  it('has all 13 §14.1 items, in order, with no duplicates', () => {
-    expect(NAV_ITEMS).toHaveLength(13);
+  it('has all 14 items (§14.1 plus Clients), in order, with no duplicates', () => {
+    expect(NAV_ITEMS).toHaveLength(14);
     expect(NAV_ITEMS.map((i) => i.route)).toEqual(ALL_ROUTES);
   });
 
@@ -87,11 +89,16 @@ describe('visibleNavItems — each role sees exactly the §14.1 set', () => {
   }
 
   it('the counts §14.1 implies', () => {
-    expect(visibleNavItems('super_admin')).toHaveLength(13);
-    expect(visibleNavItems('admin_hr')).toHaveLength(13);
-    expect(visibleNavItems('project_manager')).toHaveLength(10);
-    expect(visibleNavItems('team_leader')).toHaveLength(10);
+    expect(visibleNavItems('super_admin')).toHaveLength(14);
+    expect(visibleNavItems('admin_hr')).toHaveLength(14);
+    expect(visibleNavItems('project_manager')).toHaveLength(11);
+    expect(visibleNavItems('team_leader')).toHaveLength(11);
     expect(visibleNavItems('employee')).toHaveLength(6);
+  });
+
+  it('puts Clients directly above Projects', () => {
+    const routes = NAV_ITEMS.map((i) => i.route);
+    expect(routes.indexOf('/clients')).toBe(routes.indexOf('/projects') - 1);
   });
 });
 
@@ -110,6 +117,14 @@ describe('canAccessRoute — the predicate the server guard enforces', () => {
     expect(canAccessRoute('employee', '/employees')).toBe(false);
     expect(canAccessRoute('employee', '/audit')).toBe(false);
     expect(canAccessRoute('employee', '/settings')).toBe(false);
+  });
+
+  it('opens /clients to SA, HR, TL and PM, and denies an employee', () => {
+    // The route guard 404s the employee like every other guarded page (lib/route-guard.ts).
+    for (const role of ['super_admin', 'admin_hr', 'team_leader', 'project_manager'] as const) {
+      expect(canAccessRoute(role, '/clients'), role).toBe(true);
+    }
+    expect(canAccessRoute('employee', '/clients')).toBe(false);
   });
 
   it('denies an employee /review even though review.read is `self` for them', () => {

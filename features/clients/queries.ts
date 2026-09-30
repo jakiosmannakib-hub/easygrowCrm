@@ -95,7 +95,7 @@ export async function activeClientsQuery(): Promise<PickableClient[]> {
     .orderBy(asc(clients.name));
 }
 
-/** The columns the Settings → Clients list and its edit form need. */
+/** The columns the /clients list and its edit form need. */
 export interface ClientRow {
   id: string;
   name: string;
@@ -105,7 +105,7 @@ export interface ClientRow {
 }
 
 /**
- * Every client — **including archived ones** — name-ordered, for the Settings admin list
+ * Every client, **including archived ones**, name-ordered, for the /clients admin list
  * (§14.14). The deliberate opposite of `activeClientsQuery()`, mirroring the
  * `employeesListQuery` / `activeUsersQuery` split: a picker offering an archived client is a
  * bug, and an admin list hiding them is also a bug, because it is where SA/HR confirm an archive
@@ -124,7 +124,7 @@ export async function clientsListQuery(): Promise<ClientRow[]> {
     .orderBy(asc(clients.name));
 }
 
-/** The columns the Settings → Clients account rows and the account form need. */
+/** The columns the /clients account rows and the account form need. */
 export interface AccountRow {
   id: string;
   clientId: string;
@@ -136,7 +136,7 @@ export interface AccountRow {
 }
 
 /**
- * Every account, **including archived ones**, name-ordered, for the Settings admin list
+ * Every account, **including archived ones**, name-ordered, for the /clients admin list
  * (Amendment M). The admin-list half of the `clientsListQuery` / `activeClientsQuery` split: it
  * is where an archive is confirmed, so it must show archived rows. Tens of rows, no pagination.
  */

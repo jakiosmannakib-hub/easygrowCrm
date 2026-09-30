@@ -8,6 +8,7 @@
 
 import {
   BarChart3,
+  Building2,
   CalendarCheck,
   CalendarOff,
   ClipboardCheck,
@@ -27,6 +28,7 @@ const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard,
   Users,
   Clock,
+  Building2,
   FolderKanban,
   LayoutTemplate,
   ListChecks,

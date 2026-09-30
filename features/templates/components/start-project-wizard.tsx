@@ -24,6 +24,7 @@
 
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -284,7 +285,11 @@ function WizardBody({
             </Select>
             {clients.length === 0 ? (
               <p className="text-muted-foreground text-xs">
-                No active clients. Add one in Settings first.
+                No active clients. Add one on the{' '}
+                <Link href="/clients" className="text-foreground underline underline-offset-2">
+                  Clients page
+                </Link>{' '}
+                first.
               </p>
             ) : null}
           </div>
@@ -315,7 +320,11 @@ function WizardBody({
             </Select>
             {s.clientId && clientAccounts.length === 0 ? (
               <p className="text-muted-foreground text-xs">
-                {clientName} has no active accounts. Add one in Settings, under Clients.
+                {clientName} has no active accounts. Add one on the{' '}
+                <Link href="/clients" className="text-foreground underline underline-offset-2">
+                  Clients page
+                </Link>
+                .
               </p>
             ) : null}
           </div>

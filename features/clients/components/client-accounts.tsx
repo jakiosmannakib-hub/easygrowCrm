@@ -1,11 +1,11 @@
 // features/clients/components/client-accounts.tsx — PUL-415 Stage 2, Amendment M
 //
-// Settings → Clients: the accounts (a client's end businesses) listed under each client row,
-// with Add / Edit / Archive / Unarchive through the real §13.2.4 to §13.2.6 actions.
+// /clients: the accounts (a client's end businesses) listed under an expanded client row, with
+// Add / Edit / Archive / Unarchive through the real §13.2.4 to §13.2.6 actions.
 //
-// **A bridge, replaced in PUL-417.** Amendment M gives managers account rights and a home for
-// them in the Projects workspace tree; until that exists, this is where accounts are managed.
-// Settings is SA + HR only, so TL / PM hold the permission but have no screen for it yet.
+// The controls follow `account.*` (§9.6 ¹²: SA, HR, TL, PM) through `canManage`, computed with
+// `can()` on the server page. Hidden rather than disabled, and presentation only: every action
+// re-authorizes. PUL-417 adds account management to the Projects workspace tree as well.
 //
 // Same conventions as the client dialogs next door: bodies are mounted only while open and
 // keyed by the row, so MOUNTING IS THE RESET; after a successful write `router.refresh()`
@@ -42,10 +42,13 @@ type Open = { kind: 'add' } | { kind: 'edit'; id: string } | { kind: 'archive'; 
 export function ClientAccounts({
   client,
   accounts,
+  canManage,
 }: {
   client: ClientRow;
   /** This client's accounts, archived included. */
   accounts: AccountRow[];
+  /** `account.create` / `update` / `archive` (§9.6 ¹²). False hides every control. */
+  canManage: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState<Open>(null);
@@ -80,7 +83,7 @@ export function ClientAccounts({
           Accounts ({accounts.filter((a) => a.deletedAt === null).length} active)
         </span>
         {/* createAccount refuses an archived client, so the button is not offered for one. */}
-        {clientArchived ? null : (
+        {!canManage || clientArchived ? null : (
           <Button size="xs" variant="ghost" onClick={() => setOpen({ kind: 'add' })}>
             + Add account
           </Button>
@@ -107,36 +110,38 @@ export function ClientAccounts({
                 <Badge variant={archived ? 'outline' : 'secondary'}>
                   {archived ? 'Archived' : 'Active'}
                 </Badge>
-                <div className="ml-auto flex gap-1">
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={() => setOpen({ kind: 'edit', id: account.id })}
-                  >
-                    Edit
-                  </Button>
-                  {archived ? (
-                    // Refused (GATE:client_archived) while the client is archived; not offered then.
-                    clientArchived ? null : (
+                {canManage ? (
+                  <div className="ml-auto flex gap-1">
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => setOpen({ kind: 'edit', id: account.id })}
+                    >
+                      Edit
+                    </Button>
+                    {archived ? (
+                      // Refused (GATE:client_archived) while the client is archived; not offered then.
+                      clientArchived ? null : (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={pendingId === account.id}
+                          onClick={() => onUnarchive(account)}
+                        >
+                          {pendingId === account.id ? 'Restoring…' : 'Unarchive'}
+                        </Button>
+                      )
+                    ) : (
                       <Button
                         size="xs"
                         variant="outline"
-                        disabled={pendingId === account.id}
-                        onClick={() => onUnarchive(account)}
+                        onClick={() => setOpen({ kind: 'archive', id: account.id })}
                       >
-                        {pendingId === account.id ? 'Restoring…' : 'Unarchive'}
+                        Archive…
                       </Button>
-                    )
-                  ) : (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => setOpen({ kind: 'archive', id: account.id })}
-                    >
-                      Archive…
-                    </Button>
-                  )}
-                </div>
+                    )}
+                  </div>
+                ) : null}
               </li>
             );
           })}

@@ -11,7 +11,7 @@
 
 The unit of work is the **ticket**. Tickets are numbered `PUL-<phase><serial>` — the leading digit(s) name the phase (`PUL-104` = Phase 1, ticket 04; `PUL-1003` = Phase 10, ticket 03), and subtasks are `<ticket>.<n>` (e.g. `104.2`). Work top to bottom: tickets are dependency-ordered, so start at the lowest open number and don't begin a phase until the previous one is green.
 
-The plan is **91 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, PUL-414 … PUL-418 to Phase 4 by Amendment M, and PUL-419 (Onboarding month) and PUL-420 (`/clients` page) to Phase 4 on 2026-09-30, and PUL-421 (List Month header `+ Add task`) after that)*:
+The plan is **92 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, PUL-414 … PUL-418 to Phase 4 by Amendment M, and PUL-419 (Onboarding month) and PUL-420 (`/clients` page) to Phase 4 on 2026-09-30, PUL-421 (List Month header `+ Add task`) and PUL-422 (collapsible sidebar) after that)*:
 
 | Phase | Focus                                                       | Tickets             |
 | ----- | ----------------------------------------------------------- | ------------------- |
@@ -19,7 +19,7 @@ The plan is **91 tickets across 11 phases**, with 360+ checkable subtasks *(orig
 | 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-113   |
 | 2     | Employees & clients                                         | PUL-201 … PUL-207   |
 | 3     | Attendance                                                  | PUL-301 … PUL-308   |
-| 4     | Projects & tasks                                            | PUL-401 … PUL-421   |
+| 4     | Projects & tasks                                            | PUL-401 … PUL-422   |
 | 5     | Templates & Start Project                                   | PUL-501 … PUL-506   |
 | 6     | QC, review & EOD                                            | PUL-601 … PUL-607   |
 | 7     | Leave                                                       | PUL-701 … PUL-707   |
@@ -704,7 +704,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-# Phase 4 — Projects & Tasks (21 tickets)
+# Phase 4 — Projects & Tasks (22 tickets)
 
 ---
 
@@ -1588,6 +1588,43 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
+### PUL-422 — Collapsible app sidebar
+
+**Budget:** S · **Reads:** §14.1 · **Depends:** PUL-110, PUL-113
+
+- [x] 422.1 A sidebar toggle at the left of the top header: Menu icon, `aria-label="Toggle sidebar"`, `aria-expanded` (and `aria-controls`)
+- [x] 422.2 md and up, two states: expanded (as before, 240px) and an icon rail (64px) with labels as Base UI tooltips, the active highlight kept, Logout as an icon with a tooltip, and the logo clipped to its "e". The width animates and the main column reflows beside it
+- [x] 422.3 Default: rail below 1440px, expanded at 1440px and up. A manual toggle wins and is saved in localStorage (`easygrow.sidebar`, every read and write in try/catch). No hydration mismatch and no layout flash on first render
+- [x] 422.4 Below md the sidebar is hidden; the toggle opens it as a left overlay drawer with full labels, closing on navigation, outside click and Escape
+- [x] 422.5 Nav items still come from `lib/nav.ts` `visibleTo`; no route guard changed. No new test: the nav table and guards are unchanged, and `tests/nav.test.ts` still covers them
+
+**Done when:** the sidebar collapses and expands on desktop, remembers the choice across reloads with no flash, and works as a drawer on a phone. *(Not yet walked through in a browser.)*
+
+> **Status: built, not yet committed**, on `pul-422/add-sidebar-drawer`.
+>
+> - **CSS owns the width, not React.** A `rail:` custom variant in `app/globals.css` matches
+>   inside `[data-app-sidebar]` only: always when `<html data-sidebar="collapsed">`, and below
+>   1440px unless `data-sidebar="expanded"`. The server HTML is the same for every viewport, so
+>   the browser picks the width before paint.
+> - **A saved choice reaches the CSS before first paint.** `SIDEBAR_INIT_SCRIPT`
+>   (`components/shell/sidebar-pref.ts`, a plain module so the server gets the string) is
+>   inlined in the root layout's `<head>` and copies localStorage onto `<html data-sidebar>`.
+>   `<html>` carries `suppressHydrationWarning` for that one attribute.
+> - **React state drives only ARIA and tooltips** (`components/shell/sidebar-state.tsx`). It
+>   reads the preference and the two media queries through `useSyncExternalStore` with a `null`
+>   server snapshot, so hydration matches the HTML; `aria-expanded` is omitted until then.
+> - **Drawer:** the same sidebar body in a left `Sheet`. It portals outside
+>   `[data-app-sidebar]`, so it can never render as a rail. It closes on a link click (covers the
+>   current page), on a path change, when the viewport grows past md, and on Base UI's outside
+>   press and Escape.
+> - **Logo:** `public/easygrow.webp` is a wordmark with no icon mark, so the rail clips it with
+>   CSS to its first glyph (12px of 98px at `h-4`). One asset for both states, and the clip
+>   animates with the width. A dedicated mark can replace it later.
+> - **New files:** `components/shell/sidebar-pref.ts`, `components/shell/sidebar-state.tsx`,
+>   `components/ui/tooltip.tsx` (base-mira wrapper, styled like `menu.tsx`).
+
+---
+
 **Phase 4 exit:** full manual project management works; PUL-205's blocker-list now covers real open tasks (extend that test).
 
 ---
@@ -2379,14 +2416,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 1 — Foundation                         | PUL-101 … PUL-113   | 13     |
 | 2 — Employees & Clients                | PUL-201 … PUL-207   | 7      |
 | 3 — Attendance                         | PUL-301 … PUL-308   | 8      |
-| 4 — Projects & Tasks                   | PUL-401 … PUL-421   | 21     |
+| 4 — Projects & Tasks                   | PUL-401 … PUL-422   | 22     |
 | 5 — Templates & Start Project          | PUL-501 … PUL-506   | 6      |
 | 6 — QC, Review & EOD                   | PUL-601 … PUL-607   | 7      |
 | 7 — Leave                              | PUL-701 … PUL-707   | 7      |
 | 8 — Dashboards, Notifications & Polish | PUL-801 … PUL-809   | 9      |
 | 9 — Reports, Audit & Settings          | PUL-901 … PUL-903   | 3      |
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
-| **Total**                              |                     | **91** |
+| **Total**                              |                     | **92** |
 
 Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 

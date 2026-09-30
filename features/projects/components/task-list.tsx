@@ -8,6 +8,11 @@
 // `+ Add task in {Category}` — ends in `onChanged()`, which bumps the filter bar's `taskNonce`
 // and re-reads list + header.
 //
+// PUL-421 adds `+ Add task` on each Month header (MGR only, the same gate): the same New Task
+// modal with Month prefilled and Category suggesting that month's categories. After a create the
+// new task's month and category groups are forced open, and `onTaskCreated` lets the pane widen
+// its Month filter if the task landed outside it.
+//
 // The one read of its own is a task's subtask rows, fetched through `loadTaskDetail` only when
 // that task is expanded. `FilteredTaskRow` stays a list shape (it carries counts, not rows), and
 // tasks start collapsed, so an unexpanded list costs nothing extra.
@@ -36,14 +41,16 @@ import {
   PRIORITY_LABELS,
   PRIORITY_PILL_CLASSNAME,
   categoryDotClass,
+  categoryKey,
   groupTaskTree,
   monthLabel,
+  monthKey,
   retainerMonth,
   taskKey,
   treeOpenState,
   type StatusMenuViewer,
 } from '../display';
-import { NewTaskModal } from './new-task-modal';
+import { NewTaskModal, type CreatedTaskPlacement } from './new-task-modal';
 import { TaskDetailModal } from './task-detail-modal';
 import { TaskStatusControl } from './task-status-control';
 import type { DetailChildRow, FilteredTaskRow } from '../queries';
@@ -64,6 +71,7 @@ export function TaskList({
   project,
   canCreateTask,
   onChanged,
+  onTaskCreated,
 }: {
   /** The filter bar's current `getFilteredTasks` result — the list never fetches its own. */
   tasks: FilteredTaskRow[];
@@ -80,8 +88,13 @@ export function TaskList({
   project: { id: string; startDate: string } | null;
   /** `can(viewer, 'project_task.create')`, decided server-side (§9.6 — MGR only). */
   canCreateTask: boolean;
-  /** After any write from the list: an inline status change, a modal close, a created task. */
+  /** After any write from the list: an inline status change, a modal close. */
   onChanged: () => void;
+  /**
+   * After a task is created from the list, with where it landed. Replaces `onChanged` for that
+   * write, so the pane can refetch AND widen its Month filter in one step.
+   */
+  onTaskCreated: (placement: CreatedTaskPlacement) => void;
 }) {
   /**
    * **The collapse state — §16.10.** ONE object, declared with a real value (`{}`) from the first
@@ -95,8 +108,12 @@ export function TaskList({
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   /** Which task's detail modal is open. `null` IS the closed state — one value, no drift. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  /** The category `+ Add task in {Category}` was clicked in. `null` IS the closed state. */
-  const [addingCategory, setAddingCategory] = useState<string | null>(null);
+  /**
+   * What the New Task modal was opened from: a category group (`+ Add task in {Category}`,
+   * category only, as before) or a Month header (`+ Add task`, month only, PUL-421). `null` IS
+   * the closed state.
+   */
+  const [adding, setAdding] = useState<{ category?: string; month?: number | null } | null>(null);
   /**
    * Bumped whenever the Task Detail modal closes. Subtasks are edited in the modal, and an edit
    * that renames one leaves the parent's done/total counts unchanged, so the counts alone cannot
@@ -126,6 +143,21 @@ export function TaskList({
 
   function toggle(key: string) {
     setOverrides((o) => ({ ...o, [key]: !open[key] }));
+  }
+
+  /** For Category's suggestions: the categories already in each month, as grouped above. */
+  const categoriesByMonth = new Map(
+    tree.map((m) => [m.month, m.categories.map((c) => c.category)]),
+  );
+
+  /** A created task's month and category groups open even if the user had collapsed them. */
+  function onCreated(placement: CreatedTaskPlacement) {
+    setOverrides((o) => ({
+      ...o,
+      [monthKey(placement.month)]: true,
+      [categoryKey(placement.month, placement.category)]: true,
+    }));
+    onTaskCreated(placement);
   }
 
   return (
@@ -169,7 +201,27 @@ export function TaskList({
                   depth={0}
                   expanded={open[m.key] ?? true}
                   onToggle={() => toggle(m.key)}
-                  className="bg-muted/40 py-2 text-xs font-semibold"
+                  className="py-2 text-xs font-semibold"
+                  // On the row, not the toggle, so the tint runs under the action too.
+                  rowClassName="bg-muted/40"
+                  action={
+                    // PUL-421: MGR only, the same gate as `+ Add task in {Category}`. A sibling
+                    // of the toggle, never inside it (a button cannot nest in a button).
+                    addToProjectId !== null ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground my-1 shrink-0"
+                        aria-label={`Add task in ${
+                          m.month === null ? 'Unscheduled' : `Month ${m.month}`
+                        }`}
+                        onClick={() => setAdding({ month: m.month })}
+                      >
+                        <PlusIcon />
+                        Add task
+                      </Button>
+                    ) : null
+                  }
                 >
                   <span>
                     {m.month === null
@@ -243,7 +295,7 @@ export function TaskList({
                                   variant="ghost"
                                   size="sm"
                                   className="text-muted-foreground my-0.5"
-                                  onClick={() => setAddingCategory(c.category)}
+                                  onClick={() => setAdding({ category: c.category })}
                                 >
                                   <PlusIcon />
                                   Add task in {c.category}
@@ -275,16 +327,19 @@ export function TaskList({
 
       {addToProjectId !== null ? (
         <NewTaskModal
-          // No `key` here: the modal already keys its body on `projectId:defaultCategory`, so
+          // No `key` here: the modal already keys its body on project, category and month, so
           // opening from a different group re-seeds the pre-fill. An outer key would remount
-          // the Dialog itself when `addingCategory` clears, skipping its exit animation.
+          // the Dialog itself when `adding` clears, skipping its exit animation.
           projectId={addToProjectId}
-          defaultCategory={addingCategory ?? undefined}
-          open={addingCategory !== null}
+          defaultCategory={adding?.category}
+          defaultMonth={adding?.month}
+          categoriesByMonth={categoriesByMonth}
+          projectStartDate={project?.startDate}
+          open={adding !== null}
           onOpenChange={(next) => {
-            if (!next) setAddingCategory(null);
+            if (!next) setAdding(null);
           }}
-          onCreated={onChanged}
+          onCreated={onCreated}
         />
       ) : null}
     </>
@@ -326,16 +381,24 @@ function GroupHeader({
   expanded,
   onToggle,
   className,
+  rowClassName,
+  action,
   children,
 }: {
   depth: number;
   expanded: boolean;
   onToggle: () => void;
   className: string;
+  /** Classes for the whole row, the toggle and `action` together. */
+  rowClassName?: string;
+  /** A control after the toggle, outside it (PUL-421's Month `+ Add task`). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="hover:bg-muted/60 flex items-stretch px-3 transition-colors">
+    <div
+      className={cn('hover:bg-muted/60 flex items-stretch px-3 transition-colors', rowClassName)}
+    >
       <TreeGuides depth={depth} />
       <button
         type="button"
@@ -349,6 +412,7 @@ function GroupHeader({
         <Chevron expanded={expanded} />
         {children}
       </button>
+      {action}
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { showErrorToast } from '@/lib/show-error-toast';
 import { loadFilteredTasks } from '../actions';
 import { monthLabel, PROJECT_TABS, type ProjectTabKey, type StatusMenuViewer } from '../display';
 import type { FilteredTaskRow, TaskFilters } from '../queries';
+import type { CreatedTaskPlacement } from './new-task-modal';
 import { ProjectHeader } from './project-header';
 import { ReviewTab } from './review-tab';
 import { TaskBoard } from './task-board';
@@ -136,6 +137,19 @@ export function ProjectPane({
   function refresh() {
     setTaskNonce((n) => n + 1);
     onTreeStale();
+  }
+
+  /**
+   * A task created from the List (PUL-421). If Month ▾ is narrowed to a different month, it
+   * moves to the new task's month (or All, for no month) so the new group actually shows.
+   * Assignee ▾ is left alone: narrowing it is a choice the user made about people, not months.
+   */
+  function onTaskCreated(placement: CreatedTaskPlacement) {
+    if (month !== ALL && Number(month) !== placement.month) {
+      const next = placement.month === null ? ALL : String(placement.month);
+      setState((s) => ({ ...s, month: next }));
+    }
+    refresh();
   }
 
   /** The Review tab title's count (§14.3.5). `null` until that tab has loaded once. */
@@ -270,6 +284,7 @@ export function ProjectPane({
           project={{ id: project.id, startDate: project.startDate }}
           canCreateTask={canCreateTask}
           onChanged={refresh}
+          onTaskCreated={onTaskCreated}
         />
       ) : tab === 'calendar' ? (
         <TaskCalendar tasks={tasks} loading={loading} onChanged={refresh} />

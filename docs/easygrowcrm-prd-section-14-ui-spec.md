@@ -156,6 +156,7 @@ Visibility: Board/List/Calendar all roles; Review + Workload MGR/HR; **Manager Q
 - **Due date cell** renders the full date with year (`Aug 8, 2026`), plus `· Today` or `· Overdue` suffix where relevant. Below the date on the same cell: `2/4 subtasks` small line when the task has subtasks (muted, 11px).
 - Task title click → Task Detail modal. Status pill inline-editable per 14.3.2.
 - `+ Add task in {Category}` link at the bottom of each open category group (MGR).
+- `+ Add task` on each Month header, Unscheduled included (MGR, the same gate; PUL-421). It opens the New Task modal (14.3.8) with Month prefilled to that month and Category suggesting the categories already in it. After the save the list refetches along with the header and Board; the new task's month and category groups open even if they were collapsed; and a Month ▾ filter narrowed to another month moves to the new task's month (or to All months for a task with no month). Assignee ▾ is left alone. *(The per-category link still prefills only the category, not the month.)*
 
 **Calendar view:** month grid, header `August 2026` (year always shown), category-colored chips per day, today highlighted with a solid teal circle around the date number. Chip click → Task Detail. Navigation: Prev / Next (server-side date shift, not just visual).
 
@@ -171,7 +172,9 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
 
 ### 14.3.8 New Task modal / Start Project Wizard
 
-**New Task modal:** fields per 13.4.1; category pre-filled when opened from a category group; assignee ▾ excludes SA and inactive users. *(PUL-416, Amendment M: there is no "QC required" toggle. Review is mandatory, so `qcRequired` is never sent and the column default, true, applies.)*
+**New Task modal:** fields per 13.4.1; category pre-filled when opened from a category group; month pre-filled (and still editable) when opened from a List Month header (PUL-421); assignee ▾ excludes SA and inactive users. *(PUL-416, Amendment M: there is no "QC required" toggle. Review is mandatory, so `qcRequired` is never sent and the column default, true, applies.)*
+- **Month ▾** *(PUL-421)*: `No month` (one-off work, the Unscheduled group) plus Month 1 to 12, labelled like the List headers (`Month 3` plus its calendar month). A prefilled month past 12, from a long template, is added to the list rather than dropped. `createTask` still takes any integer month; 13.4.1 is unchanged.
+- **Category:** free text. When opened from the List it also suggests (a native datalist) the categories already in the month Month ▾ shows, following it if the month changes. A new name starts a new category group.
 
 **Start Project wizard** (from a template card or its detail view, or from an account's ⋯ menu in the Projects tree, PUL-417):
 - Summary banner at top: `N tasks · N months · N roles · N QC gates will be generated`.

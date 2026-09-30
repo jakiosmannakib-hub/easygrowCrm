@@ -7,6 +7,10 @@
 // `defaultCategory` exists for PUL-409's per-column "+ Add task in {Category}": the board opens
 // this same modal with the group's category pre-filled (§14.3.8 — "category pre-filled when
 // opened from a category group").
+//
+// `defaultMonth` and `categoriesByMonth` exist for PUL-421's "+ Add task" on a List Month header:
+// Month opens on that month but stays editable, and Category suggests the categories already in
+// the chosen month while still taking free text for a new one.
 
 'use client';
 
@@ -33,30 +37,56 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { createTask, loadNewTaskContext } from '../actions';
-import { PRIORITY_LABELS, type TaskPriority } from '../display';
+import { monthLabel, PRIORITY_LABELS, type TaskPriority } from '../display';
 import { CreateTaskInput } from '../schema';
 
 /** The "leave it unset" sentinel for the optional pickers. Not an id, and never submitted. */
 const NONE = 'none';
+
+/** Month ▾ offers Month 1 to 12 (§14.3.8, PUL-421); a later prefilled month is added to it. */
+const MONTH_CHOICES = Array.from({ length: 12 }, (_, i) => i + 1);
+
+/** What `onCreated` reports, so the opener can reveal the group the new task landed in. */
+export interface CreatedTaskPlacement {
+  month: number | null;
+  category: string;
+}
 
 type NewTaskContext = Extract<
   Awaited<ReturnType<typeof loadNewTaskContext>>,
   { ok: true }
 >['data'];
 
+/** The pre-fills an opener may pass. All optional: `+ New Task` in the header passes none. */
+interface NewTaskPrefill {
+  /** Pre-fills Category: PUL-409 opens this modal from a board column (§14.3.8). */
+  defaultCategory?: string;
+  /** Pre-fills Month (PUL-421, a List Month header). `null` or absent means no month. */
+  defaultMonth?: number | null;
+  /**
+   * The categories already in each month (`null` = Unscheduled), for Category's suggestions.
+   * Follows Month as it changes. Absent means no suggestions, only free text.
+   */
+  categoriesByMonth?: ReadonlyMap<number | null, readonly string[]>;
+  /** The project's start date, so Month ▾ reads `Month 3` plus its calendar month. */
+  projectStartDate?: string;
+}
+
 export function NewTaskModal({
   projectId,
   defaultCategory,
+  defaultMonth,
+  categoriesByMonth,
+  projectStartDate,
   open,
   onOpenChange,
   onCreated,
-}: {
+}: NewTaskPrefill & {
   projectId: string;
-  /** Pre-fills Category — PUL-409 opens this modal from a board column (§14.3.8). */
-  defaultCategory?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
+  /** Reports where the task landed, so the opener can reveal that group. */
+  onCreated: (placement: CreatedTaskPlacement) => void;
 }) {
   return (
     <Dialog
@@ -79,15 +109,18 @@ export function NewTaskModal({
         </DialogHeader>
 
         {/*
-          Mounted per opening and keyed by project + category: MOUNTING IS THE RESET. Every
+          Mounted per opening and keyed by project + category + month: MOUNTING IS THE RESET. Every
           field is seeded at mount, so re-opening starts clean with no state to clear and the
           effect never has to setState synchronously to undo a previous visit.
         */}
         {open ? (
           <NewTaskBody
-            key={`${projectId}:${defaultCategory ?? ''}`}
+            key={`${projectId}:${defaultCategory ?? ''}:${defaultMonth ?? ''}`}
             projectId={projectId}
             defaultCategory={defaultCategory}
+            defaultMonth={defaultMonth}
+            categoriesByMonth={categoriesByMonth}
+            projectStartDate={projectStartDate}
             onOpenChange={onOpenChange}
             onCreated={onCreated}
           />
@@ -100,13 +133,15 @@ export function NewTaskModal({
 function NewTaskBody({
   projectId,
   defaultCategory,
+  defaultMonth,
+  categoriesByMonth,
+  projectStartDate,
   onOpenChange,
   onCreated,
-}: {
+}: NewTaskPrefill & {
   projectId: string;
-  defaultCategory?: string;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
+  onCreated: (placement: CreatedTaskPlacement) => void;
 }) {
   const [context, setContext] = useState<NewTaskContext | null>(null);
 
@@ -128,7 +163,7 @@ function NewTaskBody({
    */
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(defaultCategory ?? '');
-  const [month, setMonth] = useState('');
+  const [month, setMonth] = useState(defaultMonth == null ? NONE : String(defaultMonth));
   const [description, setDescription] = useState('');
   const [assigneeId, setAssigneeId] = useState(NONE);
   const [dueDate, setDueDate] = useState('');
@@ -166,6 +201,16 @@ function NewTaskBody({
   const assignable = context?.assignable ?? [];
   const dependencyOptions = context?.dependencyOptions ?? [];
 
+  const monthNum = month === NONE ? null : Number(month);
+  // A prefilled month past 12 (a long template) stays choosable rather than silently dropped.
+  const monthChoices =
+    defaultMonth != null && !MONTH_CHOICES.includes(defaultMonth)
+      ? [...MONTH_CHOICES, defaultMonth].sort((a, b) => a - b)
+      : MONTH_CHOICES;
+  const monthName = (m: number) =>
+    projectStartDate === undefined ? `Month ${m}` : monthLabel(projectStartDate, m);
+  const categorySuggestions = categoriesByMonth?.get(monthNum) ?? [];
+
   /**
    * Form state → `CreateTaskInput`. The one place a string becomes a number and an empty field
    * becomes an ABSENT key rather than an empty string.
@@ -184,7 +229,7 @@ function NewTaskBody({
       projectId,
       title: title.trim(),
       category: category.trim(),
-      month: month.trim() === '' ? undefined : Number(month),
+      month: month === NONE ? undefined : Number(month),
       description: description.trim() === '' ? undefined : description.trim(),
       assigneeId: assigneeId === NONE ? undefined : assigneeId,
       // Already `YYYY-MM-DD` — `<input type="date">` produces exactly that, and it stays a
@@ -226,7 +271,7 @@ function NewTaskBody({
       // denominator moves with it (§14.15 r.5).
       toast.success('Task created.');
       onOpenChange(false);
-      onCreated();
+      onCreated({ month: parsed.data.month ?? null, category: parsed.data.category });
     } finally {
       setSubmitting(false);
     }
@@ -245,23 +290,55 @@ function NewTaskBody({
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Category" htmlFor="nt-category">
+          <Field
+            label="Category"
+            htmlFor="nt-category"
+            hint={
+              categorySuggestions.length > 0
+                ? 'Pick one already in this month, or type a new one'
+                : undefined
+            }
+          >
+            {/*
+              A native datalist, not a Select: it suggests the month's existing categories and
+              still takes free text, which a new category needs. `list` is only set when there
+              is something to suggest.
+            */}
             <Input
               id="nt-category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               placeholder="e.g. On-page SEO"
+              list={categorySuggestions.length > 0 ? 'nt-category-options' : undefined}
+              autoComplete="off"
             />
+            {categorySuggestions.length > 0 ? (
+              <datalist id="nt-category-options">
+                {categorySuggestions.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            ) : null}
           </Field>
 
-          <Field label="Month" htmlFor="nt-month" hint="Leave blank for one-off work">
-            <Input
-              id="nt-month"
-              type="number"
-              min={1}
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-            />
+          <Field label="Month" htmlFor="nt-month" hint="No month for one-off work">
+            <Select value={month} onValueChange={(v: string | null) => setMonth(v ?? NONE)}>
+              <SelectTrigger id="nt-month" className="w-full">
+                <SelectValue>
+                  {(v: string | null) =>
+                    v === null || v === NONE ? 'No month' : monthName(Number(v))
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>No month</SelectItem>
+                {monthChoices.map((m) => (
+                  <SelectItem key={m} value={String(m)}>
+                    {monthName(m)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
         </div>
 

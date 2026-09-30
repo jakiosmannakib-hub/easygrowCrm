@@ -11,7 +11,7 @@
 
 The unit of work is the **ticket**. Tickets are numbered `PUL-<phase><serial>` — the leading digit(s) name the phase (`PUL-104` = Phase 1, ticket 04; `PUL-1003` = Phase 10, ticket 03), and subtasks are `<ticket>.<n>` (e.g. `104.2`). Work top to bottom: tickets are dependency-ordered, so start at the lowest open number and don't begin a phase until the previous one is green.
 
-The plan is **90 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, PUL-414 … PUL-418 to Phase 4 by Amendment M, and PUL-419 (Onboarding month) and PUL-420 (`/clients` page) to Phase 4 on 2026-09-30)*:
+The plan is **91 tickets across 11 phases**, with 360+ checkable subtasks *(originally 80; PUL-111, PUL-112 and PUL-113 were added to Phase 1 after it closed, PUL-414 … PUL-418 to Phase 4 by Amendment M, and PUL-419 (Onboarding month) and PUL-420 (`/clients` page) to Phase 4 on 2026-09-30, and PUL-421 (List Month header `+ Add task`) after that)*:
 
 | Phase | Focus                                                       | Tickets             |
 | ----- | ----------------------------------------------------------- | ------------------- |
@@ -19,7 +19,7 @@ The plan is **90 tickets across 11 phases**, with 360+ checkable subtasks *(orig
 | 1     | Foundation (auth, `authorize()`, audit, mutation shape, CI) | PUL-101 … PUL-113   |
 | 2     | Employees & clients                                         | PUL-201 … PUL-207   |
 | 3     | Attendance                                                  | PUL-301 … PUL-308   |
-| 4     | Projects & tasks                                            | PUL-401 … PUL-420   |
+| 4     | Projects & tasks                                            | PUL-401 … PUL-421   |
 | 5     | Templates & Start Project                                   | PUL-501 … PUL-506   |
 | 6     | QC, review & EOD                                            | PUL-601 … PUL-607   |
 | 7     | Leave                                                       | PUL-701 … PUL-707   |
@@ -704,7 +704,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
-# Phase 4 — Projects & Tasks (20 tickets)
+# Phase 4 — Projects & Tasks (21 tickets)
 
 ---
 
@@ -1558,6 +1558,36 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 ---
 
+### PUL-421 — List view: add task from the Month header
+
+**Budget:** S · **Reads:** §14.3.4, §14.3.8, §13.4.1 · **Depends:** PUL-410, PUL-408, PUL-417
+
+- [x] 421.1 Each List Month header (Unscheduled included) gets a `+ Add task` button, MGR only: the same `project_task.create` gate as `+ Add task in {Category}`, hidden otherwise
+- [x] 421.2 It opens the existing New Task modal with Month prefilled to that month and still editable (Month ▾: No month, Month 1 to 12), and Category as free text with a datalist of the categories already in the chosen month
+- [x] 421.3 After save: `taskNonce` bumps so List, Board and header refetch; the new task's month and category groups open; a Month ▾ filter set to another month moves to the new task's month
+- [x] 421.4 The per-category `+ Add task in {Category}` links are unchanged
+- [x] 421.5 `createTask` month input: already present (`month: z.number().int().optional()`), so no schema change and no new test case. `list.test.ts` and `create-task.test.ts` re-run green
+
+**Done when:** a manager can add a task to any month straight from its List header and see it land, expanded, without touching the filters. *(Not yet walked through in a browser.)*
+
+> **Status: built, not yet committed**, on `feat/pul-421-list-month-add-task`.
+>
+> - **No new action or schema.** §13.4.1 already takes `month?`. The ticket asked for a 1 to 12
+>   bound only if the input was missing; it was not, and a bound would break a Month 13+ header,
+>   since templates can run past 12 months (`addTemplateMonth` appends at max + 1). The modal
+>   offers 1 to 12 and adds a prefilled later month to the list.
+> - **Month ▾ applies to every opener.** The header's `+ New Task` and the Board use the same
+>   modal, so they also get the dropdown in place of the old free number field.
+> - **Files:** `new-task-modal.tsx` (props `defaultMonth`, `categoriesByMonth`,
+>   `projectStartDate`; `onCreated` now reports `{ month, category }`), `task-list.tsx` (the
+>   header button, forced-open groups), `project-pane.tsx` (Month filter follow), `display.ts`
+>   (`monthKey` / `categoryKey` exported, so a new task can open its own group).
+> - **Left for later:** the per-category link still prefills only the category, so a task added
+>   from Month 3's SEO group lands in Unscheduled unless a month is picked. A one-line change if
+>   wanted.
+
+---
+
 **Phase 4 exit:** full manual project management works; PUL-205's blocker-list now covers real open tasks (extend that test).
 
 ---
@@ -2349,14 +2379,14 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 | 1 — Foundation                         | PUL-101 … PUL-113   | 13     |
 | 2 — Employees & Clients                | PUL-201 … PUL-207   | 7      |
 | 3 — Attendance                         | PUL-301 … PUL-308   | 8      |
-| 4 — Projects & Tasks                   | PUL-401 … PUL-420   | 20     |
+| 4 — Projects & Tasks                   | PUL-401 … PUL-421   | 21     |
 | 5 — Templates & Start Project          | PUL-501 … PUL-506   | 6      |
 | 6 — QC, Review & EOD                   | PUL-601 … PUL-607   | 7      |
 | 7 — Leave                              | PUL-701 … PUL-707   | 7      |
 | 8 — Dashboards, Notifications & Polish | PUL-801 … PUL-809   | 9      |
 | 9 — Reports, Audit & Settings          | PUL-901 … PUL-903   | 3      |
 | 10 — Pre-launch Hardening              | PUL-1001 … PUL-1006 | 6      |
-| **Total**                              |                     | **90** |
+| **Total**                              |                     | **91** |
 
 Mandatory §15.4 test files are attached to: PUL-102, 103, 104, **111**, 201, 202, **203**, 204, 205, **206**, 302, 303, 304, 305, 306, 307, 403, 404, 502, 504, 505, 506, 601, 602, 603, 605, 702 (×3), 705, 902. The CI manifest (PUL-003.3) grows with each — by PUL-902 it equals the full §15.4 list. *(PUL-112: 111 / 203 / 206 added; the manifest stands at 11 files — see §15.4.1 for the authoritative current list.)*
 

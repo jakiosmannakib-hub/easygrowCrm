@@ -636,8 +636,13 @@ export interface TaskTreeMonth<T> {
 }
 
 /** Month key → `month:3`, or `month:none` for Unscheduled. */
-function monthKey(month: number | null): string {
+export function monthKey(month: number | null): string {
   return month === null ? 'month:none' : `month:${month}`;
+}
+
+/** Category key → `month:3/category:SEO`. Exported so a new task can open its own group. */
+export function categoryKey(month: number | null, category: string): string {
+  return `${monthKey(month)}/category:${category}`;
 }
 
 /**
@@ -678,7 +683,7 @@ export function groupTaskTree<T extends TreePlaceable>(rows: readonly T[]): Task
       const cats = [...categories.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([category, tasks]) => ({
-          key: `${mKey}/category:${category}`,
+          key: categoryKey(month, category),
           category,
           done: tasks.filter(isDone).length,
           total: tasks.length,

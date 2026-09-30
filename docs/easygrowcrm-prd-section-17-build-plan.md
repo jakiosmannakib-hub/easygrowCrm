@@ -1415,7 +1415,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** no code path can write `completed`; old `completed` rows still render and still satisfy dependencies.
 
-> **Status: built, not yet merged** (branch `feat/pul-416-remove-completed-bypass`).
+> **Merged in PR #51.** *(This note read "built, not yet merged" until the 2026-09-30 sync.)*
 >
 > - **Approve today:** no code path reaches `approved`. `reviewTask` (PUL-602) and `submitTask`
 >   (PUL-601) are not built, `setTaskStatusProtected` refuses it, and `changeTaskStatusOpen` never
@@ -1443,15 +1443,64 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** L · **Reads:** §14.3 (Amendment M block), §13.8 `getWorkspaceTree` · **Depends:** PUL-415, PUL-410
 
-- [ ] 417.1 `getWorkspaceTree` query (nested, fixed number of queries) + pure grouping / search / selection helpers
-- [ ] 417.2 Left tree with counts, review dot, search, per-node ⋯ menu (role-gated on the server), drawer at phone width
-- [ ] 417.3 Client and account overviews
-- [ ] 417.4 Project pane reuses header + Board / List / Calendar / Review / Workload; filter bar shrinks to Month ▾ · Assignee ▾; breadcrumb gains the account
-- [ ] 417.5 URL is the selection; `?project=&tab=` deep link still lands
-- [ ] 417.6 Start Project wizard step 1: Client ▾ → Account ▾ (+ New account) → name
-- [ ] 417.7 Tests: `workspace-tree.test.ts` (helpers) + query test; manual QA all roles
+- [x] 417.1 `getWorkspaceTree` query (nested, fixed number of queries) + pure grouping / search / selection helpers
+- [x] 417.2 Left tree with counts, review dot, search, per-node ⋯ menu (role-gated on the server), drawer at phone width
+- [x] 417.3 Client and account overviews
+- [x] 417.4 Project pane reuses header + Board / List / Calendar / Review / Workload; filter bar shrinks to Month ▾ · Assignee ▾; breadcrumb gains the account
+- [x] 417.5 URL is the selection; `?project=&tab=` deep link still lands
+- [x] 417.6 Start Project wizard step 1: Client ▾ → Account ▾ (+ New account) → name
+- [ ] 417.7 Tests: `workspace-tree.test.ts` (helpers) + query test; manual QA all roles *(tests written and green; the manual QA pass across the five roles is still open)*
 
-**Done when:** a manager goes client → new account → project from template → lands on it in the tree, without the old dropdowns.
+**Done when:** a manager goes client → new account → project from template → lands on it in the tree, without the old dropdowns. *(Built; not yet walked through by hand, see 417.7.)*
+
+> **Status: built, not yet merged** (branch `feat/pul-417-workspace`; 417.1 and 417.2 / 417.5
+> are committed, 417.3 / 417.4 / 417.6 are on the working tree).
+>
+> - **Query.** `getWorkspaceTree({ includeArchived? })` in `features/projects/queries.ts`: the
+>   session read plus ONE select, however large the agency (clients LEFT JOIN accounts LEFT JOIN
+>   projects, with one grouped task-count subquery). The live-only predicates sit in the JOIN
+>   conditions so childless clients and accounts survive. Each project node carries
+>   `openTaskCount`, `awaitingReviewCount` / `awaitingReview` (the dot), `doneTaskCount`,
+>   `totalTaskCount`, `overdueTaskCount` (open tasks due before today in Dhaka, as the header
+>   counts them) and `startDate`. Checks `account.read` and `project_task.read` and throws
+>   `FORBIDDEN` if either is ever tightened; today every role gets the same tree.
+> - **Pure helpers,** `features/projects/workspace-tree.ts` (client-safe, no db import):
+>   `buildWorkspaceTree`, `filterTree`, `resolveSelection`, `selectionHref`, `selectedNodes`,
+>   `summarizeProjects`, `projectNodeHealth`, `nodeMenuItems`, `parseCollapsed` /
+>   `serializeCollapsed`. Search: a matching client or account keeps its whole subtree; a matching
+>   project keeps only itself and its ancestors. Selection: the deepest id that exists wins and
+>   its parents are derived, so `?project=` alone lands and a contradictory parent is corrected.
+> - **Tree and ⋯ menu** (`components/workspace-tree-panel.tsx`, `workspace-node-menu.tsx`).
+>   Client: New account / Rename / Archive. Account: New project / Start from template / Rename /
+>   Archive. Project: Rename / Archive. An archived node offers only Rename. The flags come from
+>   `workspaceMenuFlags(viewer)` in `features/projects/capabilities.ts` (derived from `can()` on
+>   the server; Start from template needs `project.create` and `template.read`). The dialogs are
+>   the `/clients` ones, exported for reuse, plus two new small bodies (New project →
+>   `createProject`, Rename project → `updateProject`) and `ArchiveProjectBody`, the one archive
+>   confirm the project header now uses too (§14.15 r.6). Collapse state is localStorage
+>   (`easygrow.projects.tree.collapsed`) behind `useSyncExternalStore`, every access in
+>   try/catch, with an in-memory fallback. Below `md` the tree is a left drawer.
+> - **Right pane** (`components/projects-workspace.tsx`): a project → `project-pane.tsx`
+>   (renamed from `projects-filter-bar.tsx`; Client ▾ / Project ▾ deleted); an account or a client
+>   → `workspace-overviews.tsx`, drawn from the tree with no extra request; nothing → the
+>   agency-wide Review and Workload tabs (MGR / HR; an employee gets a "pick a project" line).
+>   After any mutation `router.refresh()` re-reads the tree so counts and dots stay current.
+> - **URL.** `useSearchParams` + `resolveSelection`; a new node is `history.pushState`, a tab
+>   change `replaceState`. `?tab=` is checked against the role (`parseProjectTab` /
+>   `parseAgencyTab` in `display.ts`, which now owns `PROJECT_TABS`).
+> - **Wizard (417.6).** "+ New account" inline in step 1 (`createAccount`). The tree's Start from
+>   template opens `StartProjectDialog` on `/projects` with the client and account prefilled and a
+>   step 0 to pick the template; the page reads `templatesListQuery()` for managers rather than
+>   adding a load action §13 does not define. The dialog closes itself after Generate.
+> - **Header.** `getProjectHeader` returns `account.name`; the crumb is
+>   `📁 Client › 🏢 Account › Project · type · Month N`.
+> - **Exports.** The agency-wide PUL-413 buttons are parked on the nothing-selected pane (MGR
+>   only) with a `TODO(PUL-418)`.
+> - **Tests.** `features/projects/workspace-tree.test.ts` (helpers, per-role menus against the
+>   real §9.6 table, collapse parsing, tab parsing, overview maths),
+>   `features/projects/get-workspace-tree.test.ts` (real DB: shape, counts, overdue against the
+>   frozen clock, archived handling, exactly two queries at any size),
+>   `project-header.test.ts` (account crumb). `filterTree`'s rules were mutation-proved.
 
 ---
 
@@ -1462,7 +1511,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 418.1 Route takes exactly one of `clientId` / `accountId`; 400 / 404 / 403 as §13.8
 - [ ] 418.2 `getClientExportRows(range, scope)` joins through accounts; rows gain `accountName`, still client-safe
 - [ ] 418.3 Workbook: client scope = summary + a sheet per account; account scope = one sheet; filename names the scope
-- [ ] 418.4 Export buttons in the client and account overviews
+- [ ] 418.4 Export buttons in the client and account overviews *(and remove the agency-wide pair PUL-417 parked on the nothing-selected pane: `AgencyPane` in `features/projects/components/workspace-overviews.tsx`, marked `TODO(PUL-418)`)*
 - [ ] 418.5 Tests: extend `client-export.test.ts` (scoping, sheet split, refusals)
 - [ ] 418.6 Test: the workbook contains no "EasyGrow" string in cells, sheet names, filename or file properties
 
@@ -1830,8 +1879,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > (§13.3.2 records its as-built guard order, audit and payloads). Wizard:
 > `features/templates/components/start-project-wizard.tsx`. Test: `start-project.test.ts` (10).
 >
-> - **Step 1 is Client ▾ → Account ▾ → name** since PUL-415 (Amendment M); PUL-417.6 adds
->   "+ New account" there.
+> - **Step 1 is Client ▾ → Account ▾ → name** since PUL-415 (Amendment M); PUL-417.6 added
+>   "+ New account" there, and a step 0 (choose the template) for when the Projects tree opens the
+>   wizard from an account.
 > - **Four title tokens,** not one: `{{ClientName}}`, `{{AccountName}}`, `{{ProjectName}}`,
 >   `{{MonthName}}`, all through `projectTaskTitle`, which the preview shares with the action so
 >   the two cannot disagree.

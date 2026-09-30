@@ -435,15 +435,17 @@ Fields: title (with token hint), role (from template.roles), category (from cate
 
 #### 3.3.6 Seeded templates (ship with these three)
 
-- **Local SEO Monthly Campaign** — 10 tasks: prev-month review, GBP performance check, GBP posts (with QC), publish, citations (with QC), verify citations, weekly rank check (recurring, weekly Mon), local ranking grid check, monthly report, send client update.
+- **Local SEO Monthly Campaign** — 15 tasks over 2 months.
+  - **Month 1 (11):** On-page SEO: GBP - post 4 updates, audit + fix NAP inconsistencies · Link Building: build 8 new citations, 1 niche edit on a DR50+ site · Content: service page copy - `{{AccountName}}` · Reporting: rank check - week 1, week 2, week 3, week 4, monthly report - `{{AccountName}}`, QC sign-off - all deliverables.
+  - **Month 2 (4):** On-page SEO: GBP - post 4 updates, schema markup implementation · Reporting: rank check - week 1, monthly report - `{{AccountName}}`.
+  - The weekly rank check is four explicit numbered rows, not one recurring task: Amendment D removed recurring tasks.
 - **Website Design Project** — 7 tasks with a full dependency chain: kickoff → wireframes → copy → design → dev → pre-launch QA → launch/handover.
 - **Technical SEO Audit** — 4 tasks: crawl, CWV+indexation review, prioritized fix roadmap, QC & deliver.
 
-> **As seeded (PUL-501), the Local SEO line above is out of date.** The seeded template comes
-> from the prototype's `tpls` tree. It has **15 tasks** over 2 months: 11 in Month 1 and 4 in
-> Month 2, with rank checks as explicit `week 1…4` rows because Amendment D removed recurring
-> tasks. The 10-task list above predates Amendment D. Website Design (7) and Technical SEO Audit
-> (4) match. See §17 PUL-501; the wording above awaits an owner ruling.
+> **Ruling (2026-09-30): the seed is authoritative.** The Local SEO line above was amended to the
+> 15-task template seeded in PUL-501 (`tests/seed-templates.ts`). The earlier 10-task list
+> (prev-month review, GBP performance check, a recurring weekly rank check…) predated
+> Amendment D and is retired. Website Design (7) and Technical SEO Audit (4) were already right.
 
 ### 3.4 HR & Attendance
 

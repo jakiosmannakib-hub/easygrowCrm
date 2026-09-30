@@ -91,7 +91,7 @@ Role-branched (one route, two components):
 > - **The URL is the selection:** `/projects?client=…&account=…&project=…&tab=…`. `?project=` alone
 >   still works (the Start Project landing); its account and client are derived.
 >
-> **As built (PUL-417, not yet merged).**
+> **As built (PUL-417, merged in PRs #52 and #53; exports from PUL-418).**
 > - **Tree rows:** chevron, name, and for a project its open-task count plus the review dot. An
 >   "All clients" row clears the selection. Search (in memory): a matching client or account keeps
 >   its whole subtree; a matching project keeps only itself and its ancestors; every surviving
@@ -106,15 +106,20 @@ Role-branched (one route, two components):
 >   **Account overview rows:** project name, health chip (§3.1.3, same thresholds as the header),
 >   `done/total · N%` with a bar, and the same counts. Clicking a card or row selects it.
 > - **Nothing selected:** Review is the default tab. An employee, who sees neither tab, gets
->   "Pick a project from the tree to see its tasks." Until PUL-418, the agency-wide Weekly /
->   Monthly (Excel) buttons sit here for managers.
+>   "Pick a project from the tree to see its tasks." There is no export here: every export is
+>   scoped to a client or an account (PUL-418).
+> - **Exports (PUL-418.4):** **Weekly (Excel)** / **Monthly (Excel)** sit at the right of the
+>   client and account overview headers, managers only (SA, TL, PM), wrapping under the heading
+>   on a narrow pane. A client file is a Summary sheet plus one sheet per account; an account file
+>   is one sheet. An empty period toasts "No client-visible tasks in this period"; a client or
+>   account archived since the page loaded toasts that it no longer exists.
 > - **URL:** a new node pushes a history entry (Back walks the selection); a tab change replaces
 >   it. `?tab=` is checked against the role, falling back to Board (project) or Review (nothing
 >   selected). Unknown, archived or mismatched ids are ignored.
 > - **Collapse state:** localStorage, per viewer, never authoritative. The page renders fully
 >   expanded without it; a deep-linked project's client and account start open.
 
-**Filter bar:** *(Superseded by Amendment M, PUL-417: only Month ▾ · Assignee ▾ remain, above the tabs of the project pane. The exports move to the overviews in PUL-418.)* Client ▾ (from `getClients`, 13.8) · Project ▾ (scoped to client) · Month ▾ · Assignee ▾ · **Weekly (Excel)** · **Monthly (Excel)** (both MGR-only, server-side exports — 13.8 / PUL-413).
+**Filter bar:** *(Superseded by Amendment M, PUL-417: only Month ▾ · Assignee ▾ remain, above the tabs of the project pane. The exports moved to the client and account overviews in PUL-418.)* Client ▾ (from `getClients`, 13.8) · Project ▾ (scoped to client) · Month ▾ · Assignee ▾ · **Weekly (Excel)** · **Monthly (Excel)** (both MGR-only, server-side exports — 13.8 / PUL-413).
 **Project header:** breadcrumb `📁 Client › 🏢 Account › Project · type · Month N` *(the account crumb since Amendment M, PUL-417)*; progress `9/21 · 43%` + bar; health chip (On Track / At Risk / Delayed / Critical — computed over the whole project, not the filtered month); **+ New Task** (MGR only); **Archive** in an overflow menu (MGR; confirmed in a dialog, §14.15 r.6; blocked with a toast if pending reviews — `GATE:pending_reviews`).
 
 **Tabs:** 1 Board · 2 List · 3 Calendar · 4 Review · 5 Workload · 6 Manager QA.

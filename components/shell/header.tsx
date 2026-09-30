@@ -1,19 +1,22 @@
-// components/shell/header.tsx — PUL-110.3, §14.1
+// components/shell/header.tsx — PUL-110.3, §14.1 (sidebar toggle at its left since PUL-422)
 
 'use client';
 
-import { Bell } from 'lucide-react';
+import { Bell, Menu } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import { ROLE_LABELS, initials } from '@/features/employees/display';
 import { PAGE_META, type AppRoute } from '@/lib/nav';
 import type { getSessionUser } from '@/lib/session';
+import { useSidebarState } from './sidebar-state';
 
 /** Just the display fields of the session user — the layout already has them (§9.5). */
 type HeaderUser = Pick<Awaited<ReturnType<typeof getSessionUser>>, 'name' | 'image' | 'role'>;
 
 export function Header({ user }: { user: HeaderUser }) {
   const pathname = usePathname();
+  const sidebar = useSidebarState();
 
   // Match the longest route prefix so a future detail page (/projects/42) keeps its header.
   const route = (Object.keys(PAGE_META) as AppRoute[])
@@ -22,12 +25,44 @@ export function Header({ user }: { user: HeaderUser }) {
   const meta = route ? PAGE_META[route] : undefined;
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-      <div>
-        <h1 className="font-heading text-sm font-semibold">{meta?.title ?? 'EasyGrowCrm'}</h1>
-        {meta?.subtitle ? (
-          <p className="text-muted-foreground text-xs">{meta.subtitle}</p>
-        ) : null}
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4 md:px-6">
+      <div className="flex min-w-0 items-center gap-3">
+        {/*
+          PUL-422: opens the drawer below md; flips the rail / expanded preference above.
+          `aria-expanded` is left off until hydration has said which applies (both inputs are
+          `null` on the server), so the server HTML and the first client render agree.
+        */}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Toggle sidebar"
+          aria-expanded={
+            sidebar.narrow === true
+              ? sidebar.drawerOpen
+              : sidebar.collapsed === null
+                ? undefined
+                : !sidebar.collapsed
+          }
+          aria-controls={
+            sidebar.narrow === true
+              ? sidebar.drawerOpen
+                ? 'app-sidebar-drawer'
+                : undefined
+              : 'app-sidebar'
+          }
+          onClick={sidebar.toggle}
+          className="-ml-1"
+        >
+          <Menu />
+        </Button>
+        <div className="min-w-0">
+          <h1 className="font-heading truncate text-sm font-semibold">
+            {meta?.title ?? 'EasyGrowCrm'}
+          </h1>
+          {meta?.subtitle ? (
+            <p className="text-muted-foreground truncate text-xs">{meta.subtitle}</p>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex shrink-0 items-center gap-4">

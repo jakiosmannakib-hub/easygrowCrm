@@ -29,6 +29,12 @@
 | 14 | Settings | `/settings` | SA, HR |
 
 - Sidebar: logo top, items with lucide icon + label, active item highlighted, Logout at bottom. **The prototype's user-switcher dropdown must NOT ship.**
+- *(ADDED PUL-422: a collapsible sidebar.)* A **Toggle sidebar** button (Menu icon, `aria-expanded`) sits at the far left of the top header.
+  - **md and up, two states.** Expanded (240px, as above) or an **icon rail** (64px): icons only, each label as a tooltip to the right, the active highlight kept, Logout an icon with a tooltip, and the logo clipped to its "e" (the wordmark has no separate mark). The width animates; the main column reflows beside the sidebar and is never overlapped.
+  - **Default:** the rail below a 1440px viewport, expanded at 1440px and up. A manual toggle wins and is remembered per browser (localStorage `easygrow.sidebar`; if storage is blocked the toggle still works for the page's lifetime).
+  - **No flash, no hydration mismatch:** the width is CSS, keyed on the viewport and on `<html data-sidebar>`, which a tiny inline `<head>` script sets from the saved choice before first paint. React state only drives the toggle's ARIA and the tooltips.
+  - **Below md:** the sidebar is hidden and the toggle opens it as a left overlay drawer with full labels, which closes on navigation, outside click and Escape.
+  - Items and their visibility are unchanged (`lib/nav.ts` `visibleTo`); collapsing is cosmetic like the rest of the sidebar.
 - Hidden items don't render (no grayed-out state). Route access is enforced server-side regardless (§9.5) — the sidebar is cosmetic.
 - *(DECIDED Phase 1, PUL-110.2: visibility comes from an explicit `visibleTo: Role[]` list per item in `lib/nav.ts`, transcribed from the "Visible to" column above, **not** from a live `can()` call. The two answer different questions: several rows here are visible to a role that holds only the `self` variant of the underlying permission, so a `can()`-driven sidebar would show the wrong set. `requireRouteAccess` is the security boundary either way.)*
 - Top header, left → right: page title + subtitle (from a `PAGE_META` map); bell icon with unread count → slide-in Notifications panel (newest first, type badges, per-item mark-read, "Mark all read"); then, right-aligned, the **signed-in user block** — Google profile picture, their name, and their role label.

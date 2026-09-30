@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { Header } from '@/components/shell/header';
 import { Sidebar } from '@/components/shell/sidebar';
+import { SidebarStateProvider } from '@/components/shell/sidebar-state';
 import { AppError } from '@/lib/errors';
 import { getSessionUser } from '@/lib/session';
 
@@ -27,13 +28,17 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     throw err;
   }
 
+  // The sidebar and the main column are flex siblings, so when the sidebar narrows to its rail
+  // (PUL-422) the main column reflows into the space rather than being overlapped.
   return (
-    <div className="flex h-dvh">
-      <Sidebar role={user.role} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Header user={user} />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+    <SidebarStateProvider>
+      <div className="flex h-dvh">
+        <Sidebar role={user.role} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header user={user} />
+          <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
+        </div>
       </div>
-    </div>
+    </SidebarStateProvider>
   );
 }

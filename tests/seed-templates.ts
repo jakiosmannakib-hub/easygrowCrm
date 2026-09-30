@@ -1,5 +1,5 @@
 /**
- * PUL-501.3 — the three demo templates, transcribed from the prototype's `tpls` array
+ * PUL-501.3 - the three demo templates, transcribed from the prototype's `tpls` array
  * (`docs/easygrowcrm-prototype.html`). `tpls` is the source; the file's older flat `templates`
  * array is NOT (it is the pre-Amendment-J shape).
  *
@@ -71,7 +71,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt1',
-                title: 'GBP — post 4 updates',
+                title: 'GBP - post 4 updates',
                 role: 'SEO Executive',
                 pri: 'Medium',
                 est: 2,
@@ -144,7 +144,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt4',
-                title: 'Service page copy — {{ClientName}}',
+                title: 'Service page copy - {{AccountName}}',
                 role: 'Content Writer',
                 pri: 'High',
                 est: 5,
@@ -169,7 +169,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt5',
-                title: 'Rank check — week 1',
+                title: 'Rank check - week 1',
                 role: 'SEO Executive',
                 pri: 'Low',
                 est: 1,
@@ -182,7 +182,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt6',
-                title: 'Rank check — week 2',
+                title: 'Rank check - week 2',
                 role: 'SEO Executive',
                 pri: 'Low',
                 est: 1,
@@ -195,7 +195,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt7',
-                title: 'Rank check — week 3',
+                title: 'Rank check - week 3',
                 role: 'SEO Executive',
                 pri: 'Low',
                 est: 1,
@@ -208,7 +208,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt8',
-                title: 'Rank check — week 4',
+                title: 'Rank check - week 4',
                 role: 'SEO Executive',
                 pri: 'Low',
                 est: 1,
@@ -221,7 +221,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt9',
-                title: 'Monthly report — {{ClientName}}',
+                title: 'Monthly report - {{AccountName}}',
                 role: 'Project Manager',
                 pri: 'High',
                 est: 3,
@@ -238,7 +238,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt10',
-                title: 'QC sign-off — all deliverables',
+                title: 'QC sign-off - all deliverables',
                 role: 'QC',
                 pri: 'High',
                 est: 1,
@@ -263,7 +263,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt13',
-                title: 'GBP — post 4 updates',
+                title: 'GBP - post 4 updates',
                 role: 'SEO Executive',
                 pri: 'Medium',
                 est: 2,
@@ -295,7 +295,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt15',
-                title: 'Rank check — week 1',
+                title: 'Rank check - week 1',
                 role: 'SEO Executive',
                 pri: 'Low',
                 est: 1,
@@ -308,7 +308,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt16',
-                title: 'Monthly report — {{ClientName}}',
+                title: 'Monthly report - {{AccountName}}',
                 role: 'Project Manager',
                 pri: 'High',
                 est: 3,
@@ -329,12 +329,12 @@ const TPLS: ProtoTemplate[] = [
     slug: 'website_design_project',
     name: 'Website Design Project',
     cat: 'Website Design',
-    desc: 'End-to-end site build: requirements, wireframes, copy, design, development and pre-launch QA — with dependencies enforced between stages.',
+    desc: 'End-to-end site build: requirements, wireframes, copy, design, development and pre-launch QA - with dependencies enforced between stages.',
     roles: ['Project Manager', 'Content Writer', 'Web Designer', 'Developer', 'QC'],
     months: [
       {
         num: 1,
-        name: 'Phase 1 — Discovery',
+        name: 'Phase 1 - Discovery',
         cats: [
           {
             id: 'c3a',
@@ -342,7 +342,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt17',
-                title: 'Requirements doc — {{ClientName}}',
+                title: 'Requirements doc - {{AccountName}}',
                 role: 'Project Manager',
                 pri: 'High',
                 est: 3,
@@ -360,7 +360,7 @@ const TPLS: ProtoTemplate[] = [
               },
               {
                 id: 'tt18',
-                title: 'Wireframes — all pages',
+                title: 'Wireframes - all pages',
                 role: 'Web Designer',
                 pri: 'High',
                 est: 8,
@@ -379,7 +379,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt19',
-                title: 'Copy — all pages',
+                title: 'Copy - all pages',
                 role: 'Content Writer',
                 pri: 'High',
                 est: 10,
@@ -396,7 +396,7 @@ const TPLS: ProtoTemplate[] = [
       },
       {
         num: 2,
-        name: 'Phase 2 — Build',
+        name: 'Phase 2 - Build',
         cats: [
           {
             id: 'c4a',
@@ -404,7 +404,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt20',
-                title: 'Design — all pages',
+                title: 'Design - all pages',
                 role: 'Web Designer',
                 pri: 'High',
                 est: 16,
@@ -423,7 +423,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt21',
-                title: 'Development build — staging',
+                title: 'Development build - staging',
                 role: 'Developer',
                 pri: 'High',
                 est: 24,
@@ -515,7 +515,7 @@ const TPLS: ProtoTemplate[] = [
             tasks: [
               {
                 id: 'tt26',
-                title: 'Fix roadmap — prioritised',
+                title: 'Fix roadmap - prioritised',
                 role: 'Project Manager',
                 pri: 'High',
                 est: 4,

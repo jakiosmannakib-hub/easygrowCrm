@@ -10,7 +10,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import type { StartProjectTemplate } from '../start-project';
 import { DeleteTemplateButton } from './delete-template-button';
-import { StartProjectWizard, type PickOption } from './start-project-wizard';
+import { StartProjectWizard, type AccountOption, type PickOption } from './start-project-wizard';
 import { CategoryBadge, MetaRow, RolePills, type TemplateCardData } from './template-summary';
 
 export interface TemplateGridPermissions {
@@ -24,6 +24,8 @@ export interface TemplateGridPermissions {
  */
 export interface StartProjectData {
   clients: PickOption[];
+  /** Live accounts of live clients (Amendment M); step 1 filters them by the picked client. */
+  accounts: AccountOption[];
   assignees: PickOption[];
   /** Per template id. */
   templates: Record<string, StartProjectTemplate>;
@@ -103,6 +105,7 @@ function TemplateCard({
           <StartProjectWizard
             template={wizardTemplate}
             clients={startProject.clients}
+            accounts={startProject.accounts}
             assignees={startProject.assignees}
           />
         ) : null}

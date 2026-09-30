@@ -130,6 +130,14 @@ export const PERMISSIONS = {
   'client.update':  { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
   'client.archive': { super_admin: A, team_leader: D, project_manager: D, admin_hr: A, employee: D },
 
+  // ── Accounts (Amendment M, §9.6 note 12) ─────────────────────────────────────
+  // A client's end businesses. Everyone reads them, like clients. Unlike clients, the delivery
+  // managers administer them too: they onboard end businesses from the Projects workspace.
+  'account.read':    { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: A },
+  'account.create':  { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: D },
+  'account.update':  { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: D },
+  'account.archive': { super_admin: A, team_leader: A, project_manager: A, admin_hr: A, employee: D },
+
   // ── Personal tasks (the one audit carve-out, §9.6 note 11) ───────────────────
   'personal_task.crud': { super_admin: 'own', team_leader: 'own', project_manager: 'own', admin_hr: 'own', employee: D },
 

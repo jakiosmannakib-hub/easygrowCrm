@@ -26,6 +26,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '../../db';
 import {
+  accounts,
   clients,
   projects,
   projectTasks,
@@ -49,10 +50,16 @@ import {
   type ProjectHealth,
 } from './display';
 
-/** The columns a project picker needs. Kept narrow — the client name is for disambiguation. */
+/**
+ * The columns a project picker needs. Kept narrow — the client and account names are for
+ * disambiguation. `clientId` is the account's client (Amendment M: a project reaches its client
+ * through its account).
+ */
 export interface PickableProject {
   id: string;
   name: string;
+  accountId: string;
+  accountName: string;
   clientId: string;
   clientName: string;
   /**
@@ -76,20 +83,23 @@ export interface PickableProject {
  * `deleted_at IS NULL` are separate conditions on purpose — archiving and deleting are
  * different acts (§13.3.4 vs §13.3.5), and a deleted project is not merely an archived one.
  *
- * Joined to `clients` because two clients routinely have a project with the same name
- * ("Monthly Retainer"), and a picker showing two identical rows is unusable.
+ * Joined through `accounts` to `clients` because two clients routinely have a project with the
+ * same name ("Monthly Retainer"), and a picker showing two identical rows is unusable.
  */
 export async function activeProjectsQuery(): Promise<PickableProject[]> {
   return db
     .select({
       id: projects.id,
       name: projects.name,
-      clientId: projects.clientId,
+      accountId: accounts.id,
+      accountName: accounts.name,
+      clientId: accounts.clientId,
       clientName: clients.name,
       startDate: projects.startDate,
     })
     .from(projects)
-    .innerJoin(clients, eq(projects.clientId, clients.id))
+    .innerJoin(accounts, eq(projects.accountId, accounts.id))
+    .innerJoin(clients, eq(accounts.clientId, clients.id))
     .where(and(eq(projects.status, 'active'), isNull(projects.deletedAt)))
     .orderBy(asc(projects.name));
 }
@@ -133,14 +143,15 @@ export async function projectsListQuery(): Promise<ProjectRow[]> {
       name: projects.name,
       type: projects.type,
       status: projects.status,
-      clientId: projects.clientId,
+      clientId: accounts.clientId,
       clientName: clients.name,
       startDate: projects.startDate,
       deadline: projects.deadline,
       createdBy: projects.createdBy,
     })
     .from(projects)
-    .innerJoin(clients, eq(projects.clientId, clients.id))
+    .innerJoin(accounts, eq(projects.accountId, accounts.id))
+    .innerJoin(clients, eq(accounts.clientId, clients.id))
     .where(isNull(projects.deletedAt))
     .orderBy(asc(projects.name));
 }
@@ -315,7 +326,8 @@ export async function getTaskDetail(taskId: string): Promise<TaskDetail | null> 
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
-    .innerJoin(clients, eq(clients.id, projects.clientId))
+    .innerJoin(accounts, eq(accounts.id, projects.accountId))
+    .innerJoin(clients, eq(clients.id, accounts.clientId))
     .where(and(eq(projectTasks.id, taskId), isNull(projectTasks.deletedAt)))
     .limit(1);
 
@@ -569,7 +581,9 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     notInArray(projectTasks.status, ['completed', 'cancelled']),
   ];
 
-  if (filters.clientId) where.push(eq(projects.clientId, filters.clientId));
+  // A project reaches its client through its account (Amendment M), so the client filter reads
+  // `accounts.client_id`; the join is below.
+  if (filters.clientId) where.push(eq(accounts.clientId, filters.clientId));
   if (filters.projectId) where.push(eq(projectTasks.projectId, filters.projectId));
 
   // `typeof === 'number'` rather than a truthiness check: month 0 is not a valid retainer month
@@ -612,6 +626,7 @@ export async function getFilteredTasks(filters: TaskFilters = {}): Promise<Filte
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .innerJoin(accounts, eq(accounts.id, projects.accountId))
     .leftJoin(user, eq(user.id, projectTasks.assigneeId))
     .leftJoin(subtaskCounts, eq(subtaskCounts.taskId, projectTasks.id))
     .leftJoin(upstream, eq(upstream.id, projectTasks.dependsOn))
@@ -750,7 +765,8 @@ export async function getProjectHeader(projectId: string): Promise<ProjectHeader
       clientName: clients.name,
     })
     .from(projects)
-    .innerJoin(clients, eq(clients.id, projects.clientId))
+    .innerJoin(accounts, eq(accounts.id, projects.accountId))
+    .innerJoin(clients, eq(clients.id, accounts.clientId))
     .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
     .limit(1);
 
@@ -1135,7 +1151,8 @@ export async function getClientExportRows(range: ClientExportRange): Promise<Cli
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
-    .innerJoin(clients, eq(clients.id, projects.clientId))
+    .innerJoin(accounts, eq(accounts.id, projects.accountId))
+    .innerJoin(clients, eq(clients.id, accounts.clientId))
     .leftJoin(latest, eq(latest.taskId, projectTasks.id))
     .where(
       and(

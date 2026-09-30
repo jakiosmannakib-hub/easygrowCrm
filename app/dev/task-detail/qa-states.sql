@@ -57,6 +57,7 @@ DELETE FROM task_checklist_items WHERE task_id LIKE 'qa%';
 UPDATE project_tasks SET depends_on = NULL WHERE id LIKE 'qa%';
 DELETE FROM project_tasks        WHERE id LIKE 'qa%';
 DELETE FROM projects             WHERE id IN ('qa_project', 'qa_archived_project');
+DELETE FROM accounts             WHERE id = 'qa_account';
 DELETE FROM clients              WHERE id = 'qa_client';
 DELETE FROM "user"               WHERE id IN ('qa_assignee', 'qa_reviewer');
 
@@ -76,6 +77,8 @@ INSERT INTO "user" (id, name, email, email_verified, role, active)
 VALUES ('qa_reviewer', 'QA Reviewer', 'qa_reviewer@test.local', true, 'project_manager', true);
 
 INSERT INTO clients (id, name) VALUES ('qa_client', 'QA Client');
+-- Amendment M (PUL-414): projects belong to an account, not directly to a client.
+INSERT INTO accounts (id, client_id, name) VALUES ('qa_account', 'qa_client', 'QA Account');
 
 -- `created_by` accepts a super_admin, so it takes whatever active user already exists — falling
 -- back to `qa_assignee` so this file also loads against a COMPLETELY empty database.
@@ -87,8 +90,8 @@ SELECT COALESCE(
   'qa_assignee'
 ) AS actor_id;
 
-INSERT INTO projects (id, client_id, name, type, status, start_date, deadline, created_by)
-SELECT 'qa_project', 'qa_client', 'QA Project', 'Retainer', 'active',
+INSERT INTO projects (id, account_id, name, type, status, start_date, deadline, created_by)
+SELECT 'qa_project', 'qa_account', 'QA Project', 'Retainer', 'active',
        CURRENT_DATE - 30, CURRENT_DATE + 60, ctx.actor_id
 FROM qa_ctx ctx;
 
@@ -161,8 +164,8 @@ FROM qa_ctx ctx;
 --
 -- Its task is `in_progress` and ASSIGNED, deliberately: without the archive it would be fully
 -- editable, so anything still interactive on it is a bug rather than a status effect.
-INSERT INTO projects (id, client_id, name, type, status, start_date, deadline, created_by)
-SELECT 'qa_archived_project', 'qa_client', 'QA Project (archived)', 'Retainer', 'archived',
+INSERT INTO projects (id, account_id, name, type, status, start_date, deadline, created_by)
+SELECT 'qa_archived_project', 'qa_account', 'QA Project (archived)', 'Retainer', 'archived',
        CURRENT_DATE - 120, CURRENT_DATE - 10, ctx.actor_id
 FROM qa_ctx ctx;
 
@@ -277,6 +280,7 @@ COMMIT;
 --   UPDATE project_tasks SET depends_on = NULL WHERE id LIKE 'qa%';
 --   DELETE FROM project_tasks        WHERE id LIKE 'qa%';
 --   DELETE FROM projects             WHERE id IN ('qa_project', 'qa_archived_project');
+--   DELETE FROM accounts             WHERE id = 'qa_account';
 --   DELETE FROM clients              WHERE id = 'qa_client';
 --   DELETE FROM "user"               WHERE id IN ('qa_assignee', 'qa_reviewer');
 --   COMMIT;

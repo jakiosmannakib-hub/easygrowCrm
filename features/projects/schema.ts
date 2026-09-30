@@ -35,7 +35,7 @@ import { taskPriority } from '../../db/schema/enums';
  */
 export const CreateProjectInput = z
   .object({
-    clientId: z.string().min(1),
+    accountId: z.string().min(1),
     name: z.string().min(1),
     type: z.string().min(1),
     startDate: z.iso.date(),
@@ -59,21 +59,21 @@ export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
  * reach the UPDATE.
  *
  * `deadline` accepts `null` to clear it — the column is nullable and a project can lose its
- * deadline. `clientId`, `name` and `startDate` are all `NOT NULL`, so they can be changed but
+ * deadline. `accountId`, `name` and `startDate` are all `NOT NULL`, so they can be changed but
  * never cleared, which is why only `deadline` carries `.nullable()`.
  */
 export const UpdateProjectInput = z
   .object({
     projectId: z.string().min(1),
     name: z.string().min(1).optional(),
-    clientId: z.string().min(1).optional(),
+    accountId: z.string().min(1).optional(),
     startDate: z.iso.date().optional(),
     deadline: z.iso.date().nullable().optional(),
   })
   .refine(
     (v) =>
       v.name !== undefined ||
-      v.clientId !== undefined ||
+      v.accountId !== undefined ||
       v.startDate !== undefined ||
       v.deadline !== undefined,
     { message: 'Provide at least one field to update' },
@@ -409,7 +409,7 @@ export type LoadWorkloadInput = z.infer<typeof LoadWorkloadInput>;
 export const CreateProjectFromTemplateInput = z
   .object({
     templateId: z.string().min(1),
-    clientId: z.string().min(1),
+    accountId: z.string().min(1),
     name: z.string().trim().min(1),
     startDate: z.iso.date(),
     deadline: z.iso.date().optional(),

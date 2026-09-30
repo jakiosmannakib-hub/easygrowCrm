@@ -16,7 +16,7 @@
 import ExcelJS from 'exceljs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../db';
-import { clients, projects, projectTasks, taskSubmissions } from '../../db/schema';
+import { accounts, clients, projects, projectTasks, taskSubmissions } from '../../db/schema';
 import { AppError } from '../../lib/errors';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
 import { dhakaToday } from '../../lib/format';
@@ -54,10 +54,11 @@ let seed: FullSeed;
  */
 async function arrange() {
   await db.insert(clients).values({ id: 'client_beta', name: 'Beta Client' });
+  await db.insert(accounts).values({ id: 'acct_beta', clientId: 'client_beta', name: 'Beta Account' });
   await db.insert(projects).values({
     id: 'proj_beta',
     name: 'Beta Site',
-    clientId: 'client_beta',
+    accountId: 'acct_beta',
     type: 'Retainer',
     startDate: '2026-06-01',
     deadline: null,

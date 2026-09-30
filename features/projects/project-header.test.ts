@@ -272,7 +272,7 @@ describe('getProjectHeader', () => {
   it('ignores tasks belonging to another project', async () => {
     await db.insert(projects).values({
       id: 'proj_other',
-      clientId: seed.client.id,
+      accountId: seed.account.id,
       name: 'Other',
       type: 'One-off',
       startDate: '2026-01-01',

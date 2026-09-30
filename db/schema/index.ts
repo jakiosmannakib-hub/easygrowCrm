@@ -3,6 +3,7 @@ export * from './auth';
 export * from './enums';
 export * from './audit';
 export * from './clients';
+export * from './accounts';
 export * from './projects';
 export * from './personal-tasks';
 export * from './project-tasks';

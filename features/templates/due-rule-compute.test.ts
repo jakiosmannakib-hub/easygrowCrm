@@ -13,7 +13,9 @@
 //   - making `isWorkingDay` ignore the weekend (Fri/Sat) fails the Friday-shift,
 //     holiday-then-weekend, the before_deadline weekend cases and after-before-weekend;
 //   - swapping `before_deadline`'s `shiftBackToWorkingDay` for the forward `shiftToWorkingDay`
-//     fails every before_deadline case that lands on a non-working day.
+//     fails every before_deadline case that lands on a non-working day;
+//   - dropping the Month 0 floor (`_monthNum - 1` instead of `max(_monthNum, 1) - 1`) fails the
+//     three Onboarding day-rule cases (PUL-419).
 //
 // PURE test: no db module, no pool, no `assertTestDb`.
 
@@ -59,6 +61,48 @@ describe('day rule', () => {
       ctx(),
     );
     expect(datesOf(result)).toEqual({ zero: '2026-09-06', one: '2026-09-06' });
+  });
+});
+
+describe('Month 0, the Onboarding month (PUL-419): anchored on the start date like Month 1', () => {
+  it('day rules land on the same dates as the same days of Month 1', () => {
+    const result = computeDueDates(
+      [
+        task('onb1', { kind: 'day', n: 1 }, 0),
+        task('onb3', { kind: 'day', n: 3 }, 0),
+        task('m1d3', { kind: 'day', n: 3 }, 1),
+        // Day 7 = Sat 09-12 → shifted forward to Sun 09-13.
+        task('onb7', { kind: 'day', n: 7 }, 0),
+      ],
+      ctx(),
+    );
+    expect(datesOf(result)).toEqual({
+      onb1: '2026-09-06',
+      onb3: '2026-09-08',
+      m1d3: '2026-09-08',
+      onb7: '2026-09-13',
+    });
+  });
+
+  it('does NOT start a month before the project: a Jan 31 start keeps Onboarding in January', () => {
+    // Without the anchor, Month 0 would start at start − 1 month = 2026-12-31.
+    const result = computeDueDates(
+      [task('onb', { kind: 'day', n: 1 }, 0)],
+      ctx({ startDate: '2027-01-31', deadline: null }),
+    );
+    expect(datesOf(result)).toEqual({ onb: '2027-01-31' });
+  });
+
+  it('after and before_deadline rules behave as in any other month', () => {
+    const result = computeDueDates(
+      [
+        task('onb3', { kind: 'day', n: 3 }, 0), // Tue 09-08
+        task('next', { kind: 'after', ref: 'onb3' }, 1), // + 1 working day = Wed 09-09
+        task('late', { kind: 'before_deadline', n: 0 }, 0), // the deadline, Thu 10-22
+      ],
+      ctx(),
+    );
+    expect(datesOf(result)).toEqual({ onb3: '2026-09-08', next: '2026-09-09', late: '2026-10-22' });
   });
 });
 

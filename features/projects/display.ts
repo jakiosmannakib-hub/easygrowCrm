@@ -276,6 +276,14 @@ const MONTH_NAMES = [
 ] as const;
 
 /**
+ * The optional Onboarding month of a template (PUL-419): `template_months.num = 0`, cloned into
+ * `project_tasks.month = 0`. It starts on the project start date like Month 1, sorts before it,
+ * and is always labelled by name.
+ */
+export const ONBOARDING_MONTH = 0;
+export const ONBOARDING_LABEL = 'Onboarding';
+
+/**
  * A retainer month number → `Month 3 - March` (a spaced hyphen, matching the template month
  * names), calendar-anchored to the project's start date
  * (§1–§8 "Month dropdown … calendar-anchored via the project's start date"; the same anchor
@@ -293,8 +301,12 @@ const MONTH_NAMES = [
  *
  * Falls back to a bare `Month N` if the start date is malformed — a label with no month name is
  * degraded, but a wrong month name is a manager filtering to the wrong cycle.
+ *
+ * Month 0 is the Onboarding month (PUL-419) and is always just "Onboarding": never "Month 0",
+ * and never a calendar name, since it shares Month 1's start date.
  */
 export function monthLabel(startDate: string, month: number): string {
+  if (month === ONBOARDING_MONTH) return ONBOARDING_LABEL;
   const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);
   if (!parsed || !Number.isInteger(month) || month < 1) return `Month ${month}`;
 
@@ -430,6 +442,9 @@ export function progressPct(done: number, total: number): number {
  *
  * Clamped to a minimum of 1 — a project whose `start_date` is in the future has not reached
  * Month 1 yet, but "Month 0" and "Month -2" are not things the §14.3 crumb can render.
+ *
+ * The clamp also keeps the Onboarding month (`ONBOARDING_MONTH`, PUL-419) out of the "Current
+ * cycle": it runs alongside Month 1 from the same start date, and the cycle is Month 1.
  */
 export function retainerMonth(startDate: string, today: string): number {
   const start = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);

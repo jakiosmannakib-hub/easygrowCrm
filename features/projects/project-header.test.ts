@@ -147,6 +147,14 @@ describe('retainerMonth — §11.2 derived currentMonth', () => {
     expect(retainerMonth('2027-06-01', '2026-01-01')).toBe(1);
   });
 
+  it('never returns 0, so the Onboarding month (Month 0) is never the "Current cycle" (PUL-419)', () => {
+    // Onboarding runs from the start date alongside Month 1; the cycle on that day is Month 1.
+    for (const today of ['2026-08-31', '2026-09-01', '2026-09-15']) {
+      expect(retainerMonth('2026-09-01', today)).not.toBe(0);
+    }
+    expect(retainerMonth('2026-09-01', '2026-09-01')).toBe(1);
+  });
+
   it('degrades to Month 1 on a malformed date rather than guessing', () => {
     expect(retainerMonth('not-a-date', TODAY)).toBe(1);
     expect(retainerMonth('2026-01-01', '')).toBe(1);

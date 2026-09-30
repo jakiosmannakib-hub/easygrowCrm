@@ -23,6 +23,8 @@
 // - **Every edit bumps `templates.updated_at`** from the clock port (no trigger, the `clients`
 //   convention). A no-op edit bumps nothing and writes no audit row.
 // - Positions are 1-based (as seeded, tests/seed-templates.ts); a new row goes at `max + 1`.
+//   The one exception is the Onboarding month (PUL-419), which goes at `min - 1` so it sorts
+//   first; that can be 0.
 //
 // Not in this file yet: §13.3.6b `updateTemplate` and the §13.3.7e inline subtask ops.
 // (§13.3.7a `createTemplateMonths` landed with PUL-504.) The §14.4.4 modal edits subtasks through
@@ -46,10 +48,12 @@ import { clock } from '../../lib/clock';
 import { AppError } from '../../lib/errors';
 import { withTx, type Tx } from '../../lib/mutation';
 import { writeAudit } from '../audit/write-audit';
+import { ONBOARDING_LABEL, ONBOARDING_MONTH } from '../projects/display';
 import { cascadeMonthDates, MONTH_NAMES } from './cascade';
 import {
   AddTemplateCategoryInput,
   AddTemplateMonthInput,
+  AddTemplateOnboardingInput,
   AddTemplateTaskInput,
   CreateTemplateInput,
   CreateTemplateMonthsInput,
@@ -433,6 +437,87 @@ export async function addTemplateMonth(input: AddTemplateMonthInput) {
 }
 
 /**
+ * `addTemplateOnboarding` (PUL-419): MGR (`template.update`). **Not a §13 entry yet** (see the
+ * schema): adds the template's optional Month 0, named "Onboarding", EMPTY (categories and
+ * tasks are added to it like any month's). At most one per template:
+ *
+ * - `GATE:onboarding_exists` when the template already has one. Checked under the template row
+ *   lock, and `uq_month_num (template_id, num)` backs it at the database, so two concurrent adds
+ *   cannot both land.
+ * - `num = 0` sorts it before Month 1 wherever months sort by number. `position` is the
+ *   template's lowest position minus one (0 on a template whose first month is at 1, or 1 on an
+ *   empty template), so it also sorts first in the position-ordered editor. The start month and
+ *   day are the template's defaults (0 / 1): Onboarding never enters the cascade, and a project
+ *   anchors it on its start date (`computeDueDates`).
+ *
+ * It is renamed never (`renameTemplateMonth` refuses it) and deleted like any month
+ * (`deleteTemplateMonth`, with its dependents gate).
+ *
+ * Audit: `template.month_added`, as for any added month. Notify: none.
+ */
+export async function addTemplateOnboarding(input: AddTemplateOnboardingInput) {
+  return actionResult(async () => {
+    // 1. VALIDATE
+    const parsed = AddTemplateOnboardingInput.parse(input);
+
+    // 2. AUTHORIZE: first awaited line (§9.5 rule 1).
+    const actor = await authorize('template.update');
+
+    // 3. TRANSACT: the template lock serialises this against every other hierarchy edit.
+    return await withTx(async (tx) => {
+      await lockLiveTemplate(tx, parsed.templateId);
+
+      const inTemplate = eq(templateMonths.templateId, parsed.templateId);
+      const [existing] = await tx
+        .select({ id: templateMonths.id })
+        .from(templateMonths)
+        .where(and(inTemplate, eq(templateMonths.num, ONBOARDING_MONTH)))
+        .limit(1);
+      if (existing) {
+        throw new AppError('GATE', 'This template already has an Onboarding month', {
+          reason: 'onboarding_exists',
+          monthId: existing.id,
+        });
+      }
+
+      const [{ position }] = await tx
+        .select({ position: sql<number>`coalesce(min(${templateMonths.position}), 2) - 1` })
+        .from(templateMonths)
+        .where(inTemplate);
+
+      const [month] = await tx
+        .insert(templateMonths)
+        .values({
+          id: `tm_${crypto.randomUUID()}`,
+          templateId: parsed.templateId,
+          num: ONBOARDING_MONTH,
+          name: ONBOARDING_LABEL,
+          startMonth: 0,
+          startDay: 1,
+          position: Number(position),
+        })
+        .returning();
+
+      await touchTemplate(tx, parsed.templateId);
+
+      // 4. AUDIT: same tx (§9.8 "every template-hierarchy edit").
+      await writeAudit(tx, {
+        actorId: actor.id,
+        action: 'template.month_added',
+        resourceType: 'template',
+        resourceId: parsed.templateId,
+        before: null,
+        after: month,
+      });
+
+      return month;
+    });
+
+    // 5. NOTIFY: none.
+  });
+}
+
+/**
  * §13.3.7a `createTemplateMonths` — MGR (`template.update`). The Add Month wizard's save
  * (§14.4.3, PUL-504): a whole 12-month cycle in ONE transaction.
  *
@@ -573,6 +658,14 @@ export async function renameTemplateMonth(input: RenameTemplateMonthInput) {
     // 3. TRANSACT
     return await withTx(async (tx) => {
       const month = await requireMonth(tx, parsed.monthId);
+      // PUL-419: the Onboarding month's name IS its meaning ("Onboarding" is also what every
+      // label and the {{MonthName}} token say for Month 0), so it cannot be renamed.
+      if (month.num === ONBOARDING_MONTH) {
+        throw new AppError('GATE', 'The Onboarding month keeps its name', {
+          reason: 'onboarding_fixed_name',
+          monthId: month.id,
+        });
+      }
       if (month.name === parsed.name) return month;
 
       const [row] = await tx

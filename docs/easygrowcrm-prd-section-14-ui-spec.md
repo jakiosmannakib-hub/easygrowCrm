@@ -84,9 +84,32 @@ Role-branched (one route, two components):
 >   - **Nothing selected** → the agency-wide Review and Workload tabs.
 > - **The URL is the selection:** `/projects?client=…&account=…&project=…&tab=…`. `?project=` alone
 >   still works (the Start Project landing); its account and client are derived.
+>
+> **As built (PUL-417, not yet merged).**
+> - **Tree rows:** chevron, name, and for a project its open-task count plus the review dot. An
+>   "All clients" row clears the selection. Search (in memory): a matching client or account keeps
+>   its whole subtree; a matching project keeps only itself and its ancestors; every surviving
+>   node shows expanded while searching.
+> - **⋯ menu by level:** client = New account / Rename / Archive; account = New project / Start
+>   from template / Rename / Archive; project = Rename / Archive. Archived nodes offer only Rename.
+>   Rename on a client or account opens the full `/clients` edit form. Project Archive asks for
+>   confirmation (§14.15 r.6), as it now does in the project header. Start from template opens
+>   the Start Project wizard on this page, with the client and account prefilled (§14.3.8).
+> - **Client overview cards:** account name and location, `N projects · done/total · N%` with a
+>   bar (pooled over tasks, not averaged per project), and `open · awaiting review · overdue`.
+>   **Account overview rows:** project name, health chip (§3.1.3, same thresholds as the header),
+>   `done/total · N%` with a bar, and the same counts. Clicking a card or row selects it.
+> - **Nothing selected:** Review is the default tab. An employee, who sees neither tab, gets
+>   "Pick a project from the tree to see its tasks." Until PUL-418, the agency-wide Weekly /
+>   Monthly (Excel) buttons sit here for managers.
+> - **URL:** a new node pushes a history entry (Back walks the selection); a tab change replaces
+>   it. `?tab=` is checked against the role, falling back to Board (project) or Review (nothing
+>   selected). Unknown, archived or mismatched ids are ignored.
+> - **Collapse state:** localStorage, per viewer, never authoritative. The page renders fully
+>   expanded without it; a deep-linked project's client and account start open.
 
-**Filter bar:** Client ▾ (from `getClients`, 13.8) · Project ▾ (scoped to client) · Month ▾ · Assignee ▾ · **Weekly (Excel)** · **Monthly (Excel)** (both MGR-only, server-side exports — 13.8 / PUL-413).
-**Project header:** breadcrumb `📁 Client › Project · type · Month N`; progress `9/21 · 43%` + bar; health chip (On Track / At Risk / Delayed / Critical — computed over the whole project, not the filtered month); **+ New Task** (MGR only); **Archive** in an overflow menu (MGR; blocked with a toast if pending reviews — `GATE:pending_reviews`).
+**Filter bar:** *(Superseded by Amendment M, PUL-417: only Month ▾ · Assignee ▾ remain, above the tabs of the project pane. The exports move to the overviews in PUL-418.)* Client ▾ (from `getClients`, 13.8) · Project ▾ (scoped to client) · Month ▾ · Assignee ▾ · **Weekly (Excel)** · **Monthly (Excel)** (both MGR-only, server-side exports — 13.8 / PUL-413).
+**Project header:** breadcrumb `📁 Client › 🏢 Account › Project · type · Month N` *(the account crumb since Amendment M, PUL-417)*; progress `9/21 · 43%` + bar; health chip (On Track / At Risk / Delayed / Critical — computed over the whole project, not the filtered month); **+ New Task** (MGR only); **Archive** in an overflow menu (MGR; confirmed in a dialog, §14.15 r.6; blocked with a toast if pending reviews — `GATE:pending_reviews`).
 
 **Tabs:** 1 Board · 2 List · 3 Calendar · 4 Review · 5 Workload · 6 Manager QA.
 Visibility: Board/List/Calendar all roles; Review + Workload MGR/HR; **Manager QA: SA + TL only.**
@@ -150,9 +173,10 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
 
 **New Task modal:** fields per 13.4.1; category pre-filled when opened from a category group; assignee ▾ excludes SA and inactive users. *(PUL-416, Amendment M: there is no "QC required" toggle. Review is mandatory, so `qcRequired` is never sent and the column default, true, applies.)*
 
-**Start Project wizard** (from a template card or its detail view):
+**Start Project wizard** (from a template card or its detail view, or from an account's ⋯ menu in the Projects tree, PUL-417):
 - Summary banner at top: `N tasks · N months · N roles · N QC gates will be generated`.
-- **Step 1 — Choose client & project name:** client ▾ (from `getClients`, 13.8) · project name (defaults to template name, editable). *(When the chosen client has no active accounts, or there are no active clients at all, the hint links to `/clients` (§14.12a), where accounts and clients are managed.)*
+- **Step 0 — Choose template** *(only when opened from the Projects tree, PUL-417.6)*: one row per live template with its `N tasks · N months · …` line. The client and account arrive prefilled from the tree node.
+- **Step 1 — Choose client, account & project name:** client ▾ (from `getClients`, 13.8) · account ▾ (the client's live accounts, Amendment M) with an inline **+ New account** (name only, §13.2.4 `createAccount`, for `account.create`; the new account is selected at once) · project name (defaults to template name, editable). *(When there are no active clients, or the viewer cannot create accounts and the client has none, the hint links to `/clients` (§14.12a).)*
 - **Step 2 — Set dates:** start date · deadline (both `Aug 08, 2026` full-date format).
 - **Step 3 — Assign team members to roles:** one row per template role → assignee ▾ (active non-SA users). Rows may be left unassigned; those tasks are created with `assignee = null` and surface in the Unassigned group.
 - **Step 4 — Preview:** scrollable list of every task that will be generated, one row per task showing `#N · title (with [Client] shown in place of the token) · category · role · due-rule pill · QC badge`. Read-only — this is the last confirmation before Create.
@@ -167,7 +191,9 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
 > **As built (PUL-506 Stage 2), `features/templates/components/start-project-wizard.tsx`.**
 > - **Where:** a Start Project button on each template card (§14.4.1) and in the detail header
 >   card (§14.4.2), rendered only for `project.create`. HR gets neither the button nor the data
->   behind it (clients, users and template tasks are read only when it is shown).
+>   behind it (clients, users and template tasks are read only when it is shown). Since PUL-417
+>   also an account's ⋯ "Start from template" in the Projects tree, for `project.create` +
+>   `template.read`; `/projects` then reads the templates server-side for that viewer only.
 > - **State:** the Add Month wizard's pattern (§16.10): one state object declared upfront, the
 >   body mounted only while open (mounting is the reset), a `DialogTrigger`, no fetch on open.
 >   The step strip is the shared `StepIndicator` (`components/step-indicator.tsx`).
@@ -183,10 +209,16 @@ Reviewer scorecard: Reviewer · Reviews · Revisions requested · Avg rating giv
 >   If the rules do not resolve, a notice replaces the dates and the server's GATE toast decides.
 > - **Toast** (no em dash in UI text): *"'{name}' created. N tasks generated across M months.
 >   Opening now."* Errors go through `showErrorToast`.
-> - **Landing:** `/projects?project=<id>&tab=list`. The Projects page reads `?project=` (an active
->   project; anything else is ignored) and `?tab=` (`board` / `list` / `calendar` only), and the
->   filter bar opens with that client and project selected, Month and Assignee at All. This
->   replaces the prototype's `S.projTab`.
+> - **Landing:** `/projects?project=<id>&tab=list`. The Projects page resolves `?project=` against
+>   the workspace tree (an active project; anything else is ignored), derives its account and
+>   client, selects it in the tree, and opens the project pane on the List tab with Month and
+>   Assignee at All. `?tab=` is checked against the viewer's role. This replaces the prototype's
+>   `S.projTab`. Opened from the tree, the dialog closes itself after Generate.
+> - **PUL-417.6:** two exports from the same file. `StartProjectWizard` is the template pages'
+>   button (fixed template, opens on step 1). `StartProjectDialog` is the controlled dialog the
+>   Projects workspace hosts: every live template, step 0 first, client and account prefilled
+>   (ids not in the tree are dropped). Accounts created inline are kept in the wizard's state
+>   until `router.refresh()` brings them into the page's list.
 
 ---
 

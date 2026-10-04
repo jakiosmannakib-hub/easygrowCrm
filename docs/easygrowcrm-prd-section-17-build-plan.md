@@ -1521,7 +1521,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Done when:** a client file and an account file each open in Excel and Google Sheets with no internal field present. *(Not yet: the tests round-trip both files through exceljs, but neither has been opened in Excel or Google Sheets by hand.)*
 
-> **Status: built and committed, not yet merged**, on `feat/pul-418-scoped-exports` (Stage 1:
+> **Status: merged** in PR #56 (`feat/pul-418-scoped-exports`, merge commit `1ace142`) (Stage 1:
 > 418.1 / 418.2 / 418.3 / 418.5 / 418.6; Stage 2: 418.4).
 >
 > - **Route.** `GET /api/export/client-tasks?period=weekly|monthly&clientId=…` or
@@ -1570,17 +1570,38 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §14.4.2, §14.4.3, §13.3.2, §13.3.7a, §11 (`template_months`) · **Depends:** PUL-417
 
-- [ ] 419.1 A template may have one optional **Month 0**, labelled **"Onboarding"** (not `Month 0 - …`). It is per template: templates without one behave exactly as today
-- [ ] 419.2 Template detail + Add Month wizard: add / remove the Onboarding month; it sorts before Month 1 and is not part of the 12-month cascade
-- [ ] 419.3 Due-date computation: Month 0 starts on the project start date; its `day` / `after` / `before_deadline` rules resolve against that start like any other month
-- [ ] 419.4 Start Project: Month 0 tasks clone like any other month's (`month = 0`); the project list and filters show it as "Onboarding"
-- [ ] 419.5 Tests: extend `due-rule-compute.test.ts` (Month 0 anchors on the start date) and `cascade.test.ts` (Month 0 never enters the cascade; Months 1–12 unchanged with and without it)
+- [x] 419.1 A template may have one optional **Month 0**, labelled **"Onboarding"** (not `Month 0 - …`). It is per template: templates without one behave exactly as today
+- [x] 419.2 Template detail + Add Month wizard: add / remove the Onboarding month; it sorts before Month 1 and is not part of the 12-month cascade
+- [x] 419.3 Due-date computation: Month 0 starts on the project start date; its `day` / `after` / `before_deadline` rules resolve against that start like any other month
+- [x] 419.4 Start Project: Month 0 tasks clone like any other month's (`month = 0`); the project list and filters show it as "Onboarding"
+- [ ] 419.5 Tests: extend `due-rule-compute.test.ts` (Month 0 anchors on the start date) and `cascade.test.ts` (Month 0 never enters the cascade; Months 1–12 unchanged with and without it) — **due-rule half done**; `cascade.test.ts` not yet extended
 
 **Done when:** a template with an Onboarding month starts a project whose onboarding tasks fall due from the start date, and a template without one generates exactly the same project as before.
 
 > **Open question before building:** Month 1 also starts on the project start date today
 > (§13.3.2). With an Onboarding month present, does Month 1 still start on `startDate` (the two
 > overlap), or does it move? Get a ruling from Jaki first; 419.3 and 419.5 depend on the answer.
+>
+> **Built assuming overlap, pending Jaki's ruling.** Month 0 and Month 1 both start on
+> `startDate`; Month 1 does not move (`computeDueDates` floors the month offset at Month 1). If
+> Jaki rules that Month 1 moves, 419.3 and 419.5 change.
+
+> **Status: in progress** on `feat/pul-419-onboarding` (not yet merged).
+>
+> - **Commit 1 (`958288e`): schema, clone, due dates.** `addTemplateOnboarding` puts Month 0
+>   first (position `min − 1`); a second add is refused `GATE`, and so is renaming it
+>   (`GATE:onboarding_fixed_name`). Start Project clones Month 0 tasks with `month = 0`;
+>   `monthNameFor` / `monthLabel` return "Onboarding". Month 0's due rules anchor on the start
+>   date. Tests: `due-rule-compute`, `start-project`, `template-actions`, `project-header`,
+>   `status-pill`.
+> - **Commit 2 (`924d13a`): UI.** "+ Add onboarding" in the template tree while there is none;
+>   Month 0 renders first as "Starts with the project", with Delete but no Rename. New
+>   `monthNumberLabel()` labels Month 0 "Onboarding" in the task breadcrumb, the List headers and
+>   the New Task Month ▾ picker (Onboarding first). The Start Project wizard and template stats
+>   name Onboarding apart from the month count (`formatMonthCount`). Tests: `template-meta`,
+>   `status-pill`, `client-export`.
+> - **Still open:** `cascade.test.ts` (419.5); a §13.3.7 row for `addTemplateOnboarding`, which
+>   is not yet a §13 entry; Jaki's ruling above.
 
 ---
 

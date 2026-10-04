@@ -6,7 +6,7 @@
 // Filled one template at a time as the actions that send them land; the rest arrive with their
 // tickets and the real adapter (PUL-801), which renders `data` through these. Plain text only.
 
-import { fmtDate } from './format';
+import { fmtClockTime, fmtDate } from './format';
 import type { NotificationType } from './notifications';
 
 /** `N:signed_in_late` (§13.5.1): to every active HR user when someone signs in late. */
@@ -16,11 +16,11 @@ export interface SignedInLateData {
   employeeName: string;
   /** The local working day, `YYYY-MM-DD`. */
   date: string;
-  /** Local sign-in time, `HH:MM`. */
+  /** Local sign-in time, 24-hour `HH:MM`; the text renders it 12-hour (`9:16 AM`). */
   time: string;
 }
 
 export const NOTIFICATION_TEMPLATES = {
   signed_in_late: (d: SignedInLateData) =>
-    `${d.employeeName} signed in late at ${d.time} on ${fmtDate(d.date, { relative: false })}.`,
+    `${d.employeeName} signed in late at ${fmtClockTime(d.time)} on ${fmtDate(d.date, { relative: false })}.`,
 } satisfies Partial<Record<NotificationType, (data: never) => string>>;

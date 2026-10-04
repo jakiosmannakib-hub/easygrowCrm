@@ -109,6 +109,10 @@ const OVERDUE_RELEVANT = ['planned', 'in_progress', 'blocked', 'revision_require
 /**
  * The signed-in user's day so far: today's attendance row (or null before sign-in) and today's
  * plan rows. Deliberately small; PUL-304's `getMyTimer` builds on it.
+ *
+ * Plan order, derived (no position column): linked rows first, ordered like
+ * `getSignInPrefill` (overdue first, then the task's priority, urgent first, then title); then
+ * ad-hoc rows by title. Id breaks any remaining tie so the order is stable between reads.
  */
 export async function getMyToday(): Promise<MyToday> {
   const me = await getSessionUser();
@@ -127,6 +131,12 @@ export async function getMyToday(): Promise<MyToday> {
     .where(and(eq(attendance.employeeId, me.id), eq(attendance.date, today)))
     .limit(1);
 
+  // Null-safe: an ad-hoc row, or a linked task with no due date, is simply not overdue.
+  const isOverdue = sql<boolean>`coalesce(${and(
+    lt(projectTasks.dueDate, today),
+    inArray(projectTasks.status, [...OVERDUE_RELEVANT]),
+  )}, false)`;
+
   const plan = await db
     .select({
       id: dailyTasks.id,
@@ -137,17 +147,22 @@ export async function getMyToday(): Promise<MyToday> {
       projectName: projects.name,
       projectTaskStatus: projectTasks.status,
       clientName: clients.name,
-      isOverdue: sql<boolean>`coalesce(${and(
-        lt(projectTasks.dueDate, today),
-        inArray(projectTasks.status, [...OVERDUE_RELEVANT]),
-      )}, false)`,
+      isOverdue,
     })
     .from(dailyTasks)
     .leftJoin(projectTasks, eq(projectTasks.id, dailyTasks.projectTaskId))
     .leftJoin(projects, eq(projects.id, projectTasks.projectId))
     .leftJoin(clients, eq(clients.id, dailyTasks.clientId))
     .where(and(eq(dailyTasks.employeeId, me.id), eq(dailyTasks.date, today)))
-    .orderBy(asc(dailyTasks.createdAt), asc(dailyTasks.id));
+    .orderBy(
+      // false sorts before true: linked rows first.
+      sql`${dailyTasks.projectTaskId} is null`,
+      desc(isOverdue),
+      // The linked task's priority; NULL for every ad-hoc row, so it never separates them.
+      desc(projectTasks.priority),
+      asc(dailyTasks.title),
+      asc(dailyTasks.id),
+    );
 
   return { attendance: day ?? null, plan };
 }

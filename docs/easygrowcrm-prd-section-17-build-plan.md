@@ -694,6 +694,12 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > - **Supporting:** `getMyToday` rows gain `clientName` and `isOverdue`; `fmtClockTime` in
 >   `lib/format.ts`; `isHoliday(date, tx?)` in `features/settings/queries.ts`, now also used by
 >   `signIn`. The page reads everything server-side (client components cannot import queries).
+>
+> **Review fixes:** `revalidatePath` removed from `signIn` (the dialog's `router.refresh()` after
+> success and after `CONFLICT` is the refresh, per repo convention); `N:signed_in_late` renders a
+> 12-hour time via `fmtClockTime` ("9:16 AM"); `getMyToday` orders linked rows like the prefill,
+> then ad-hoc rows by title (no position column; one test); the 09:00 frozen-clock default is
+> local to `sign-in.test.ts`, and no shared helper changed.
 
 ---
 

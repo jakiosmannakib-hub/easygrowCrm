@@ -5,8 +5,9 @@
 // Dates: 2026-10-04 is a Sunday (a work day), 2026-10-09 a Friday (weekend). Asia/Dhaka is
 // UTC+6, so 09:16 local is 03:16Z.
 //
-// `next/cache` is mocked because `revalidatePath` throws outside a Next request; the session is
-// mocked the same way status-transitions.test.ts does it.
+// The session is mocked the same way status-transitions.test.ts does it.
+//
+// The 09:00 frozen-clock default below is local to this file; no shared helper sets it.
 
 import { count, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,16 +22,15 @@ import {
   user as userTable,
 } from '../../db/schema';
 import { createTestClock, resetClock, setClock } from '../../lib/clock';
+import { NOTIFICATION_TEMPLATES, type SignedInLateData } from '../../lib/notification-templates';
 import { __resetNotifications, __sentNotifications } from '../../lib/notifications';
 import { expectFail, expectOk } from '../../tests/expect-result';
 import { expectNotified } from '../../tests/notifications';
 import { seedMinimal, type MinimalSeed } from '../../tests/seed';
 
 const getSession = vi.fn();
-const revalidatePath = vi.fn();
 
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }));
-vi.mock('next/cache', () => ({ revalidatePath: (p: string) => revalidatePath(p) }));
 vi.mock('../../lib/auth', () => ({ auth: { api: { getSession: () => getSession() } } }));
 
 const { signIn } = await import('./actions');
@@ -79,7 +79,6 @@ beforeEach(async () => {
   setClock(clock);
   clock.set(new Date('2026-10-04T03:00:00Z'));
   __resetNotifications();
-  revalidatePath.mockClear();
   actAs(me);
 });
 
@@ -108,6 +107,12 @@ describe('late detection', () => {
       data: { employeeName: 'Seed Employee One', date: SUNDAY, time: '09:16' },
     });
     expect(__sentNotifications().map((n) => n.to)).toEqual(['test_hr']);
+
+    // The text HR reads: 12-hour time, date with year.
+    const [sent] = __sentNotifications();
+    expect(NOTIFICATION_TEMPLATES.signed_in_late(sent.data as unknown as SignedInLateData)).toBe(
+      'Seed Employee One signed in late at 9:16 AM on Oct 4, 2026.',
+    );
   });
 
   it('is never late on a Friday, however late the hour', async () => {
@@ -219,9 +224,6 @@ describe('the plan', () => {
       },
     });
 
-    expect(revalidatePath).toHaveBeenCalledWith('/dashboard');
-    expect(revalidatePath).toHaveBeenCalledWith('/projects');
-
     // getMyToday sees the day and the plan, with each linked task's current status.
     const today = await getMyToday();
     expect(today.attendance).toMatchObject({ id: result.attendanceId, late: false });
@@ -237,6 +239,32 @@ describe('the plan', () => {
       clientName: seed.client.name,
       isOverdue: false,
     });
+  });
+
+  it('orders the day: linked rows (overdue, priority, title), then ad-hoc rows by title', async () => {
+    await db.update(projectTasks).set({ priority: 'urgent' }).where(eq(projectTasks.id, 't_progress'));
+    // Submitted in a scrambled order: the stored order must not depend on it.
+    expectOk(
+      await signIn({
+        workType: 'in_office',
+        plan: [
+          { title: 'Zeta call' },
+          { title: 'x', projectTaskId: 't_planned' },
+          { title: 'Alpha notes' },
+          { title: 'x', projectTaskId: 't_progress' },
+          { title: 'x', projectTaskId: 't_revision' },
+        ],
+      }),
+    );
+
+    const { plan } = await getMyToday();
+    expect(plan.map((r) => r.title)).toEqual([
+      'Task t_revision', // overdue (due Oct 1)
+      'Task t_progress', // due today, urgent
+      'Write the brief', // due today, medium
+      'Alpha notes', // ad-hoc, by title
+      'Zeta call',
+    ]);
   });
 
   it("refuses someone else's task with FORBIDDEN naming the row, and writes nothing", async () => {

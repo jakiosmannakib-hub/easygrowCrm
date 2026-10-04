@@ -10,7 +10,6 @@
 'use server';
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { revalidatePath } from 'next/cache';
 import { db } from '../../db';
 import {
   attendance,
@@ -256,10 +255,7 @@ export async function signIn(input: SignInInput) {
       }
     }
 
-    // Task statuses may have changed: the dashboard and the Projects workspace re-read.
-    revalidatePath('/dashboard');
-    revalidatePath('/projects');
-
+    // No revalidation here: the caller re-reads with `router.refresh()` (the repo convention).
     return result;
   });
 }

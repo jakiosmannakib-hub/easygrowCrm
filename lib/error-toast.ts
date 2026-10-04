@@ -69,6 +69,10 @@ export const GATE_REASONS: Record<string, string> = {
   bad_ref: 'A task can only be scheduled after another task in this template, without a loop.',
   // PUL-506 (§13.3.2). Start Project: a `before_deadline` task needs the project to have one.
   no_deadline: 'This template has tasks due before the deadline. Set a project deadline.',
+  // PUL-419: a template has at most one Onboarding month (Month 0), and its name is fixed.
+  onboarding_exists: 'This template already has an Onboarding month.',
+  onboarding_fixed_name:
+    'The Onboarding month keeps its name. Rename its categories or tasks instead.',
   // Thrown by the task, category and month deletes alike, so it names no level.
   task_has_dependents:
     'Another task is scheduled after something you’re deleting. Change that task’s due rule first.',

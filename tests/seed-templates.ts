@@ -9,7 +9,8 @@
  *   - ids: `seed_tpl_<slug>`, `seed_tm_<slug>_<num>`, `seed_tcat_<cat id>`, `seed_tt_<task id>`,
  *     `seed_tts_<subtask id>`. The prototype's own task id rides in the suffix so an `after`
  *     rule's `ruleRef: 'ttN'` maps to `due_rule.ref = 'seed_tt_ttN'`.
- *   - `position` is 1-based, in array order at every level.
+ *   - `position` is 1-based, in array order at every level. (Local SEO's Onboarding month, Month
+ *     0, is first in its array, so it sits at position 1 and Month 1 at 2.)
  *   - `pri` is lowercased onto `task_priority`. One task (`tt23`) is `Urgent` in the prototype,
  *     which maps to the enum's `urgent`.
  *   - `ruleKind` 'before' → `before_deadline` (§11.4's name); 'day' / 'after' keep theirs.
@@ -61,6 +62,59 @@ const TPLS: ProtoTemplate[] = [
     desc: 'The full monthly deliverable cycle for a local SEO retainer: GBP work, citations, content, rank tracking and the client report.',
     roles: ['Project Manager', 'SEO Executive', 'Content Writer', 'QC'],
     months: [
+      // PUL-419: the optional Onboarding month (Month 0). Not in the prototype's `tpls`; added so
+      // the seed exercises Month 0 end to end (anchored on the project start, like Month 1).
+      {
+        num: 0,
+        name: 'Onboarding',
+        cats: [
+          {
+            id: 'c0a',
+            name: 'Onboarding',
+            tasks: [
+              {
+                id: 'tt0a',
+                title: 'Kickoff call',
+                role: 'Project Manager',
+                pri: 'High',
+                est: 1,
+                ruleKind: 'day',
+                ruleVal: 1,
+                ruleRef: null,
+                checklist: ['Agenda sent', 'Goals and KPIs agreed'],
+                proofReq: false,
+                qcGate: true,
+              },
+              {
+                id: 'tt0b',
+                title: 'Collect GBP and site access',
+                role: 'Project Manager',
+                pri: 'High',
+                est: 1,
+                ruleKind: 'day',
+                ruleVal: 3,
+                ruleRef: null,
+                checklist: ['GBP manager access', 'CMS login', 'Search Console and Analytics'],
+                proofReq: false,
+                qcGate: true,
+              },
+              {
+                id: 'tt0c',
+                title: 'Baseline audit',
+                role: 'SEO Executive',
+                pri: 'Medium',
+                est: 3,
+                ruleKind: 'day',
+                ruleVal: 7,
+                ruleRef: null,
+                checklist: ['Rankings snapshot', 'Citation audit', 'Technical crawl'],
+                proofReq: true,
+                qcGate: true,
+              },
+            ],
+          },
+        ],
+      },
       {
         num: 1,
         name: 'Month 1',

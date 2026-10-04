@@ -43,6 +43,7 @@ vi.mock('../../lib/auth', () => ({ auth: { api: { getSession: () => getSession()
 const {
   addTemplateCategory,
   addTemplateMonth,
+  addTemplateOnboarding,
   addTemplateTask,
   createTemplate,
   createTemplateMonths,
@@ -207,6 +208,161 @@ describe('months (addTemplateMonth, §13.3.7b)', () => {
   it('returns NOT_FOUND for a missing month', async () => {
     actAs(seed.projectManager.id);
     expectFail(await renameTemplateMonth({ monthId: 'tm_missing', name: 'x' }), 'NOT_FOUND');
+  });
+});
+
+describe('Onboarding month (addTemplateOnboarding, PUL-419)', () => {
+  async function monthRows(templateId: string) {
+    return db
+      .select()
+      .from(templateMonths)
+      .where(eq(templateMonths.templateId, templateId))
+      .orderBy(templateMonths.position);
+  }
+
+  it('adds Month 0 "Onboarding" before Month 1, empty, and audits template.month_added', async () => {
+    const { template, month } = await scaffold();
+    testClock.set(LATER);
+
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    expect(onboarding).toMatchObject({
+      num: 0,
+      name: 'Onboarding',
+      position: 0, // Month 1 sits at 1, so min - 1
+      startMonth: 0,
+      startDay: 1,
+    });
+    expect((await monthRows(template.id)).map((m) => [m.num, m.name])).toEqual([
+      [0, 'Onboarding'],
+      [1, 'Month 1'],
+    ]);
+    expect(month.position).toBe(1);
+    expect((await templateRow(template.id))!.updatedAt).toEqual(LATER);
+
+    // It sorts first in the editor's tree too, and starts empty.
+    const tree = await loadTemplateTree(db, template.id);
+    expect(tree!.months.map((m) => m.num)).toEqual([0, 1]);
+    expect(tree!.months[0]!.categories).toEqual([]);
+
+    const added = (await auditFor(template.id)).filter((a) => a.action === 'template.month_added');
+    expect(added.at(-1)).toMatchObject({ after: { id: onboarding.id, num: 0 } });
+  });
+
+  it('on an empty template it goes at position 1, and the next added month is still Month 1', async () => {
+    actAs(seed.projectManager.id);
+    const template = expectOk(await createTemplate({ name: 'Onboarding first' }));
+
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    expect(onboarding).toMatchObject({ num: 0, position: 1 });
+
+    const month1 = expectOk(await addTemplateMonth({ templateId: template.id }));
+    expect(month1).toMatchObject({ num: 1, position: 2, name: 'Month 1' });
+  });
+
+  it('refuses a second Onboarding month with GATE:onboarding_exists, and writes nothing', async () => {
+    const { template } = await scaffold();
+    const first = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    const auditBefore = (await auditFor(template.id)).length;
+
+    const failure = expectFail(
+      await addTemplateOnboarding({ templateId: template.id }),
+      'GATE',
+      'onboarding_exists',
+    );
+    expect(failure.details).toMatchObject({ monthId: first.id });
+    expect((await monthRows(template.id)).filter((m) => m.num === 0)).toHaveLength(1);
+    expect(await auditFor(template.id)).toHaveLength(auditBefore);
+  });
+
+  it('refuses renaming the Onboarding month (GATE:onboarding_fixed_name); Month 1 still renames', async () => {
+    const { template, month } = await scaffold();
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    const auditBefore = (await auditFor(template.id)).length;
+
+    expectFail(
+      await renameTemplateMonth({ monthId: onboarding.id, name: 'Kickoff' }),
+      'GATE',
+      'onboarding_fixed_name',
+    );
+    // Even a "rename" to its own name is refused: the name is not editable at all.
+    expectFail(
+      await renameTemplateMonth({ monthId: onboarding.id, name: 'Onboarding' }),
+      'GATE',
+      'onboarding_fixed_name',
+    );
+    expect((await monthRows(template.id)).find((m) => m.id === onboarding.id)!.name).toBe(
+      'Onboarding',
+    );
+    expect(await auditFor(template.id)).toHaveLength(auditBefore);
+
+    expectOk(await renameTemplateMonth({ monthId: month.id, name: 'Kickoff' }));
+  });
+
+  it('deletes like any month: cascades, audits, and can be added again afterwards', async () => {
+    const { template } = await scaffold();
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    const cat = expectOk(await addTemplateCategory({ monthId: onboarding.id, name: 'Onboarding' }));
+    const task = await addTask(cat.id, 'Kickoff call', ['Send agenda']);
+
+    expectOk(await deleteTemplateMonth({ monthId: onboarding.id }));
+    expect((await monthRows(template.id)).map((m) => m.num)).toEqual([1]);
+    expect(await db.select().from(templateTasks).where(eq(templateTasks.id, task.id))).toEqual([]);
+    expect(await subtaskRows(task.id)).toEqual([]);
+    expect(
+      (await auditFor(template.id)).find((a) => a.action === 'template.month_deleted'),
+    ).toMatchObject({ before: { id: onboarding.id } });
+
+    expectOk(await addTemplateOnboarding({ templateId: template.id }));
+  });
+
+  it('the dependents gate applies: a Month 1 task scheduled after an Onboarding task blocks the delete', async () => {
+    const { template, category } = await scaffold();
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+    const cat = expectOk(await addTemplateCategory({ monthId: onboarding.id, name: 'Onboarding' }));
+    const anchor = await addTask(cat.id, 'Collect access');
+    const follow = await addTask(category.id, 'First audit', [], { kind: 'after', ref: anchor.id });
+
+    const failure = expectFail(
+      await deleteTemplateMonth({ monthId: onboarding.id }),
+      'GATE',
+      'task_has_dependents',
+    );
+    expect(failure.details).toMatchObject({ taskIds: [follow.id] });
+    expect((await monthRows(template.id)).map((m) => m.num)).toEqual([0, 1]);
+  });
+
+  it('never enters the 12-month cascade: createTemplateMonths numbers from 1 and leaves it alone', async () => {
+    actAs(seed.projectManager.id);
+    const template = expectOk(await createTemplate({ name: 'Onboarding + wizard' }));
+    const onboarding = expectOk(await addTemplateOnboarding({ templateId: template.id }));
+
+    const result = expectOk(
+      await createTemplateMonths({
+        templateId: template.id,
+        startMonth: 8,
+        startDay: 10,
+        month1: {
+          cats: [{ name: 'Content', tasks: [{ title: 'Write blog', dueRule: { kind: 'day', n: 5 } }] }],
+        },
+      }),
+    );
+    expect(result.firstNum).toBe(1);
+
+    const months = await monthRows(template.id);
+    expect(months.map((m) => m.num)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(months[0]).toMatchObject({
+      id: onboarding.id,
+      name: 'Onboarding',
+      startMonth: 0,
+      startDay: 1,
+    });
+    expect(months[1]!.name).toBe('Month 1 - September 10');
+  });
+
+  it('is a template.update write: an employee is refused', async () => {
+    const { template } = await scaffold();
+    actAs(seed.employees[0].id);
+    expectFail(await addTemplateOnboarding({ templateId: template.id }), 'FORBIDDEN');
   });
 });
 

@@ -10,6 +10,7 @@
 
 import type { DueRule } from '../../db/schema/templates';
 import { addMonthsClamped } from '../../lib/dates';
+import { ONBOARDING_LABEL, ONBOARDING_MONTH } from '../projects/display';
 import { MONTH_NAMES } from './cascade';
 import { tplAllTasks, type TemplateTree } from './hierarchy';
 import { templateMeta, templateRoles, type TemplateMeta } from './template-meta';
@@ -18,8 +19,12 @@ import { templateMeta, templateRoles, type TemplateMeta } from './template-meta'
  * The calendar month name of a task's month start: `startDate` + (month − 1) months,
  * day-clamped. The same anchor `computeDueDates` uses, so Month 2 of a Sep 10 project is
  * "October".
+ *
+ * Month 0 (PUL-419) is "Onboarding", not a calendar name: it shares Month 1's start date, so a
+ * calendar name would repeat Month 1's and say nothing about what the month is for.
  */
 export function monthNameFor(startDate: string, monthNum: number): string {
+  if (monthNum === ONBOARDING_MONTH) return ONBOARDING_LABEL;
   const monthStart = addMonthsClamped(startDate, monthNum - 1);
   return MONTH_NAMES[Number(monthStart.slice(5, 7)) - 1] ?? '';
 }

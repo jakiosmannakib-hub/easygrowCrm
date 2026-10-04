@@ -19,6 +19,7 @@ import {
   STATUS_DISPLAY,
   isProtectedStatus,
   monthLabel,
+  monthNumberLabel,
   statusMenuOptions,
 } from './display';
 
@@ -184,6 +185,13 @@ describe('isProtectedStatus', () => {
   });
 });
 
+describe('monthNumberLabel (PUL-419): a month number with no start date at hand', () => {
+  it('labels Month 0 "Onboarding" and any other month "Month N"', () => {
+    expect(monthNumberLabel(0)).toBe('Onboarding');
+    expect(monthNumberLabel(3)).toBe('Month 3');
+  });
+});
+
 describe('monthLabel — §14.3 Month ▾ (PUL-408.2)', () => {
   it('anchors Month 1 to the project start month', () => {
     expect(monthLabel('2026-03-01', 1)).toBe('Month 1 - March');
@@ -212,6 +220,11 @@ describe('monthLabel — §14.3 Month ▾ (PUL-408.2)', () => {
     // A label with no month name is merely poor; a wrong one sends a manager to the wrong cycle.
     expect(monthLabel('not-a-date', 4)).toBe('Month 4');
     expect(monthLabel('', 4)).toBe('Month 4');
-    expect(monthLabel('2026-03-01', 0)).toBe('Month 0');
+    expect(monthLabel('2026-03-01', -1)).toBe('Month -1');
+  });
+
+  it('labels Month 0 "Onboarding", never "Month 0" and never a calendar month (PUL-419)', () => {
+    expect(monthLabel('2026-03-01', 0)).toBe('Onboarding');
+    expect(monthLabel('not-a-date', 0)).toBe('Onboarding');
   });
 });

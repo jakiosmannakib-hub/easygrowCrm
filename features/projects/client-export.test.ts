@@ -630,6 +630,26 @@ describe('buildClientWorkbook', () => {
     ]);
   });
 
+  it('labels an Onboarding (Month 0) task "Onboarding" in the Month column (PUL-419)', async () => {
+    // A real row through the query: the seed's One-off project task moved into Month 0.
+    await db.update(projectTasks).set({ month: 0 }).where(eq(projectTasks.id, 'x_to_edge'));
+
+    const wb = await workbookFor(SEED_ACCOUNT_TWO, 'Seed Account Two');
+    expect(tableRows(wb.worksheets[0]!, HEADER.length)).toEqual([
+      HEADER,
+      [
+        'Seed One-off',
+        'Onboarding', // monthLabel(start, 0): never "Month 0", never a calendar month
+        'To-edge task',
+        'Reporting',
+        'Sep 15, 2026',
+        'In Progress',
+        '',
+        '',
+      ],
+    ]);
+  });
+
   it('produces an empty workbook for no rows (the route answers { empty: true } instead)', () => {
     const wb = buildClientWorkbook({
       rows: [],

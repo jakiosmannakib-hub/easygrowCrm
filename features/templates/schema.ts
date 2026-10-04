@@ -127,6 +127,13 @@ export const CreateTemplateMonthsInput = z.object({
 });
 export type CreateTemplateMonthsInput = z.input<typeof CreateTemplateMonthsInput>;
 
+/**
+ * `addTemplateOnboarding` (PUL-419): the template's optional Month 0, "Onboarding". NOT a §13
+ * entry yet, like `addTemplateMonth`; flagged for a §13.3.7 row.
+ */
+export const AddTemplateOnboardingInput = z.object({ templateId: z.string().min(1) });
+export type AddTemplateOnboardingInput = z.infer<typeof AddTemplateOnboardingInput>;
+
 /** §13.3.7b. */
 export const RenameTemplateMonthInput = z.object({ monthId: z.string().min(1), name: Title });
 export type RenameTemplateMonthInput = z.infer<typeof RenameTemplateMonthInput>;

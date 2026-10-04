@@ -59,11 +59,12 @@ import {
 } from '@/components/ui/select';
 import { createAccount } from '@/features/clients/actions';
 import { createProjectFromTemplate } from '@/features/projects/actions';
+import { monthNumberLabel, ONBOARDING_MONTH } from '@/features/projects/display';
 import { dhakaToday, fmtDate } from '@/lib/format';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { computeDueDates } from '../due-rule-compute';
 import { projectTaskTitle, type StartProjectTask, type StartProjectTemplate } from '../start-project';
-import { formatTemplateMeta } from '../template-meta';
+import { formatMonthCount, formatTemplateMeta } from '../template-meta';
 import { StepIndicator } from './step-indicator';
 
 // ── Types and state ─────────────────────────────────────────────────────────────────────
@@ -408,7 +409,11 @@ function WizardBody({
           { startDate: s.startDate, deadline: s.deadline || null, holidays: NO_HOLIDAYS },
         )
       : null;
-  const previewMonths = new Set(template.tasks.map((t) => t.monthNum)).size;
+  // The months that actually have tasks. Onboarding (Month 0, PUL-419) is named on its own, not
+  // counted as a month, exactly as the template card's stats do.
+  const previewMonthNums = new Set(template.tasks.map((t) => t.monthNum));
+  const previewOnboarding = previewMonthNums.has(ONBOARDING_MONTH);
+  const previewMonths = previewMonthNums.size - (previewOnboarding ? 1 : 0);
 
   // ── Generate ───────────────────────────────────────────────────────────────
   async function generate() {
@@ -434,7 +439,10 @@ function WizardBody({
     const { projectId, taskCount, monthCount } = result.data;
     toast.success(
       `'${name}' created. ${plural(taskCount, 'task', 'tasks')} generated across ` +
-        `${plural(monthCount, 'month', 'months')}. Opening now.`,
+        // `monthCount` counts Onboarding (PUL-419); the sentence names it separately, as the
+        // template card does.
+        `${formatMonthCount(monthCount - (previewOnboarding ? 1 : 0), previewOnboarding)}. ` +
+        'Opening now.',
     );
     // §14.3.8: the new project, List tab, month filter cleared (the page starts at all months).
     router.push(`/projects?project=${encodeURIComponent(projectId)}&tab=list`);
@@ -687,7 +695,8 @@ function WizardBody({
         <div className="grid gap-2">
           <p className="bg-muted rounded-md p-2 text-xs">
             {plural(template.tasks.length, 'task', 'tasks')} across{' '}
-            {plural(previewMonths, 'month', 'months')} for {accountName} ({clientName}), starting{' '}
+            {formatMonthCount(previewMonths, previewOnboarding)} for {accountName} ({clientName}),
+            starting{' '}
             {fmtDate(s.startDate, { relative: false })}
             {s.deadline ? `, deadline ${fmtDate(s.deadline, { relative: false })}` : ''}.
           </p>
@@ -717,6 +726,11 @@ function WizardBody({
                       monthNum: t.monthNum,
                     })}
                   </span>
+                  {/*
+                    Which month it lands in. Onboarding tasks come first (the walk follows month
+                    position, and Month 0 always sits before Month 1) and read "Onboarding".
+                  */}
+                  <span className="text-muted-foreground">· {monthNumberLabel(t.monthNum)}</span>
                   <span className="text-muted-foreground">· {t.category}</span>
                   <span className="text-muted-foreground">· {t.roleHint ?? 'No role'}</span>
                   <Badge variant="outline" className="font-normal">

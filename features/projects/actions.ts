@@ -283,7 +283,9 @@ export async function createProject(input: CreateProjectInput) {
  * role). The title's `{{ClientName}}` / `{{AccountName}}` / `{{ProjectName}}` / `{{MonthName}}`
  * are substituted;
  * `MonthName` is the calendar month of that task's month start (`startDate` + (month−1) months,
- * day-clamped, the same anchor `computeDueDates` uses). `checklist[]` becomes unchecked
+ * day-clamped, the same anchor `computeDueDates` uses). The Onboarding month (PUL-419) clones
+ * as `month = 0`, its `MonthName` is "Onboarding", its due dates are anchored on the start date
+ * like Month 1's, and it counts toward `monthCount` like any month. `checklist[]` becomes unchecked
  * `task_checklist_items`, subtasks become `task_subtasks` with `done = false`, and an `after`
  * rule's ref becomes `depends_on` = the NEW live id of the referenced task. `taskOverrides` apply
  * last, so an overridden due date does not move the tasks scheduled after it: those were

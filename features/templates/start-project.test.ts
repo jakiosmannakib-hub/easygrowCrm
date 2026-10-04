@@ -8,8 +8,9 @@
 // `authorize()` (§15.8). Only `auth.api.getSession` is stubbed; role and active are still read
 // from Postgres.
 //
-// Fixture: seedFull's "Local SEO Monthly Campaign" (2 months, 16 tasks, subtasks, checklists, an
-// `after` rule tt3 → tt2, two `before_deadline` tasks per month). One Month 2 title is rewritten
+// Fixture: seedFull's "Local SEO Monthly Campaign" (an Onboarding month plus 2 months; subtasks,
+// checklists, an `after` rule tt3 → tt2, two `before_deadline` tasks per month; the Onboarding
+// month's three tasks are `day` rules, PUL-419). One Month 2 title is rewritten
 // in `beforeEach` to carry all three tokens, since no seeded title has {{ProjectName}} or
 // {{MonthName}}.
 //
@@ -78,7 +79,8 @@ async function flatTemplate(): Promise<FlatTemplateTask[]> {
 
 /** The title a template task should get, for matching live rows back to template tasks. */
 function expectedTitle(t: FlatTemplateTask): string {
-  const month = t._monthNum === 1 ? 'September' : 'October';
+  // Month 0 is the Onboarding month (PUL-419): its token reads "Onboarding", not a calendar month.
+  const month = t._monthNum === 0 ? 'Onboarding' : t._monthNum === 1 ? 'September' : 'October';
   return t.title
     .replaceAll('{{ClientName}}', seed.client.name)
     .replaceAll('{{AccountName}}', seed.account.name)
@@ -134,7 +136,7 @@ describe('createProjectFromTemplate (§13.3.2) — the clone', () => {
 
     const out = expectOk(await createProjectFromTemplate(input()));
     expect(out.taskCount).toBe(flat.length);
-    expect(out.monthCount).toBe(2);
+    expect(out.monthCount).toBe(3); // Onboarding, Month 1, Month 2
 
     const { rows, byTemplateTask } = await liveByTemplateTask(out.projectId, flat);
     expect(rows).toHaveLength(flat.length);
@@ -270,6 +272,33 @@ describe('createProjectFromTemplate (§13.3.2) — the clone', () => {
     const toSeo = assigned.find((n) => n.to === seed.employees[0].id);
     expect((toSeo?.data?.taskIds as string[]).sort()).toEqual(seoTasks.sort());
     expect(__sentNotifications().some((n) => n.type === 'project_started')).toBe(true);
+  });
+});
+
+describe('createProjectFromTemplate: the Onboarding month (PUL-419)', () => {
+  it('clones Month 0 with month = 0, anchors its dates on the start, and names it in {{MonthName}}', async () => {
+    actAs(seed.projectManager.id);
+    await db
+      .update(templateTasks)
+      .set({ title: 'Kickoff call ({{MonthName}}) for {{AccountName}}' })
+      .where(eq(templateTasks.id, 'seed_tt_tt0a'));
+    const flat = await flatTemplate();
+    const onboarding = flat.filter((t) => t._monthNum === 0);
+    expect(onboarding.map((t) => t.id)).toEqual(['seed_tt_tt0a', 'seed_tt_tt0b', 'seed_tt_tt0c']);
+
+    const out = expectOk(await createProjectFromTemplate(input()));
+    const { byTemplateTask } = await liveByTemplateTask(out.projectId, flat);
+
+    const live = onboarding.map((t) => byTemplateTask.get(t.id));
+    expect(live.map((r) => [r?.month, r?.category, r?.title, r?.dueDate])).toEqual([
+      // Start Thu 09-10. Day 1 = Thu 09-10; Day 3 = Sat 09-12 → Sun 09-13; Day 7 = Wed 09-16.
+      [0, 'Onboarding', `Kickoff call (Onboarding) for ${seed.account.name}`, '2026-09-10'],
+      [0, 'Onboarding', 'Collect GBP and site access', '2026-09-13'],
+      [0, 'Onboarding', 'Baseline audit', '2026-09-16'],
+    ]);
+
+    // The same days of Month 1 fall on the same dates: Month 0 shares Month 1's start.
+    expect(byTemplateTask.get('seed_tt_tt1')?.dueDate).toBe('2026-09-13'); // Month 1 Day 3
   });
 });
 

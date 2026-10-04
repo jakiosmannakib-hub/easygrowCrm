@@ -18,7 +18,12 @@ import type {
   TemplateTaskNode,
   TemplateTree,
 } from './hierarchy';
-import { formatTemplateMeta, templateMeta, templateRoles } from './template-meta';
+import {
+  formatMonthCount,
+  formatTemplateMeta,
+  templateMeta,
+  templateRoles,
+} from './template-meta';
 
 function task(
   id: string,
@@ -119,15 +124,44 @@ const FULL = tree(
 
 describe('templateMeta', () => {
   it('counts tasks across every month and category, months, task roles, and QC gates', () => {
-    expect(templateMeta(FULL)).toEqual({ tasks: 6, months: 3, roles: 3, qcGates: 4 });
+    expect(templateMeta(FULL)).toEqual({
+      tasks: 6,
+      months: 3,
+      onboarding: false,
+      roles: 3,
+      qcGates: 4,
+    });
   });
 
   it('returns zeros for a fresh template with no months', () => {
-    expect(templateMeta(tree([], []))).toEqual({ tasks: 0, months: 0, roles: 0, qcGates: 0 });
+    expect(templateMeta(tree([], []))).toEqual({
+      tasks: 0,
+      months: 0,
+      onboarding: false,
+      roles: 0,
+      qcGates: 0,
+    });
   });
 
   it('counts no roles for a template with a palette but no tasks', () => {
     expect(templateMeta(tree([], ['QC', 'Developer'])).roles).toBe(0);
+  });
+
+  it('counts Onboarding tasks as tasks but not the Onboarding month as a month (PUL-419)', () => {
+    const withOnboarding = tree(
+      [
+        month('m0', 0, [category('c0', 'm0', 1, [task('t0', 'c0', 1, true, 'Project Manager')])]),
+        ...FULL.months,
+      ],
+      PALETTE,
+    );
+    expect(templateMeta(withOnboarding)).toEqual({
+      tasks: 7,
+      months: 3,
+      onboarding: true,
+      roles: 4,
+      qcGates: 5,
+    });
   });
 });
 
@@ -153,8 +187,17 @@ describe('formatTemplateMeta', () => {
   });
 
   it('uses the singular for a count of one', () => {
-    expect(formatTemplateMeta({ tasks: 1, months: 1, roles: 1, qcGates: 1 })).toBe(
-      '1 task · 1 month · 1 role · 1 QC gate',
-    );
+    expect(
+      formatTemplateMeta({ tasks: 1, months: 1, onboarding: false, roles: 1, qcGates: 1 }),
+    ).toBe('1 task · 1 month · 1 role · 1 QC gate');
+  });
+
+  it('says "Onboarding + N months" when the template has an Onboarding month (PUL-419)', () => {
+    expect(
+      formatTemplateMeta({ tasks: 19, months: 2, onboarding: true, roles: 4, qcGates: 19 }),
+    ).toBe('19 tasks · Onboarding + 2 months · 4 roles · 19 QC gates');
+    expect(formatMonthCount(1, true)).toBe('Onboarding + 1 month');
+    expect(formatMonthCount(0, true)).toBe('Onboarding + 0 months');
+    expect(formatMonthCount(12, false)).toBe('12 months');
   });
 });

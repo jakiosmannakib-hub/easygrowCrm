@@ -285,9 +285,10 @@ All **Who:** MGR (`template.create/update/delete`; HR reads only, §9.6 ⁹). Al
 
 ### 13.5.1 `signIn`
 - **Who:** any active user, self only (`attendance.sign_in_out`)
-- **Input:** `{ workType: work_type, plan: Array<{title, clientId?, category?, priority?, estimatedHours?, expectedOutput?, projectTaskId?}> }` — the modal pre-fills `plan` from assigned tasks due today with `status ∈ {planned, in_progress, revision_required}` (§10.2); user may add/remove rows.
-- **Guards:** no attendance row for (me, today) — unique constraint backs it (`CONFLICT` → "already signed in"); linked `projectTaskId`s must be assigned to me.
+- **Input:** `{ workType: work_type, plan: Array<{title, clientId?, category?, priority?, estimatedHours?, expectedOutput?, projectTaskId?}> }`. The modal pre-fills `plan` from assigned tasks due today with `status ∈ {planned, in_progress, revision_required}` (§10.2); user may add/remove rows. *(PUL-302: the prefill, `getSignInPrefill`, also includes **overdue** tasks, due before today, marked `isOverdue` and listed first. Plan is at most 30 rows; the same `projectTaskId` twice is `VALIDATION`.)*
+- **Guards:** no attendance row for (me, today), backed by the unique constraint (`CONFLICT` → "already signed in"); linked `projectTaskId`s must be assigned to me. *(PUL-302: and in an open status, else `FORBIDDEN`; a `clientId` must be an active client.)*
 - **Tx:** insert `attendance` (late = local time > `settings.grace_in`); insert `daily_tasks`; linked project tasks with status `planned` → `in_progress` (others untouched, §10.2).
+- **Late rule (PUL-302):** late only when the local day (in `settings.timezone`) is in `settings.work_days`, is not a `holidays` date, and the local time is at or after `grace_in` + 1 minute. With 09:15 grace, 09:15:59 is on time and 09:16:00 is late; a weekend or holiday sign-in is never late.
 - **Audit:** `attendance.signed_in`.
 - **Notify:** `N:signed_in_late` → HR only if late; webhook.
 

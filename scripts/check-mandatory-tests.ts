@@ -32,6 +32,7 @@ const MANDATORY_TEST_FILES: string[] = [
   'features/templates/start-project.test.ts', // PUL-506.4 — clone: tokens, subtasks, checklist, due dates, depends_on
   'features/clients/accounts.test.ts', // PUL-415.6 — account CRUD, account_in_use + amended client_in_use gates, audit, authz
   'features/projects/qc-required-check.test.ts', // PUL-416.4: qc_required = false refused on both tables, 0010 backfill re-runnable
+  'features/attendance/sign-in.test.ts', // PUL-302.5: on time / late / weekend / holiday / CONFLICT / plan + prefill
   'features/attendance/schema.test.ts', // PUL-301: attendance/break/EOD/settings DB rules, EOD immutability trigger
 ];
 

@@ -28,6 +28,33 @@ export function dhakaToday(): string {
 }
 
 /**
+ * An instant's local calendar day and wall-clock time in `timeZone` (an IANA name, e.g.
+ * `settings.timezone`): `{ date: 'YYYY-MM-DD', time: 'HH:MM:SS' }`, 24-hour.
+ *
+ * For server decisions that read the zone from settings (PUL-302's late rule) rather than
+ * assume Asia/Dhaka like `dhakaToday`. Pass `clock.now()`; the instant is a parameter so the
+ * caller decides which "now" it means. `h23` keeps midnight as `00`, never `24`.
+ */
+export function localDateTime(instant: Date, timeZone: string): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instant);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}:${get('second')}`,
+  };
+}
+
+/**
  * A `YYYY-MM-DD` calendar day → `Aug 8, 2026`, always with the year (§14.15 r.2). Adds
  * ` · Today` when it is today in Asia/Dhaka and ` · Overdue` when it is before today — suffixes
  * only, never a replacement for the date.

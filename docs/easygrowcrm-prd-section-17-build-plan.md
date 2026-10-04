@@ -630,13 +630,46 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §13.5.1, §10 · **Depends:** PUL-301, PUL-108
 
-- [ ] 302.1 Action: creates today's row, work type, sign-in time via clock port
-- [ ] 302.2 Late flag when past grace (settings-driven; hardcode default until PUL-903, note it)
-- [ ] 302.3 Already-signed-in → `CONFLICT`
+- [x] 302.1 Action: creates today's row, work type, sign-in time via clock port
+- [x] 302.2 Late flag when past grace (settings-driven; hardcode default until PUL-903, note it) *(the hardcode is moot: `settings` shipped in PUL-301, so the rule reads `grace_in`, `work_days` and `timezone` from the row)*
+- [x] 302.3 Already-signed-in → `CONFLICT`
 - [ ] 302.4 Sign-In modal per §14.6.1: work type ▾ + daily-plan pre-fill (plan rows link to tasks after Phase 4; ad-hoc rows work now)
-- [ ] 302.5 Test: `features/attendance/sign-in.test.ts` (frozen-clock on-time / late / conflict) → CI manifest
+- [x] 302.5 Test: `features/attendance/sign-in.test.ts` (frozen-clock on-time / late / conflict) → CI manifest
 
-**Done when:** all three paths pass with a frozen clock.
+**Done when:** ✅ all three paths pass with a frozen clock.
+
+> **Stage 1 (server only) built on `feat/pul-302-sign-in`.** Stage 2 is 302.4, the modal.
+>
+> - **Action** `signIn` (`features/attendance/actions.ts`). One transaction: the `attendance`
+>   row (`att_` id, local date, `sign_in_at` and `updated_at` from the clock port), the plan's
+>   `daily_tasks` rows (`dt_` ids; a linked row stores the task's own title), and each linked
+>   task still `planned` moved to `in_progress` with a version bump (§10.2; others untouched).
+>   Audit: `attendance.signed_in` (date, work type, late, plan row count, linked task ids) plus
+>   one `project_task.status_changed` per moved task, in `changeTaskStatusOpen`'s shape. After
+>   commit: `N:signed_in_late` to every active HR user when late; `revalidatePath` on
+>   `/dashboard` and `/projects`.
+> - **Refusals.** `CONFLICT` "You're already signed in today." comes from the `one_row_per_day`
+>   unique violation, so two racing sign-ins cannot both pass. `FORBIDDEN` "\"<row title>\" is
+>   not an open task assigned to you." for a link to a task that is not mine, not open
+>   (planned / in progress / blocked / needs revision) or deleted; it names the title the caller
+>   sent, so another person's task title never leaks. `VALIDATION` for the same task twice
+>   (`duplicate_task`) or an archived or unknown client (`inactive_client`).
+> - **D2, overdue in the prefill.** `getSignInPrefill` offers my planned / in progress / needs
+>   revision tasks due today **or earlier** on a live project, with `isOverdue`; overdue first,
+>   then priority, then title. Overdue work is still today's work.
+> - **D3, non-work days are never late.** A sign-in on a day outside `settings.work_days`
+>   (Fri, Sat) or on a `holidays` date is never late, whatever the hour.
+> - **D4, the 9:16 boundary.** Late is local time at or after `grace_in` + 1 minute, in whole
+>   minutes: with 09:15, 09:15:59 is on time and 09:16:00 is late. Mutation-checked: dropping
+>   the `+ 1` fails the 09:15:30 case.
+> - **Also:** `getSettings(tx?)` (`features/settings/queries.ts`), `localDateTime(instant,
+>   timeZone)` (`lib/format.ts`), `getMyToday()` (today's row and plan, for PUL-304), and the
+>   `signed_in_late` text in `lib/notification-templates.ts`.
+> - **Test:** `sign-in.test.ts` (11 cases, CI manifest): on time at 09:15:30, late at 09:16:00
+>   with only active HR notified, Friday and holiday never late, the 00:30 local date boundary,
+>   `CONFLICT` with nothing extra written, plan rows and the planned-only status move with its
+>   audit, `FORBIDDEN`, `VALIDATION`, empty plan, and the prefill's inclusions, exclusions and
+>   order.
 
 ---
 

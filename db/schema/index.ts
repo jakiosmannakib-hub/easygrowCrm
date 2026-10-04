@@ -9,3 +9,5 @@ export * from './personal-tasks';
 export * from './project-tasks';
 export * from './task-reviews';
 export * from './templates';
+export * from './attendance';
+export * from './config';

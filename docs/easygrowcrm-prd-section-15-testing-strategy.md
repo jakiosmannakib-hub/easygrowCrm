@@ -128,8 +128,8 @@ That's **35** test files *(DECIDED Phase 1, PUL-112: was 31; the four employees 
 The list above is the **v1 ship gate**: every file on it must exist and pass before v1. Most of it
 names tables and features that do not exist yet, so CI cannot enforce it wholesale mid-build.
 `scripts/check-mandatory-tests.ts` is **the authoritative manifest of what is enforced right now**
-(§15.9 gate 5), and it grows as each phase lands. It currently holds **25 files** *(updated at
-PUL-416, which also caught up PUL-415's `accounts.test.ts`; updated at PUL-506 before that;
+(§15.9 gate 5), and it grows as each phase lands. It currently holds **26 files** *(updated at
+PUL-301; updated at PUL-416 before that, which also caught up PUL-415's `accounts.test.ts`; updated at PUL-506 before that;
 PUL-505 also caught up PUL-504's entry; at PUL-413 this listing had fallen behind the script at
 11)*:
 
@@ -159,6 +159,7 @@ features/templates/due-rule-compute.test.ts        // PUL-505.3
 features/templates/start-project.test.ts           // PUL-506.4
 features/clients/accounts.test.ts                  // PUL-415.6                 ¹
 features/projects/qc-required-check.test.ts        // PUL-416.4                 ¹
+features/attendance/schema.test.ts                 // PUL-301                   ¹
 ```
 
 ² §15.4 and PUL-504.6 name `add-month-wizard.test.ts`, which does not exist. PUL-504 shipped
@@ -171,7 +172,10 @@ gains them (raising 35 → 41 with the three PUL-503 files) or they stay script-
 but not required". **Needs a ruling.** Until then the script decides CI and §15.4 decides v1, as
 stated below. *(`template-actions.test.ts` is the one with the strongest claim: it covers the
 template hierarchy actions, their `bad_ref` and `task_has_dependents` gates and the diff audit.
-`template-meta` and `task-form` are pure-helper tests.)*
+`template-meta` and `task-form` are pure-helper tests. `attendance/schema.test.ts` (PUL-301)
+proves the attendance, break, settings and EOD constraints and the EOD immutability trigger at
+the DB level; the closest locked entries are `break.test.ts` and PUL-605's
+`eod/immutability.test.ts`, which test the same rules through actions.)*
 
 **When these two lists disagree, the script wins for "is CI green" and §15.4 wins for "may we
 ship v1".** A ticket that adds a mandatory test adds it to both.

@@ -1367,6 +1367,10 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 > **Until PUL-602 lands, no task can close through the app.** PUL-416 removed the `completed`
 > bypass; `approved` is reachable only through `reviewTask` (PUL-602), and `submitTask`
 > (PUL-601) does not exist yet. Every task stays open until then. That is expected, not a bug.
+>
+> **Update (2026-10-04):** PUL-417, 418 and 419 are merged (PRs #52/#53, #56, #57). Phase 3 has
+> started at Toki's direction: **PUL-301** (schema only) is built on
+> `feat/pul-301-attendance-tables`, ahead of the QC chain PUL-601 → 602 → 603.
 
 ### PUL-414 — Amendment M + `accounts` table (migration 010a)
 

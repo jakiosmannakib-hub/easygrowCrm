@@ -163,7 +163,7 @@ describe('the plan', () => {
     await db.insert(projectTasks).values([
       task('t_planned', { title: 'Write the brief' }),
       task('t_progress', { status: 'in_progress' }),
-      task('t_revision', { status: 'revision_required' }),
+      task('t_revision', { status: 'revision_required', dueDate: '2026-10-01' }),
       task('t_other', { assigneeId: seed.employees[1].id }),
     ]);
   });
@@ -229,6 +229,13 @@ describe('the plan', () => {
     expect(today.plan.find((r) => r.projectTaskId === 't_planned')).toMatchObject({
       projectName: seed.project.name,
       projectTaskStatus: 'in_progress',
+      isOverdue: false,
+    });
+    // The card's Overdue pill and "Ad-hoc, {Client}" line (PUL-302 Stage 2).
+    expect(today.plan.find((r) => r.projectTaskId === 't_revision')?.isOverdue).toBe(true);
+    expect(today.plan.find((r) => r.projectTaskId === null)).toMatchObject({
+      clientName: seed.client.name,
+      isOverdue: false,
     });
   });
 

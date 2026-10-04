@@ -16,7 +16,6 @@ import {
   attendance,
   clients,
   dailyTasks,
-  holidays,
   projectTasks,
   user as userTable,
 } from '../../db/schema';
@@ -29,7 +28,7 @@ import { withTx } from '../../lib/mutation';
 import type { SignedInLateData } from '../../lib/notification-templates';
 import { notify } from '../../lib/notifications';
 import { writeAudit } from '../audit/write-audit';
-import { getSettings } from '../settings/queries';
+import { getSettings, isHoliday } from '../settings/queries';
 import { isLateSignIn } from './late';
 import { SignInInput } from './schema';
 
@@ -84,12 +83,7 @@ export async function signIn(input: SignInInput) {
       const now = clock.now();
       const local = localDateTime(now, rules.timezone);
 
-      const [holiday] = await tx
-        .select({ date: holidays.date })
-        .from(holidays)
-        .where(eq(holidays.date, local.date))
-        .limit(1);
-      const late = isLateSignIn(local, rules, holiday !== undefined);
+      const late = isLateSignIn(local, rules, await isHoliday(local.date, tx));
 
       // Today's row first: a second sign-in fails here, before any guard can give a different
       // answer for the same plan.

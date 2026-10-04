@@ -55,6 +55,20 @@ export function localDateTime(instant: Date, timeZone: string): { date: string; 
 }
 
 /**
+ * A 24-hour wall-clock time `HH:MM[:SS]` → `9:04 AM` / `12:30 PM` / `12:05 AM`. Seconds are
+ * dropped. For a time of day already in the right zone (a `settings.grace_in`, or the `time`
+ * half of `localDateTime`); it does no zone conversion of its own. Anything else is returned
+ * unchanged.
+ */
+export function fmtClockTime(time: string): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(time);
+  if (!match) return time;
+  const h = Number(match[1]);
+  const suffix = h < 12 ? 'AM' : 'PM';
+  return `${h % 12 === 0 ? 12 : h % 12}:${match[2]} ${suffix}`;
+}
+
+/**
  * A `YYYY-MM-DD` calendar day → `Aug 8, 2026`, always with the year (§14.15 r.2). Adds
  * ` · Today` when it is today in Asia/Dhaka and ` · Overdue` when it is before today — suffixes
  * only, never a replacement for the date.

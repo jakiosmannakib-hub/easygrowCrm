@@ -633,7 +633,7 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [x] 302.1 Action: creates today's row, work type, sign-in time via clock port
 - [x] 302.2 Late flag when past grace (settings-driven; hardcode default until PUL-903, note it) *(the hardcode is moot: `settings` shipped in PUL-301, so the rule reads `grace_in`, `work_days` and `timezone` from the row)*
 - [x] 302.3 Already-signed-in → `CONFLICT`
-- [ ] 302.4 Sign-In modal per §14.6.1: work type ▾ + daily-plan pre-fill (plan rows link to tasks after Phase 4; ad-hoc rows work now)
+- [x] 302.4 Sign-In modal per §14.6.1: work type ▾ + daily-plan pre-fill (plan rows link to tasks after Phase 4; ad-hoc rows work now)
 - [x] 302.5 Test: `features/attendance/sign-in.test.ts` (frozen-clock on-time / late / conflict) → CI manifest
 
 **Done when:** ✅ all three paths pass with a frozen clock.
@@ -670,6 +670,30 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 >   `CONFLICT` with nothing extra written, plan rows and the planned-only status move with its
 >   audit, `FORBIDDEN`, `VALIDATION`, empty plan, and the prefill's inclusions, exclusions and
 >   order.
+>
+> **Stage 2 (UI), 302.4.**
+>
+> - **Today card** (`features/attendance/components/today-card.tsx`) at the top of `/dashboard`
+>   for every role, above the existing placeholder. Not signed in: the local time (ticking, in
+>   `settings.timezone`), one line of help, a large Sign in button. Signed in: "Signed in at
+>   9:04 AM", the work type, an amber Late pill when late, and today's plan (title; "From
+>   {Project}" with the shared `StatusPill` and an Overdue pill, or "Ad-hoc, {Client}"). An empty
+>   slot is marked for PUL-304's timer. Signed out: "Day closed at {time}." until PUL-305.
+> - **Sign-In dialog** (`sign-in-dialog.tsx`): three native radio tiles (In-office preselected);
+>   the prefilled plan, each row removable; an "Add to the plan" form (title, client with "No
+>   client", category, priority defaulting to Medium, `HMInput` estimate, expected output; Enter
+>   in Title adds); an amber "It's after {grace}, so today will show as Late." note computed with
+>   the server's own `isLateSignIn` and `settings.grace_in`. Sign in is disabled while pending.
+>   `CONFLICT` toasts "You're already signed in today." and refreshes; other errors show inline
+>   at the top. Success closes, toasts "Signed in" or "Signed in. Today is marked Late.", and
+>   `router.refresh()` updates the card.
+> - **`components/hm-input.tsx`** (§14.15 r.1): paired Hours (0 to 24) and Minutes (5-minute
+>   steps) selects, decimal hours in and out; helpers in `hm-input-value.ts` with
+>   `hm-input-value.test.ts` (snapping, null handling, a round trip of every step through
+>   2-decimal storage). No existing field migrated to it.
+> - **Supporting:** `getMyToday` rows gain `clientName` and `isOverdue`; `fmtClockTime` in
+>   `lib/format.ts`; `isHoliday(date, tx?)` in `features/settings/queries.ts`, now also used by
+>   `signIn`. The page reads everything server-side (client components cannot import queries).
 
 ---
 
@@ -2106,6 +2130,9 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 601.4 Test: `features/projects/submit.test.ts` (happy + each gate + blocked) → CI manifest
 
 **Done when:** every refusal names its exact cause.
+
+> **`components/hm-input.tsx` shipped in PUL-302, reuse it** for the submission's hours field
+> (decimal hours in and out, paired H / M in 5-minute steps, §14.15 r.1).
 
 ---
 

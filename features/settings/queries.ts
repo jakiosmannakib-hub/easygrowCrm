@@ -5,7 +5,7 @@
 
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
-import { settings } from '../../db/schema';
+import { holidays, settings } from '../../db/schema';
 import type { Executor } from '../../lib/mutation';
 
 export type Settings = typeof settings.$inferSelect;
@@ -25,4 +25,14 @@ export async function getSettings(exec: Executor = db): Promise<Settings> {
   const [row] = await exec.select().from(settings).where(eq(settings.id, 1)).limit(1);
   if (!row) throw new Error('settings row missing: migration 0012 seeds it');
   return row;
+}
+
+/** Whether `date` (`YYYY-MM-DD`) is in `holidays` (§11.7). */
+export async function isHoliday(date: string, exec: Executor = db): Promise<boolean> {
+  const [row] = await exec
+    .select({ date: holidays.date })
+    .from(holidays)
+    .where(eq(holidays.date, date))
+    .limit(1);
+  return row !== undefined;
 }

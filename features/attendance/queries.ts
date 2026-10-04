@@ -8,7 +8,7 @@
 
 import { and, asc, desc, eq, inArray, isNull, lt, lte, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { attendance, dailyTasks, projectTasks, projects } from '../../db/schema';
+import { attendance, clients, dailyTasks, projectTasks, projects } from '../../db/schema';
 import { clock } from '../../lib/clock';
 import { localDateTime } from '../../lib/format';
 import type { Executor } from '../../lib/mutation';
@@ -96,8 +96,15 @@ export interface MyToday {
     projectName: string | null;
     /** The linked project task's CURRENT status, or null for an ad-hoc row. */
     projectTaskStatus: typeof projectTasks.$inferSelect.status | null;
+    /** The row's client, for an ad-hoc row's "Ad-hoc, {Client}" line. */
+    clientName: string | null;
+    /** A linked task that is still open and was due before today. */
+    isOverdue: boolean;
   }>;
 }
+
+/** Statuses where a past due date still matters: the work is not done or waiting on review. */
+const OVERDUE_RELEVANT = ['planned', 'in_progress', 'blocked', 'revision_required'] as const;
 
 /**
  * The signed-in user's day so far: today's attendance row (or null before sign-in) and today's
@@ -129,10 +136,16 @@ export async function getMyToday(): Promise<MyToday> {
       projectTaskId: dailyTasks.projectTaskId,
       projectName: projects.name,
       projectTaskStatus: projectTasks.status,
+      clientName: clients.name,
+      isOverdue: sql<boolean>`coalesce(${and(
+        lt(projectTasks.dueDate, today),
+        inArray(projectTasks.status, [...OVERDUE_RELEVANT]),
+      )}, false)`,
     })
     .from(dailyTasks)
     .leftJoin(projectTasks, eq(projectTasks.id, dailyTasks.projectTaskId))
     .leftJoin(projects, eq(projects.id, projectTasks.projectId))
+    .leftJoin(clients, eq(clients.id, dailyTasks.clientId))
     .where(and(eq(dailyTasks.employeeId, me.id), eq(dailyTasks.date, today)))
     .orderBy(asc(dailyTasks.createdAt), asc(dailyTasks.id));
 

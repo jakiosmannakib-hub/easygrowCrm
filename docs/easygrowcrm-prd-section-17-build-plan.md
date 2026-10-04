@@ -593,11 +593,36 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 
 **Budget:** M · **Reads:** §11 (005–006), §10 · **Depends:** PUL-101
 
-- [ ] 301.1 Migrations 005–006: `attendance`, `attendance_breaks`, `holidays` per §11
-- [ ] 301.2 Partial unique index: one open break per attendance row (DB-level invariant)
-- [ ] 301.3 Indices per §11; extend `seedMinimal`
+- [x] 301.1 Migrations 005–006: `attendance`, `attendance_breaks`, `holidays` per §11
+- [x] 301.2 Partial unique index: one open break per attendance row (DB-level invariant)
+- [x] 301.3 Indices per §11; extend `seedMinimal` *(seedMinimal deliberately not extended: see below)*
 
-**Done when:** schema diff vs §11 is empty.
+**Done when:** ✅ schema diff vs §11 is empty.
+
+> **Built on `feat/pul-301-attendance-tables`.** Schema only: no actions, queries or UI.
+>
+> - **Scope grew to all six tables per §11.9.** Logical 005 is `attendance`, `attendance_breaks`,
+>   `daily_tasks`, `eod_reports` (drizzle `0011_attendance_core.sql`); logical 006 is `settings`
+>   and `holidays` (drizzle `0012_config.sql`). Schema files: `db/schema/attendance.ts` and
+>   `db/schema/config.ts`. Every constraint and index carries its §11 name;
+>   §11.8's unnamed `settings` check is named `settings_id_check`, the name Postgres would give it.
+> - **The EOD immutability trigger landed early** (it was PUL-605.1). `eod_reports_immutable`,
+>   hand-appended to 0011, follows the `audit_log` precedent: an UPDATE raises unless only
+>   `reviewed_at` / `reviewed_by` / `flagged` / `manager_note` changed (the row is compared as
+>   `to_jsonb` minus those four, so a future column is immutable by default); a DELETE always
+>   raises. TRUNCATE is not blocked, so `reset()` still works.
+> - **Settings seed:** one row, `company_name = 'My company'`, all else default,
+>   `ON CONFLICT DO NOTHING`. `reset()` wipes and re-inserts it, so the table is never empty
+>   between tests and any changed column returns to its default.
+> - **`updated_at` has no trigger** on `attendance` or `daily_tasks`, following the `clients` /
+>   `projects` / templates convention (written from the clock port by the actions), not §11.0.
+> - **`seedMinimal` stays attendance-free by design.** The attendance tests build their own days
+>   under a frozen clock; `reset()` truncates the five new data tables.
+> - **Test:** `features/attendance/schema.test.ts` (13 cases, CI manifest): `one_row_per_day`,
+>   `early_needs_reason`, `signout_after_signin`, `one_open_break` (and a second break after the
+>   first ends), `ended_after_start`, the settings row and its defaults plus the id 2 refusal, and
+>   on `eod_reports`: content update refused, acknowledgment allowed, `ack_complete`, `no_self_ack`,
+>   DELETE refused, `one_report_per_day`, and TRUNCATE still wiping it.
 
 ---
 
@@ -2097,6 +2122,11 @@ Runs before all feature work. PUL-004 can run in parallel with Phase 1.
 - [ ] 605.3 Tests: `features/eod/immutability.test.ts` + `features/eod/acknowledge.test.ts` → CI manifest
 
 **Done when:** content is DB-immutable; ack is a separate audited act.
+
+> **605.1 already exists.** The immutability trigger `eod_reports_immutable` shipped in PUL-301
+> (`0011_attendance_core.sql`), replacing the column grants (there is no `easygrowcrm_app` role).
+> `features/attendance/schema.test.ts` covers it at the DB level; 605.3's tests should exercise
+> it through the actions rather than add a second trigger.
 
 ---
 

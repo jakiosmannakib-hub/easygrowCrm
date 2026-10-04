@@ -53,6 +53,11 @@ export function assertTestDb(): void {
  * that fires neither. The append-only guarantee is about rewriting history through the
  * application; wiping a test database is not that. `tests/seed.test.ts` proves TRUNCATE
  * still succeeds with audit rows present, so a future trigger change can't silently break it.
+ * The same holds for `eod_reports_immutable` (0011): it is FOR EACH ROW on UPDATE OR DELETE,
+ * so TRUNCATE wipes EOD rows without tripping it (`features/attendance/schema.test.ts`).
+ *
+ * `seedMinimal` / `seedFull` add no attendance rows by design: the attendance tests build their
+ * own days under a frozen clock.
  *
  * CASCADE covers session/account rows hanging off `user` even as more tables land.
  */
@@ -63,8 +68,14 @@ export async function reset(): Promise<void> {
   // one statement and CASCADE would reach the children anyway. Being explicit means a new table
   // that nothing references yet still gets wiped instead of quietly surviving a reset.
   await db.execute(
-    sql`TRUNCATE TABLE "audit_log", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "accounts", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE "audit_log", "attendance_breaks", "attendance", "daily_tasks", "eod_reports", "holidays", "task_reviews", "task_submissions", "task_comments", "task_subtasks", "task_checklist_items", "project_tasks", "projects", "personal_tasks", "accounts", "clients", "template_task_subtasks", "template_tasks", "template_categories", "template_months", "templates", "session", "account", "verification", "user" RESTART IDENTITY CASCADE`,
   );
+
+  // `settings` is never left empty: sign-in reads it, and 0012 seeds the row the app expects.
+  // Wipe and re-insert, so any column a test changed goes back to its default (§10.1). The row
+  // is the same as 0012's seed.
+  await db.execute(sql`TRUNCATE TABLE "settings"`);
+  await db.execute(sql`INSERT INTO "settings" ("id", "company_name") VALUES (1, 'My company')`);
 }
 
 export interface SeededUser {

@@ -19,6 +19,7 @@ import {
   STATUS_DISPLAY,
   isProtectedStatus,
   monthLabel,
+  monthNumberLabel,
   statusMenuOptions,
 } from './display';
 
@@ -181,6 +182,13 @@ describe('isProtectedStatus', () => {
     expect(isProtectedStatus('planned')).toBe(false);
     expect(isProtectedStatus('in_progress')).toBe(false);
     expect(isProtectedStatus('blocked')).toBe(false);
+  });
+});
+
+describe('monthNumberLabel (PUL-419): a month number with no start date at hand', () => {
+  it('labels Month 0 "Onboarding" and any other month "Month N"', () => {
+    expect(monthNumberLabel(0)).toBe('Onboarding');
+    expect(monthNumberLabel(3)).toBe('Month 3');
   });
 });
 

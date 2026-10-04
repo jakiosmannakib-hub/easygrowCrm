@@ -45,6 +45,7 @@ import {
   groupTaskTree,
   monthLabel,
   monthKey,
+  monthNumberLabel,
   retainerMonth,
   taskKey,
   treeOpenState,
@@ -213,7 +214,7 @@ export function TaskList({
                         size="sm"
                         className="text-muted-foreground my-1 shrink-0"
                         aria-label={`Add task in ${
-                          m.month === null ? 'Unscheduled' : `Month ${m.month}`
+                          m.month === null ? 'Unscheduled' : monthNumberLabel(m.month)
                         }`}
                         onClick={() => setAdding({ month: m.month })}
                       >
@@ -227,7 +228,7 @@ export function TaskList({
                     {m.month === null
                       ? 'Unscheduled'
                       : project === null
-                        ? `Month ${m.month}`
+                        ? monthNumberLabel(m.month)
                         : monthLabel(project.startDate, m.month)}
                   </span>
                   <DoneCount done={m.done} total={m.total} />

@@ -55,7 +55,7 @@ import {
   toggleChecklistItem,
   toggleSubtask,
 } from '../actions';
-import { DEPENDENCY_SATISFIED_STATUSES, PRIORITY_LABELS } from '../display';
+import { DEPENDENCY_SATISFIED_STATUSES, PRIORITY_LABELS, monthNumberLabel } from '../display';
 import { TaskStatusControl } from './task-status-control';
 
 /** Any action's result — `run()` only ever reads the failure half. */
@@ -302,7 +302,7 @@ function TaskDetailBody({ taskId }: { taskId: string }) {
           {/* Breadcrumb. "Month N" is omitted entirely when the task has no month — an ad-hoc
               task is not "Month 0". */}
           {client.name} › {project.name} · {task.category}
-          {task.month !== null ? ` · Month ${task.month}` : ''}
+          {task.month !== null ? ` · ${monthNumberLabel(task.month)}` : ''}
         </p>
       </DialogHeader>
 

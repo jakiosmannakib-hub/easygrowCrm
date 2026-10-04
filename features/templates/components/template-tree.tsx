@@ -4,7 +4,9 @@
 //
 // - Months: added through the Add Month wizard (PUL-504, §14.4.3: a whole 12-month cycle per
 //   save); renamed / deleted inline. Categories: inline add / rename / delete (§13.3.7b–c). The
-//   PUL-503 `addTemplateMonth` action still exists but no UI calls it any more.
+//   PUL-503 `addTemplateMonth` action still exists but no UI calls it any more. The optional
+//   Onboarding month (Month 0, PUL-419) has its own "+ Add onboarding" button while the template
+//   has none; it renders first, and offers Add category and Delete but no Rename.
 // - Tasks: added and edited through the one Add/Edit Task modal (§14.4.4, Stage 3b), opened from a
 //   category's Add task button or a task's title. Subtasks are edited only inside that modal; the
 //   tree shows them read-only (§13.3.7e's inline subtask actions are not built).
@@ -25,6 +27,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  ONBOARDING_MONTH,
   PRIORITY_LABELS,
   PRIORITY_PILL_CLASSNAME,
   categoryDotClass,
@@ -35,6 +38,7 @@ import { showErrorToast } from '@/lib/show-error-toast';
 import { cn } from '@/lib/utils';
 import {
   addTemplateCategory,
+  addTemplateOnboarding,
   deleteTemplateCategory,
   deleteTemplateMonth,
   renameTemplateCategory,
@@ -48,6 +52,7 @@ import {
   type TemplateTaskNode,
   type TemplateTree as Tree,
 } from '../hierarchy';
+import { formatMonthCount, templateMeta } from '../template-meta';
 import { AddMonthWizard } from './add-month-wizard';
 import { ConfirmDeleteButton } from './confirm-delete-button';
 import { InlineNameForm } from './inline-name-form';
@@ -94,6 +99,8 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
   );
   // The task modal's target (add into a category, or edit a task), also declared upfront.
   const [taskModal, setTaskModal] = useState<TaskModalTarget | null>(null);
+  // + Add onboarding is in flight: one click, one request.
+  const [addingOnboarding, setAddingOnboarding] = useState(false);
 
   const settle = useSettle();
   const router = useRouter();
@@ -101,6 +108,8 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
   // Every task's title by id, for `After "<title>"`: an `after` ref may point into any month.
   // The flat list is built by `tplAllTasks`, the only flattener (§16.7), and is never stored.
   const allTasks = useMemo(() => tplAllTasks(tree), [tree]);
+  // The card footer's stats: `months` excludes Onboarding; `onboarding` says whether it exists.
+  const meta = useMemo(() => templateMeta(tree), [tree]);
   const titleById = useMemo(() => new Map(allTasks.map((t) => [t.id, t.title])), [allTasks]);
   // The after-rule picker: every task, labelled with where it lives, in walk order.
   const dependencyOptions = useMemo<DependencyOption[]>(
@@ -108,6 +117,16 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
       allTasks.map((t) => ({ id: t.id, label: `${t._monthName} › ${t._catName} › ${t.title}` })),
     [allTasks],
   );
+
+  /** Month 0 goes in empty and first (`addTemplateOnboarding`); a second add is GATE-refused. */
+  async function addOnboarding() {
+    setAddingOnboarding(true);
+    try {
+      await settle(addTemplateOnboarding({ templateId: tree.id }), () => 'Onboarding month added.');
+    } finally {
+      setAddingOnboarding(false);
+    }
+  }
 
   function toggle(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
     const next = new Set(set);
@@ -118,18 +137,33 @@ export function TemplateTree({ tree, canEdit }: { tree: Tree; canEdit: boolean }
 
   return (
     <div className="space-y-3">
-      {/* Toolbar (§14.4.2): month/task summary + Add month (the PUL-504 wizard). */}
+      {/*
+        Toolbar (§14.4.2): month/task summary, + Add onboarding (PUL-419, only while the template
+        has none), and + Add month (the PUL-504 wizard).
+      */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-xs">
-          {plural(tree.months.length, 'month', 'months')} ·{' '}
+          {formatMonthCount(meta.months, meta.onboarding)} ·{' '}
           {plural(allTasks.length, 'task', 'tasks')}
         </p>
         {canEdit ? (
-          <AddMonthWizard
-            templateId={tree.id}
-            templateRoles={tree.roles}
-            onSuccess={() => router.refresh()}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {!meta.onboarding ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={addingOnboarding}
+                onClick={() => void addOnboarding()}
+              >
+                + Add onboarding
+              </Button>
+            ) : null}
+            <AddMonthWizard
+              templateId={tree.id}
+              templateRoles={tree.roles}
+              onSuccess={() => router.refresh()}
+            />
+          </div>
         ) : null}
       </div>
 
@@ -192,6 +226,8 @@ function MonthSection({
 
   const taskCount = month.categories.reduce((n, c) => n + c.tasks.length, 0);
   const bodyId = `month-body-${month.id}`;
+  // PUL-419: Month 0. It sorts first by position (`addTemplateOnboarding` puts it at min - 1).
+  const isOnboarding = month.num === ONBOARDING_MONTH;
 
   return (
     <section className="rounded-lg ring-1 ring-foreground/10">
@@ -228,8 +264,11 @@ function MonthSection({
             <>
               <h3 className="font-heading text-sm font-medium">{month.name}</h3>
               <p className="text-muted-foreground text-xs">
-                Month {month.num} · {monthStartLabel(month.startMonth, month.startDay)} ·{' '}
-                {plural(taskCount, 'task', 'tasks')} ·{' '}
+                {/* Onboarding has no cycle date: a project starts it on its own start date. */}
+                {isOnboarding
+                  ? 'Starts with the project'
+                  : `Month ${month.num} · ${monthStartLabel(month.startMonth, month.startDay)}`}{' '}
+                · {plural(taskCount, 'task', 'tasks')} ·{' '}
                 {plural(month.categories.length, 'category', 'categories')}
               </p>
             </>
@@ -238,14 +277,17 @@ function MonthSection({
 
         {canEdit && !renaming ? (
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRenaming(true)}
-              aria-label={`Rename ${month.name}`}
-            >
-              <PencilIcon /> Rename
-            </Button>
+            {/* The Onboarding month's name is fixed (GATE:onboarding_fixed_name), so no Rename. */}
+            {!isOnboarding ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRenaming(true)}
+                aria-label={`Rename ${month.name}`}
+              >
+                <PencilIcon /> Rename
+              </Button>
+            ) : null}
             <ConfirmDeleteButton
               label={`Delete ${month.name}`}
               description={`Remove ${month.name} and all its tasks?`}

@@ -308,11 +308,19 @@ export const ONBOARDING_LABEL = 'Onboarding';
 export function monthLabel(startDate: string, month: number): string {
   if (month === ONBOARDING_MONTH) return ONBOARDING_LABEL;
   const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate);
-  if (!parsed || !Number.isInteger(month) || month < 1) return `Month ${month}`;
+  if (!parsed || !Number.isInteger(month) || month < 1) return monthNumberLabel(month);
 
   // `month` is 1-based (Month 1 IS the start month), so the offset from the start is month - 1.
   const index = (Number(parsed[2]) - 1 + (month - 1)) % 12;
   return `Month ${month} - ${MONTH_NAMES[index]}`;
+}
+
+/**
+ * A month number with no calendar name, for places with no start date at hand (a task's
+ * breadcrumb, a list with no single project): `Month 3`, or `Onboarding` for Month 0 (PUL-419).
+ */
+export function monthNumberLabel(month: number): string {
+  return month === ONBOARDING_MONTH ? ONBOARDING_LABEL : `Month ${month}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────

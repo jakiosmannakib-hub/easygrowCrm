@@ -37,14 +37,23 @@ import {
 } from '@/components/ui/select';
 import { showErrorToast } from '@/lib/show-error-toast';
 import { createTask, loadNewTaskContext } from '../actions';
-import { monthLabel, PRIORITY_LABELS, type TaskPriority } from '../display';
+import {
+  monthLabel,
+  monthNumberLabel,
+  ONBOARDING_MONTH,
+  PRIORITY_LABELS,
+  type TaskPriority,
+} from '../display';
 import { CreateTaskInput } from '../schema';
 
 /** The "leave it unset" sentinel for the optional pickers. Not an id, and never submitted. */
 const NONE = 'none';
 
-/** Month ▾ offers Month 1 to 12 (§14.3.8, PUL-421); a later prefilled month is added to it. */
-const MONTH_CHOICES = Array.from({ length: 12 }, (_, i) => i + 1);
+/**
+ * Month ▾ offers Onboarding (Month 0, PUL-419) first, then Month 1 to 12 (§14.3.8, PUL-421); a
+ * later prefilled month is added to it.
+ */
+const MONTH_CHOICES = [ONBOARDING_MONTH, ...Array.from({ length: 12 }, (_, i) => i + 1)];
 
 /** What `onCreated` reports, so the opener can reveal the group the new task landed in. */
 export interface CreatedTaskPlacement {
@@ -208,7 +217,7 @@ function NewTaskBody({
       ? [...MONTH_CHOICES, defaultMonth].sort((a, b) => a - b)
       : MONTH_CHOICES;
   const monthName = (m: number) =>
-    projectStartDate === undefined ? `Month ${m}` : monthLabel(projectStartDate, m);
+    projectStartDate === undefined ? monthNumberLabel(m) : monthLabel(projectStartDate, m);
   const categorySuggestions = categoriesByMonth?.get(monthNum) ?? [];
 
   /**
